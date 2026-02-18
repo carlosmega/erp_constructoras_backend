@@ -1,0 +1,19 @@
+# Testing dependencies for CRM Backend
+# Install with: pip install -r requirements-test.txt
+
+# Core testing
+pytest>=8.0.0
+pytest-django>=4.7.0
+pytest-cov>=4.1.0
+pytest-xdist>=3.5.0  # Parallel test execution
+pytest-mock>=3.12.0  # Mocking utilities
+
+# Test data generation
+factory-boy>=3.3.0
+faker>=22.0.0
+
+# HTTP testing for Django Ninja
+httpx>=0.26.0  # Required by TestClient
+
+# Code quality
+coverage[toml]>=7.4.0

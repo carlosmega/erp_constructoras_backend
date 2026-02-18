@@ -1,0 +1,421 @@
+openapi: 3.0.3
+info:
+  title: CRM Users API
+  description: User management endpoints for CRM backend foundation
+  version: 1.0.0
+  contact:
+    name: CRM Backend Team
+
+servers:
+  - url: http://localhost:8000/api
+    description: Development server
+  - url: https://api.crm.example.com/api
+    description: Production server
+
+tags:
+  - name: Users
+    description: User management operations
+
+paths:
+  /users:
+    get:
+      tags:
+        - Users
+      summary: List all users
+      description: Returns a paginated list of system users with optional filtering
+      operationId: listUsers
+      parameters:
+        - name: role
+          in: query
+          description: Filter by security role name
+          required: false
+          schema:
+            type: string
+            enum:
+              - System Administrator
+              - Sales Manager
+              - Salesperson
+              - Marketing User
+              - Read-Only User
+        - name: isdisabled
+          in: query
+          description: Filter by active/disabled status
+          required: false
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          description: Page number (1-indexed)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          description: Number of records per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Successful response with user list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    description: Total number of users
+                  next:
+                    type: string
+                    nullable: true
+                    description: URL to next page (null if last page)
+                  previous:
+                    type: string
+                    nullable: true
+                    description: URL to previous page (null if first page)
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserSchema'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Users
+      summary: Create a new user
+      description: Creates a new system user account (requires System Administrator role)
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserDto'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchema'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users/{id}:
+    get:
+      tags:
+        - Users
+      summary: Get user by ID
+      description: Returns detailed information about a specific user
+      operationId: getUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchema'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags:
+        - Users
+      summary: Update user
+      description: Updates user information (partial update supported)
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserDto'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchema'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Users
+      summary: Deactivate user
+      description: Soft deletes a user by setting isdisabled=true (requires System Administrator role)
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: User deactivated successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{id}/assign-role:
+    post:
+      tags:
+        - Users
+      summary: Assign role to user
+      description: Changes the security role assigned to a user (requires System Administrator role)
+      operationId: assignRole
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - securityroleid
+              properties:
+                securityroleid:
+                  type: string
+                  format: uuid
+                  description: UUID of the security role to assign
+      responses:
+        '200':
+          description: Role assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchema'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    UserId:
+      name: id
+      in: path
+      description: User UUID
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    UserSchema:
+      type: object
+      description: Complete user representation
+      required:
+        - systemuserid
+        - emailaddress1
+        - fullname
+        - isdisabled
+        - securityroleid
+        - createdon
+        - modifiedon
+      properties:
+        systemuserid:
+          type: string
+          format: uuid
+          description: Unique user identifier
+        emailaddress1:
+          type: string
+          format: email
+          description: User's email address (login)
+        fullname:
+          type: string
+          description: User's full display name
+        isdisabled:
+          type: boolean
+          description: Whether account is disabled (true=disabled, false=active)
+        failedloginattempts:
+          type: integer
+          description: Count of consecutive failed login attempts
+        lastlogindate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of last successful login
+        securityroleid:
+          type: string
+          format: uuid
+          description: Assigned security role UUID
+        role_name:
+          type: string
+          description: Security role display name
+          enum:
+            - System Administrator
+            - Sales Manager
+            - Salesperson
+            - Marketing User
+            - Read-Only User
+        createdon:
+          type: string
+          format: date-time
+          description: When user was created
+        modifiedon:
+          type: string
+          format: date-time
+          description: When user was last modified
+        createdby:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID of user who created this record
+        modifiedby:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID of user who last modified this record
+
+    CreateUserDto:
+      type: object
+      description: Payload for creating a new user
+      required:
+        - emailaddress1
+        - fullname
+        - password
+        - securityroleid
+      properties:
+        emailaddress1:
+          type: string
+          format: email
+          description: User's email address (must be unique)
+          example: john.doe@example.com
+        fullname:
+          type: string
+          description: User's full display name
+          minLength: 1
+          maxLength: 200
+          example: John Doe
+        password:
+          type: string
+          format: password
+          description: User's password (min 8 characters, complexity requirements apply)
+          minLength: 8
+          example: SecureP@ssw0rd
+        securityroleid:
+          type: string
+          format: uuid
+          description: UUID of security role to assign
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    UpdateUserDto:
+      type: object
+      description: Payload for updating a user (all fields optional)
+      properties:
+        fullname:
+          type: string
+          description: Updated full name
+          minLength: 1
+          maxLength: 200
+        isdisabled:
+          type: boolean
+          description: Set account active/disabled status
+        password:
+          type: string
+          format: password
+          description: New password (if changing)
+          minLength: 8
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details (e.g., field validation errors)
+
+  responses:
+    BadRequest:
+      description: Invalid request data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: VALIDATION_ERROR
+            message: Invalid input data
+            details:
+              emailaddress1: ["This field must be a valid email address"]
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: UNAUTHORIZED
+            message: Authentication credentials were not provided
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: PERMISSION_DENIED
+            message: You do not have permission to perform this action
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: NOT_FOUND
+            message: User with the specified ID does not exist
+
+  securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+      description: Django session-based authentication
+
+security:
+  - SessionAuth: []

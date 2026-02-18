@@ -1,0 +1,19 @@
+[run]
+source = apps,core
+omit =
+    */migrations/*
+    */tests/*
+    */test_*.py
+    */__init__.py
+    */admin.py
+    */apps.py
+    */venv/*
+    */site-packages/*
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+
+[html]
+directory = htmlcov

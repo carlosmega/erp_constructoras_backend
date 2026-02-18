@@ -1,0 +1,2614 @@
+{
+	"info": {
+		"name": "CRM Backend API - Complete",
+		"description": "Microsoft Dynamics 365 CDS-compatible CRM Backend\n\nFuncionalidades:\n- Autenticación basada en sesiones\n- RBAC con 5 roles\n- Pipeline completo: Lead → Opportunity → Quote → Order → Invoice\n- 69+ endpoints REST\n- Catalogo de Productos y Listas de Precios\n- Actividades (Email, Phone Call, Task, Appointment)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.user && response.user.systemuserid) {",
+									"        pm.environment.set('user_id', response.user.systemuserid);",
+									"        console.log('Login successful! User ID:', response.user.systemuserid);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"emailaddress1\": \"{{admin_email}}\",\n  \"password\": \"{{admin_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						},
+						"description": "Autentica al usuario y crea una sesión Django de 30 minutos."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Current User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						},
+						"description": "Obtiene la información del usuario autenticado actual."
+					},
+					"response": []
+				},
+				{
+					"name": "Change Password",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"current_password\": \"admin123\",\n  \"new_password\": \"newpassword123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/change-password",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"change-password"
+							]
+						},
+						"description": "Cambia la contraseña del usuario autenticado."
+					},
+					"response": []
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/logout",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"logout"
+							]
+						},
+						"description": "Cierra la sesión del usuario y destruye las cookies."
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints de autenticación y gestión de sesión"
+		},
+		{
+			"name": "Leads",
+			"item": [
+				{
+					"name": "List Leads",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/leads/?statecode=0&leadqualitycode=3",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								""
+							],
+							"query": [
+								{
+									"key": "statecode",
+									"value": "0",
+									"description": "0=Open, 1=Qualified, 2=Disqualified"
+								},
+								{
+									"key": "leadqualitycode",
+									"value": "3",
+									"description": "1=Cold, 2=Warm, 3=Hot",
+									"disabled": true
+								},
+								{
+									"key": "search",
+									"value": "",
+									"description": "Buscar en nombre, email, empresa",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lista todos los leads con filtros opcionales."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Lead",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('lead_id', response.leadid);",
+									"    console.log('Lead created! ID:', response.leadid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"lastname\": \"García\",\n  \"firstname\": \"Carlos\",\n  \"emailaddress1\": \"carlos.garcia@example.com\",\n  \"telephone1\": \"555-1234\",\n  \"companyname\": \"García Consulting\",\n  \"jobtitle\": \"CEO\",\n  \"subject\": \"Interesado en software empresarial\",\n  \"leadqualitycode\": 3,\n  \"leadsourcecode\": 8,\n  \"estimatedvalue\": \"150000.00\",\n  \"estimatedclosedate\": \"2025-06-30\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/leads/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								""
+							]
+						},
+						"description": "Crea un nuevo lead en el sistema."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Lead",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/leads/{{lead_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								"{{lead_id}}"
+							]
+						},
+						"description": "Obtiene un lead específico por su ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Lead",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"statuscode\": 2,\n  \"description\": \"Contactado vía email. Interesado en demo.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/leads/{{lead_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								"{{lead_id}}"
+							]
+						},
+						"description": "Actualiza un lead existente (solo campos abiertos)."
+					},
+					"response": []
+				},
+				{
+					"name": "Qualify Lead",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('opportunity_id', response.qualifyingopportunityid);",
+									"    console.log('Lead qualified! Opportunity ID:', response.qualifyingopportunityid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"create_account\": true,\n  \"create_contact\": true,\n  \"opportunity_name\": \"García Consulting - Enterprise Project\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/leads/{{lead_id}}/qualify",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								"{{lead_id}}",
+								"qualify"
+							]
+						},
+						"description": "Califica un lead → Crea automáticamente Account, Contact y Opportunity."
+					},
+					"response": []
+				},
+				{
+					"name": "Disqualify Lead",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"statuscode\": 6,\n  \"remarks\": \"No tiene presupuesto actual. Contactar en 6 meses.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/leads/{{lead_id}}/disqualify",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								"{{lead_id}}",
+								"disqualify"
+							]
+						},
+						"description": "Descalifica un lead (4=Lost, 5=Cannot Contact, 6=No Longer Interested)."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Lead",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/leads/{{lead_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								"{{lead_id}}"
+							]
+						},
+						"description": "Soft delete - Descalifica el lead como 'Lost'."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Lead Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/leads/stats",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"leads",
+								"stats"
+							]
+						},
+						"description": "Obtiene estadísticas agregadas de todos los leads."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión completa del ciclo de vida de Leads"
+		},
+		{
+			"name": "Opportunities",
+			"item": [
+				{
+					"name": "List Opportunities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/opportunities/?statecode=0&salesstage=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								""
+							],
+							"query": [
+								{
+									"key": "statecode",
+									"value": "0",
+									"description": "0=Open, 1=Won, 2=Lost"
+								},
+								{
+									"key": "salesstage",
+									"value": "1",
+									"description": "0=Qualify, 1=Develop, 2=Propose, 3=Close",
+									"disabled": true
+								},
+								{
+									"key": "search",
+									"value": "",
+									"description": "Buscar en nombre",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lista todas las oportunidades con filtros."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Opportunity",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('opportunity_id', response.opportunityid);",
+									"    console.log('Opportunity created! ID:', response.opportunityid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Enterprise Software Implementation\",\n  \"customername\": \"Global Tech Corp\",\n  \"estimatedrevenue\": \"500000.00\",\n  \"estimatedclosedate\": \"2025-09-30\",\n  \"salesstage\": 1,\n  \"probability\": 65\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/opportunities/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								""
+							]
+						},
+						"description": "Crea una nueva oportunidad de venta."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Opportunity",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/opportunities/{{opportunity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								"{{opportunity_id}}"
+							]
+						},
+						"description": "Obtiene una oportunidad específica por ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Opportunity",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Oportunidad Actualizada - Demo 2025\",\n  \"description\": \"Presentación exitosa. Negociando términos finales.\",\n  \"customername\": \"Empresa XYZ S.A.\",\n  \"estimatedrevenue\": \"75000.00\",\n  \"estimatedclosedate\": \"2025-06-30\",\n  \"salesstage\": 2,\n  \"probability\": 80,\n  \"statuscode\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/opportunities/{{opportunity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								"{{opportunity_id}}"
+							]
+						},
+						"description": "Actualiza una oportunidad existente. Todos los campos son opcionales - envía solo los que quieres cambiar."
+					},
+					"response": []
+				},
+				{
+					"name": "Close Opportunity - Win",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": 3,\n  \"actualrevenue\": \"480000.00\",\n  \"actualclosedate\": \"2025-04-15\",\n  \"closingnotes\": \"Cliente firmó contrato por 3 años. Descuento del 4% aplicado.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/opportunities/{{opportunity_id}}/close",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								"{{opportunity_id}}",
+								"close"
+							]
+						},
+						"description": "Cierra una oportunidad como GANADA (status=3)."
+					},
+					"response": []
+				},
+				{
+					"name": "Close Opportunity - Loss",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": 4,\n  \"closingnotes\": \"Cliente eligió a competidor por precio más bajo.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/opportunities/{{opportunity_id}}/close",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								"{{opportunity_id}}",
+								"close"
+							]
+						},
+						"description": "Cierra una oportunidad como PERDIDA (status=4 o 5)."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Opportunity",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/opportunities/{{opportunity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								"{{opportunity_id}}"
+							]
+						},
+						"description": "Cancela una oportunidad (soft delete)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Opportunity Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/opportunities/stats",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"opportunities",
+								"stats"
+							]
+						},
+						"description": "Estadísticas: total, ganadas, perdidas, revenue, win rate."
+					},
+					"response": []
+				}
+			],
+			"description": "Pipeline de ventas y gestión de oportunidades"
+		},
+		{
+			"name": "Accounts",
+			"item": [
+				{
+					"name": "List Accounts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/accounts/?search=&statecode=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"accounts",
+								""
+							],
+							"query": [
+								{
+									"key": "search",
+									"value": "",
+									"description": "Buscar por nombre"
+								},
+								{
+									"key": "statecode",
+									"value": "0",
+									"description": "0=Active, 1=Inactive"
+								}
+							]
+						},
+						"description": "Lista todas las cuentas empresariales (B2B)."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Account",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('account_id', response.accountid);",
+									"    console.log('Account created! ID:', response.accountid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Microsoft México\",\n  \"accountnumber\": \"ACC-001\",\n  \"emailaddress1\": \"contacto@microsoft.com.mx\",\n  \"telephone1\": \"55-1234-5678\",\n  \"websiteurl\": \"https://microsoft.com/mx\",\n  \"address1_line1\": \"Paseo de la Reforma 505\",\n  \"address1_city\": \"Ciudad de México\",\n  \"address1_stateorprovince\": \"CDMX\",\n  \"address1_postalcode\": \"06500\",\n  \"address1_country\": \"México\",\n  \"revenue\": \"50000000.00\",\n  \"numberofemployees\": 5000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/accounts/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"accounts",
+								""
+							]
+						},
+						"description": "Crea una nueva cuenta empresarial."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Account",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/accounts/{{account_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"accounts",
+								"{{account_id}}"
+							]
+						},
+						"description": "Obtiene una cuenta específica por ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Account",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"revenue\": \"60000000.00\",\n  \"numberofemployees\": 5500,\n  \"description\": \"Cliente VIP. Renovación anual.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/accounts/{{account_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"accounts",
+								"{{account_id}}"
+							]
+						},
+						"description": "Actualiza una cuenta existente."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Account",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/accounts/{{account_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"accounts",
+								"{{account_id}}"
+							]
+						},
+						"description": "Desactiva una cuenta (soft delete)."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de cuentas empresariales (B2B)"
+		},
+		{
+			"name": "Contacts",
+			"item": [
+				{
+					"name": "List Contacts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/contacts/?parentcustomerid={{account_id}}&search=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"contacts",
+								""
+							],
+							"query": [
+								{
+									"key": "parentcustomerid",
+									"value": "{{account_id}}",
+									"description": "Filtrar por empresa",
+									"disabled": true
+								},
+								{
+									"key": "search",
+									"value": "",
+									"description": "Buscar por nombre"
+								}
+							]
+						},
+						"description": "Lista todos los contactos (B2C o asociados a empresas)."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Contact",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('contact_id', response.contactid);",
+									"    console.log('Contact created! ID:', response.contactid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"firstname\": \"Juan\",\n  \"lastname\": \"Pérez\",\n  \"emailaddress1\": \"juan.perez@microsoft.com.mx\",\n  \"telephone1\": \"55-9876-5432\",\n  \"mobilephone\": \"55-1234-5678\",\n  \"jobtitle\": \"Director de Ventas\",\n  \"parentcustomerid\": \"{{account_id}}\",\n  \"address1_city\": \"Ciudad de México\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/contacts/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"contacts",
+								""
+							]
+						},
+						"description": "Crea un nuevo contacto."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Contact",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/contacts/{{contact_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"contacts",
+								"{{contact_id}}"
+							]
+						},
+						"description": "Obtiene un contacto específico por ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Contact",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"jobtitle\": \"VP de Ventas\",\n  \"mobilephone\": \"55-9999-8888\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/contacts/{{contact_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"contacts",
+								"{{contact_id}}"
+							]
+						},
+						"description": "Actualiza un contacto existente."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Contact",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/contacts/{{contact_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"contacts",
+								"{{contact_id}}"
+							]
+						},
+						"description": "Desactiva un contacto (soft delete)."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de contactos individuales"
+		},
+		{
+			"name": "Quotes",
+			"item": [
+				{
+					"name": "List Quotes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/quotes/?statecode=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								""
+							],
+							"query": [
+								{
+									"key": "statecode",
+									"value": "0",
+									"description": "0=Draft, 1=Active, 2=Won, 3=Closed"
+								}
+							]
+						},
+						"description": "Lista todas las cotizaciones con filtros."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Quote",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('quote_id', response.quoteid);",
+									"    console.log('Quote created! ID:', response.quoteid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Propuesta Software Empresarial\",\n  \"opportunityid\": \"{{opportunity_id}}\",\n  \"accountid\": \"{{account_id}}\",\n  \"effectivefrom\": \"2024-01-01\",\n  \"effectiveto\": \"2024-03-31\",\n  \"description\": \"Cotización para implementación de software\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/quotes/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								""
+							]
+						},
+						"description": "Crea una nueva cotización."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Quote from Opportunity",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('quote_id', response.quoteid);",
+									"    console.log('Quote created from opportunity! ID:', response.quoteid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/quotes/from-opportunity/{{opportunity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"from-opportunity",
+								"{{opportunity_id}}"
+							]
+						},
+						"description": "Crea cotización automáticamente desde una oportunidad."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Quote",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}"
+							]
+						},
+						"description": "Obtiene una cotización específica."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Quote",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Propuesta Actualizada\",\n  \"discountpercentage\": \"5.00\",\n  \"description\": \"Descuento aplicado por volumen\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}"
+							]
+						},
+						"description": "Actualiza una cotización."
+					},
+					"response": []
+				},
+				{
+					"name": "Add Quote Line Item",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"productname\": \"Licencia Office 365\",\n  \"productdescription\": \"Plan E3 - 100 usuarios\",\n  \"quantity\": \"100\",\n  \"priceperunit\": \"250.00\",\n  \"tax\": \"4000.00\",\n  \"sequencenumber\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}/details",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}",
+								"details"
+							]
+						},
+						"description": "Agrega un producto/servicio a la cotización."
+					},
+					"response": []
+				},
+				{
+					"name": "Remove Quote Line Item",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}/details/{{detail_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}",
+								"details",
+								"{{detail_id}}"
+							]
+						},
+						"description": "Elimina un producto de la cotización."
+					},
+					"response": []
+				},
+				{
+					"name": "Activate Quote",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"effectivefrom\": \"2024-01-15\",\n  \"effectiveto\": \"2024-04-15\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}/activate",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}",
+								"activate"
+							]
+						},
+						"description": "Activa la cotización (Draft → Active)."
+					},
+					"response": []
+				},
+				{
+					"name": "Close Quote as Won",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"statuscode\": 3,\n  \"closedon\": \"2024-02-01\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}/close",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}",
+								"close"
+							]
+						},
+						"description": "Cierra cotización como GANADA (statuscode=3)."
+					},
+					"response": []
+				},
+				{
+					"name": "Close Quote as Lost",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"statuscode\": 4,\n  \"closedon\": \"2024-02-01\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}/close",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}",
+								"close"
+							]
+						},
+						"description": "Cierra cotización como PERDIDA (statuscode=4)."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Quote",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/quotes/{{quote_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"{{quote_id}}"
+							]
+						},
+						"description": "Elimina una cotización (solo si está en borrador)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Quote Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/quotes/stats/summary",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"quotes",
+								"stats",
+								"summary"
+							]
+						},
+						"description": "Estadísticas de cotizaciones."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de cotizaciones y propuestas"
+		},
+		{
+			"name": "Orders",
+			"item": [
+				{
+					"name": "List Orders",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/?statecode=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								""
+							],
+							"query": [
+								{
+									"key": "statecode",
+									"value": "0",
+									"description": "0=Active, 1=Submitted, 2=Canceled, 3=Fulfilled, 4=Invoiced"
+								}
+							]
+						},
+						"description": "Lista todas las órdenes de venta."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Order",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('order_id', response.salesorderid);",
+									"    console.log('Order created! ID:', response.salesorderid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Orden Software Empresarial\",\n  \"accountid\": \"{{account_id}}\",\n  \"requestdeliveryby\": \"2024-03-15\",\n  \"description\": \"Orden de compra para licencias\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/orders/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								""
+							]
+						},
+						"description": "Crea una nueva orden de venta."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Order from Quote",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('order_id', response.salesorderid);",
+									"    console.log('Order created from quote! ID:', response.salesorderid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/from-quote/{{quote_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"from-quote",
+								"{{quote_id}}"
+							]
+						},
+						"description": "Crea orden automáticamente desde cotización ganada."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Order",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/{{order_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"{{order_id}}"
+							]
+						},
+						"description": "Obtiene una orden específica."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Order",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"requestdeliveryby\": \"2024-04-01\",\n  \"description\": \"Fecha de entrega actualizada\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/orders/{{order_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"{{order_id}}"
+							]
+						},
+						"description": "Actualiza una orden."
+					},
+					"response": []
+				},
+				{
+					"name": "Submit Order",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/{{order_id}}/submit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"{{order_id}}",
+								"submit"
+							]
+						},
+						"description": "Envía la orden para procesamiento (Active → Submitted)."
+					},
+					"response": []
+				},
+				{
+					"name": "Fulfill Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"datefulfilled\": \"2024-03-20\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/orders/{{order_id}}/fulfill",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"{{order_id}}",
+								"fulfill"
+							]
+						},
+						"description": "Marca orden como entregada (Submitted → Fulfilled)."
+					},
+					"response": []
+				},
+				{
+					"name": "Cancel Order",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/{{order_id}}/cancel",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"{{order_id}}",
+								"cancel"
+							]
+						},
+						"description": "Cancela una orden activa."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Order",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/{{order_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"{{order_id}}"
+							]
+						},
+						"description": "Elimina una orden (solo si no está facturada)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Order Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/orders/stats/summary",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"orders",
+								"stats",
+								"summary"
+							]
+						},
+						"description": "Estadísticas de órdenes de venta."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de órdenes de venta"
+		},
+		{
+			"name": "Invoices",
+			"item": [
+				{
+					"name": "List Invoices",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/invoices/?statecode=0&overdue=false",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								""
+							],
+							"query": [
+								{
+									"key": "statecode",
+									"value": "0",
+									"description": "0=Active, 1=Paid, 2=Canceled"
+								},
+								{
+									"key": "overdue",
+									"value": "false",
+									"description": "true/false - Facturas vencidas",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lista todas las facturas con filtros."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Invoice",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('invoice_id', response.invoiceid);",
+									"    console.log('Invoice created! ID:', response.invoiceid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Factura Software Empresarial\",\n  \"accountid\": \"{{account_id}}\",\n  \"datedelivered\": \"2024-03-20\",\n  \"duedate\": \"2024-04-20\",\n  \"description\": \"Factura por servicios entregados\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/invoices/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								""
+							]
+						},
+						"description": "Crea una nueva factura manualmente."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Invoice from Order",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('invoice_id', response.invoiceid);",
+									"    console.log('Invoice created from order! ID:', response.invoiceid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/invoices/from-order/{{order_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"from-order",
+								"{{order_id}}"
+							]
+						},
+						"description": "Crea factura automáticamente desde orden entregada."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Invoice",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}"
+							]
+						},
+						"description": "Obtiene una factura específica."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Invoice",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"duedate\": \"2024-05-01\",\n  \"description\": \"Fecha de pago extendida\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}"
+							]
+						},
+						"description": "Actualiza una factura activa."
+					},
+					"response": []
+				},
+				{
+					"name": "Add Invoice Line Item",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"productname\": \"Servicio de Consultoría\",\n  \"productdescription\": \"40 horas de consultoría técnica\",\n  \"quantity\": \"40\",\n  \"priceperunit\": \"150.00\",\n  \"tax\": \"960.00\",\n  \"sequencenumber\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}/details",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}",
+								"details"
+							]
+						},
+						"description": "Agrega un producto/servicio a la factura."
+					},
+					"response": []
+				},
+				{
+					"name": "Remove Invoice Line Item",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}/details/{{detail_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}",
+								"details",
+								"{{detail_id}}"
+							]
+						},
+						"description": "Elimina un producto de la factura."
+					},
+					"response": []
+				},
+				{
+					"name": "Record Payment",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"payment_amount\": \"15000.00\",\n  \"payment_date\": \"2024-04-10\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}/record-payment",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}",
+								"record-payment"
+							]
+						},
+						"description": "Registra un pago en la factura. Actualiza totalpaid y totalamountdue."
+					},
+					"response": []
+				},
+				{
+					"name": "Cancel Invoice",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"Cliente solicitó cancelación\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}/cancel",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}",
+								"cancel"
+							]
+						},
+						"description": "Cancela una factura (solo si no está pagada)."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Invoice",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/invoices/{{invoice_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"{{invoice_id}}"
+							]
+						},
+						"description": "Elimina una factura (solo si no tiene pagos)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Invoice Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/invoices/stats/summary",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"invoices",
+								"stats",
+								"summary"
+							]
+						},
+						"description": "Estadísticas de facturas: total, pagado, pendiente, vencidas."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de facturas y pagos"
+		},
+		{
+			"name": "Products",
+			"item": [
+				{
+					"name": "List Products",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/products/?state=0&search=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"products",
+								""
+							],
+							"query": [
+								{
+									"key": "state",
+									"value": "0",
+									"description": "0=Active, 1=Inactive"
+								},
+								{
+									"key": "search",
+									"value": "",
+									"description": "Buscar en nombre o SKU",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lista todos los productos del catálogo."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Product",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('product_id', response.productid);",
+									"    console.log('Product created! ID:', response.productid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Office 365 Business\",\n  \"productnumber\": \"OFF365-BUS-001\",\n  \"description\": \"Suscripción anual Office 365 Business Premium\",\n  \"price\": \"299.99\",\n  \"standardcost\": \"150.00\",\n  \"quantityonhand\": \"1000\",\n  \"productstructure\": 1,\n  \"producttypecode\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/products/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"products",
+								""
+							]
+						},
+						"description": "Crea un nuevo producto en el catálogo."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Product",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/products/{{product_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"products",
+								"{{product_id}}"
+							]
+						},
+						"description": "Obtiene un producto específico por ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Product",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"price\": \"279.99\",\n  \"quantityonhand\": \"950\",\n  \"description\": \"Oferta especial - Suscripción Office 365\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/products/{{product_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"products",
+								"{{product_id}}"
+							]
+						},
+						"description": "Actualiza un producto existente."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Product",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/products/{{product_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"products",
+								"{{product_id}}"
+							]
+						},
+						"description": "Desactiva un producto (soft delete)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Product Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/products/stats/summary",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"products",
+								"stats",
+								"summary"
+							]
+						},
+						"description": "Estadísticas de inventario: total productos, valor inventario, stock bajo."
+					},
+					"response": []
+				},
+				{
+					"name": "List Price Lists",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/pricelists/?state=0",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricelists",
+								""
+							],
+							"query": [
+								{
+									"key": "state",
+									"value": "0",
+									"description": "0=Active, 1=Inactive"
+								}
+							]
+						},
+						"description": "Lista todas las listas de precios."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Price List",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('pricelist_id', response.pricelevelid);",
+									"    console.log('Price List created! ID:', response.pricelevelid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Precios Corporativos 2025\",\n  \"description\": \"Lista de precios para clientes corporativos\",\n  \"begindate\": \"2025-01-01\",\n  \"enddate\": \"2025-12-31\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricelists/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricelists",
+								""
+							]
+						},
+						"description": "Crea una nueva lista de precios."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Price List",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/pricelists/{{pricelist_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricelists",
+								"{{pricelist_id}}"
+							]
+						},
+						"description": "Obtiene una lista de precios específica."
+					},
+					"response": []
+				},
+				{
+					"name": "List Price List Items",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/pricelists/{{pricelist_id}}/items",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricelists",
+								"{{pricelist_id}}",
+								"items"
+							]
+						},
+						"description": "Lista todos los productos en una lista de precios."
+					},
+					"response": []
+				},
+				{
+					"name": "Add Product to Price List",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pricelevelid\": \"{{pricelist_id}}\",\n  \"productid\": \"{{product_id}}\",\n  \"amount\": \"249.99\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricelists/items",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricelists",
+								"items"
+							]
+						},
+						"description": "Agrega un producto a una lista de precios con precio especial."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de productos y listas de precios"
+		},
+		{
+			"name": "Activities",
+			"item": [
+				{
+					"name": "List Activities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/activities/?state=0&type=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								""
+							],
+							"query": [
+								{
+									"key": "state",
+									"value": "0",
+									"description": "0=Open, 1=Completed, 2=Canceled, 3=Scheduled"
+								},
+								{
+									"key": "type",
+									"value": "",
+									"description": "email, phonecall, task, appointment",
+									"disabled": true
+								},
+								{
+									"key": "regarding",
+									"value": "",
+									"description": "ID de Lead/Opportunity/Account/Contact",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lista todas las actividades con filtros opcionales."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Activity",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/activities/{{activity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"{{activity_id}}"
+							]
+						},
+						"description": "Obtiene el detalle completo de una actividad específica con sus datos según el tipo (Email, Phone Call, Task o Appointment)."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Email",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('activity_id', response.activity.activityid);",
+									"    console.log('Email activity created! ID:', response.activity.activityid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Seguimiento de propuesta\",\n  \"description\": \"Email de seguimiento después de la reunión\",\n  \"to\": \"cliente@empresa.com\",\n  \"sender\": \"ventas@miempresa.com\",\n  \"body\": \"Estimado cliente,\\n\\nGracias por su tiempo en la reunión de hoy...\",\n  \"directioncode\": true,\n  \"regardingobjectid\": \"{{opportunity_id}}\",\n  \"regardingobjectidtype\": \"opportunity\",\n  \"ownerid\": \"{{user_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/activities/emails",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"emails"
+							]
+						},
+						"description": "Crea una actividad de email relacionada a una entidad."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Phone Call",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('activity_id', response.activity.activityid);",
+									"    console.log('Phone Call created! ID:', response.activity.activityid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Llamada de prospección\",\n  \"description\": \"Cliente interesado en producto X\",\n  \"phonenumber\": \"+52-55-1234-5678\",\n  \"directioncode\": true,\n  \"scheduledstart\": \"2025-01-15T10:00:00Z\",\n  \"scheduledend\": \"2025-01-15T10:30:00Z\",\n  \"regardingobjectid\": \"{{lead_id}}\",\n  \"regardingobjectidtype\": \"lead\",\n  \"ownerid\": \"{{user_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/activities/phonecalls",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"phonecalls"
+							]
+						},
+						"description": "Registra una llamada telefónica."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Task",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('activity_id', response.activity.activityid);",
+									"    console.log('Task created! ID:', response.activity.activityid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Preparar presentación para cliente\",\n  \"description\": \"Crear slides con propuesta de valor\",\n  \"scheduledstart\": \"2025-01-10T09:00:00Z\",\n  \"scheduledend\": \"2025-01-12T17:00:00Z\",\n  \"prioritycode\": 2,\n  \"regardingobjectid\": \"{{opportunity_id}}\",\n  \"regardingobjectidtype\": \"opportunity\",\n  \"ownerid\": \"{{user_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/activities/tasks",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"tasks"
+							]
+						},
+						"description": "Crea una tarea por completar."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Appointment",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.environment.set('activity_id', response.activity.activityid);",
+									"    console.log('Appointment created! ID:', response.activity.activityid);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Reunión de presentación de producto\",\n  \"description\": \"Demo del sistema CRM\",\n  \"location\": \"Oficinas cliente - Sala de juntas A\",\n  \"scheduledstart\": \"2025-01-20T14:00:00Z\",\n  \"scheduledend\": \"2025-01-20T15:30:00Z\",\n  \"requiredattendees\": \"[]\",\n  \"regardingobjectid\": \"{{opportunity_id}}\",\n  \"regardingobjectidtype\": \"opportunity\",\n  \"ownerid\": \"{{user_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/activities/appointments",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"appointments"
+							]
+						},
+						"description": "Crea una cita/reunión agendada."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Activity",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"subject\": \"Nuevo asunto actualizado\",\n  \"description\": \"Descripción actualizada\",\n  \"statecode\": 1,\n  \"scheduledstart\": \"2025-01-20T10:00:00Z\",\n  \"scheduledend\": \"2025-01-20T11:00:00Z\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/activities/{{activity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"{{activity_id}}"
+							]
+						},
+						"description": "Actualiza una actividad existente. Solo se actualizan los campos enviados."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Activity",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/activities/{{activity_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"{{activity_id}}"
+							]
+						},
+						"description": "Elimina una actividad (soft delete)."
+					},
+					"response": []
+				},
+				{
+					"name": "Complete Activity",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"actualend\": \"2025-01-15T11:00:00Z\",\n  \"actualdurationminutes\": 45\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/activities/{{activity_id}}/complete",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"{{activity_id}}",
+								"complete"
+							]
+						},
+						"description": "Marca una actividad como completada."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Activity Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/activities/stats/summary",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"activities",
+								"stats",
+								"summary"
+							]
+						},
+						"description": "Estadísticas de actividades: total, abiertas, completadas, vencidas."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de actividades (Email, Phone Call, Task, Appointment)"
+		},
+		{
+			"name": "Users & Roles",
+			"item": [
+				{
+					"name": "List Users",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/users/?role=&isdisabled=false",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								""
+							],
+							"query": [
+								{
+									"key": "role",
+									"value": "",
+									"description": "Filtrar por rol",
+									"disabled": true
+								},
+								{
+									"key": "isdisabled",
+									"value": "false",
+									"description": "true/false"
+								}
+							]
+						},
+						"description": "Lista todos los usuarios del sistema."
+					},
+					"response": []
+				},
+				{
+					"name": "Create User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"emailaddress1\": \"vendedor@crm.com\",\n  \"fullname\": \"Roberto Gómez\",\n  \"password\": \"Password123!\",\n  \"role_name\": \"Salesperson\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/users/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								""
+							]
+						},
+						"description": "Crea un nuevo usuario (requiere permisos de admin)."
+					},
+					"response": []
+				},
+				{
+					"name": "Get User",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/users/{{user_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								"{{user_id}}"
+							]
+						},
+						"description": "Obtiene un usuario específico por ID."
+					},
+					"response": []
+				},
+				{
+					"name": "Update User",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"fullname\": \"Roberto Gómez Pérez\",\n  \"role_name\": \"Sales Manager\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/users/{{user_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								"{{user_id}}"
+							]
+						},
+						"description": "Actualiza un usuario existente."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete User",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/users/{{user_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								"{{user_id}}"
+							]
+						},
+						"description": "Desactiva un usuario (soft delete)."
+					},
+					"response": []
+				},
+				{
+					"name": "List Security Roles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/roles/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"roles",
+								""
+							]
+						},
+						"description": "Lista todos los roles de seguridad disponibles."
+					},
+					"response": []
+				}
+			],
+			"description": "Gestión de usuarios y roles del sistema"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000/api",
+			"type": "string"
+		}
+	]
+}

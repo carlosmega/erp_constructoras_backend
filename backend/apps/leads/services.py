@@ -1,0 +1,459 @@
+"""
+Lead business logic service layer.
+
+Handles lead operations, state transitions, and qualification workflow.
+
+Phase 5 Implementation (User Story 3)
+"""
+
+from typing import List, Optional
+from uuid import UUID
+from datetime import datetime
+from decimal import Decimal
+from django.db.models import Q, Count, Sum, Avg, QuerySet
+from django.db import transaction
+
+from apps.leads.models import (
+    Lead,
+    LeadStateCode,
+    LeadStatusCode,
+    LeadQualityCode,
+    LeadSourceCode,
+)
+from apps.leads.schemas import (
+    CreateLeadDto,
+    UpdateLeadDto,
+    QualifyLeadDto,
+    DisqualifyLeadDto,
+    LeadStatsSchema,
+)
+from apps.users.models import SystemUser
+from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.permissions import filter_by_ownership
+
+
+class LeadService:
+    """
+    Service class for Lead entity business logic.
+    """
+
+    @staticmethod
+    def list_leads(
+        user: SystemUser,
+        statecode: Optional[int] = None,
+        statuscode: Optional[int] = None,
+        leadqualitycode: Optional[int] = None,
+        leadsourcecode: Optional[int] = None,
+        search: Optional[str] = None,
+        ownerid: Optional[UUID] = None,
+    ) -> QuerySet[Lead]:
+        """
+        List leads with filtering and ownership rules.
+
+        Args:
+            user: Current user (for ownership filtering)
+            statecode: Filter by state code
+            statuscode: Filter by status code
+            leadqualitycode: Filter by quality code
+            leadsourcecode: Filter by source code
+            search: Search in fullname, email, company
+            ownerid: Filter by owner (System Administrator/Manager only)
+
+        Returns:
+            QuerySet of Lead objects
+        """
+        # Start with all leads
+        queryset = Lead.objects.all()
+
+        # Apply ownership filtering based on user role
+        queryset = filter_by_ownership(queryset, user, owner_field='ownerid')
+
+        # Apply filters
+        if statecode is not None:
+            queryset = queryset.filter(statecode=statecode)
+
+        if statuscode is not None:
+            queryset = queryset.filter(statuscode=statuscode)
+
+        if leadqualitycode is not None:
+            queryset = queryset.filter(leadqualitycode=leadqualitycode)
+
+        if leadsourcecode is not None:
+            queryset = queryset.filter(leadsourcecode=leadsourcecode)
+
+        if ownerid:
+            # Only System Administrator and Sales Manager can filter by other owners
+            if user.role_name not in ["System Administrator", "Sales Manager"]:
+                raise PermissionDenied("You cannot view other users' leads")
+            queryset = queryset.filter(ownerid=ownerid)
+
+        if search:
+            queryset = queryset.filter(
+                Q(fullname__icontains=search) |
+                Q(emailaddress1__icontains=search) |
+                Q(companyname__icontains=search) |
+                Q(subject__icontains=search)
+            )
+
+        # Optimize query with select_related
+        queryset = queryset.select_related('ownerid', 'createdby', 'modifiedby')
+
+        return queryset
+
+    @staticmethod
+    def create_lead(dto: CreateLeadDto, user: SystemUser) -> Lead:
+        """
+        Create a new lead.
+
+        Args:
+            dto: Lead creation data
+            user: Current user (will be set as createdby and modifiedby)
+
+        Returns:
+            Created Lead instance
+
+        Raises:
+            ValidationError: If validation fails
+        """
+        # Validate owner exists (if specified)
+        owner = user
+        if dto.ownerid:
+            try:
+                owner = SystemUser.objects.get(systemuserid=dto.ownerid)
+            except SystemUser.DoesNotExist:
+                raise ValidationError(f"Owner with ID {dto.ownerid} not found")
+
+        # Create lead
+        lead = Lead(
+            firstname=dto.firstname,
+            lastname=dto.lastname,
+            emailaddress1=dto.emailaddress1,
+            telephone1=dto.telephone1,
+            mobilephone=dto.mobilephone,
+            companyname=dto.companyname,
+            jobtitle=dto.jobtitle,
+            subject=dto.subject,
+            description=dto.description,
+            leadqualitycode=dto.leadqualitycode,
+            leadsourcecode=dto.leadsourcecode,
+            estimatedvalue=dto.estimatedvalue,
+            estimatedclosedate=dto.estimatedclosedate,
+            ownerid=owner,
+            statecode=LeadStateCode.OPEN,
+            statuscode=LeadStatusCode.NEW,
+            createdby=user,
+            modifiedby=user,
+        )
+
+        lead.save()
+        return lead
+
+    @staticmethod
+    def get_lead_by_id(lead_id: UUID, user: SystemUser) -> Lead:
+        """
+        Get lead by ID with ownership check.
+
+        Args:
+            lead_id: Lead UUID
+            user: Current user
+
+        Returns:
+            Lead instance
+
+        Raises:
+            NotFound: If lead doesn't exist
+            PermissionDenied: If user doesn't have access
+        """
+        try:
+            lead = Lead.objects.select_related(
+                'ownerid', 'createdby', 'modifiedby'
+            ).get(leadid=lead_id)
+        except Lead.DoesNotExist:
+            raise NotFound(f"Lead with ID {lead_id} not found")
+
+        # Check ownership (System Administrator and Sales Manager can see all)
+        if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if lead.ownerid_id != user.systemuserid:
+                raise PermissionDenied("You don't have access to this lead")
+
+        return lead
+
+    @staticmethod
+    def update_lead(lead_id: UUID, dto: UpdateLeadDto, user: SystemUser) -> Lead:
+        """
+        Update an existing lead.
+
+        Args:
+            lead_id: Lead UUID
+            dto: Update data (partial)
+            user: Current user
+
+        Returns:
+            Updated Lead instance
+
+        Raises:
+            NotFound: If lead doesn't exist
+            PermissionDenied: If user doesn't have access
+            ValidationError: If validation fails
+        """
+        lead = LeadService.get_lead_by_id(lead_id, user)
+
+        # Check if lead is still open (can't update qualified/disqualified leads)
+        if lead.statecode != LeadStateCode.OPEN:
+            raise ValidationError(
+                f"Cannot update lead in '{lead.state_name}' state. "
+                "Only open leads can be updated."
+            )
+
+        # Update fields (only if provided)
+        update_fields = [
+            'firstname', 'lastname', 'emailaddress1', 'telephone1', 'mobilephone',
+            'companyname', 'jobtitle', 'subject', 'description',
+            'leadqualitycode', 'leadsourcecode', 'estimatedvalue', 'estimatedclosedate',
+            'statuscode'
+        ]
+
+        for field in update_fields:
+            value = getattr(dto, field, None)
+            if value is not None:
+                setattr(lead, field, value)
+
+        # Handle owner change (if specified)
+        if dto.ownerid:
+            try:
+                new_owner = SystemUser.objects.get(systemuserid=dto.ownerid)
+                lead.ownerid = new_owner
+            except SystemUser.DoesNotExist:
+                raise ValidationError(f"Owner with ID {dto.ownerid} not found")
+
+        # Validate status code is valid for Open state
+        if dto.statuscode and dto.statuscode not in [
+            LeadStatusCode.NEW,
+            LeadStatusCode.CONTACTED
+        ]:
+            raise ValidationError(
+                f"Invalid status code for open lead. "
+                f"Must be {LeadStatusCode.NEW} (New) or {LeadStatusCode.CONTACTED} (Contacted)"
+            )
+
+        lead.modifiedby = user
+        lead.save()
+
+        return lead
+
+    @staticmethod
+    @transaction.atomic
+    def qualify_lead(lead_id: UUID, dto: QualifyLeadDto, user: SystemUser) -> Lead:
+        """
+        Qualify a lead (convert to Opportunity).
+
+        Creates Account and/or Contact if requested, then creates Opportunity.
+        Sets lead state to Qualified.
+
+        Args:
+            lead_id: Lead UUID
+            dto: Qualification parameters
+            user: Current user
+
+        Returns:
+            Updated Lead instance with qualifyingopportunityid set
+
+        Raises:
+            NotFound: If lead doesn't exist
+            PermissionDenied: If user doesn't have access
+            ValidationError: If lead cannot be qualified
+        """
+        lead = LeadService.get_lead_by_id(lead_id, user)
+
+        # Validate lead is open
+        if lead.statecode != LeadStateCode.OPEN:
+            raise ValidationError(
+                f"Cannot qualify lead in '{lead.state_name}' state. "
+                "Only open leads can be qualified."
+            )
+
+        # Create Account if requested and company name exists
+        account = None
+        if dto.create_account and lead.companyname:
+            from apps.accounts.models import Account
+            account = Account.objects.create(
+                name=lead.companyname,
+                emailaddress1=lead.emailaddress1,
+                telephone1=lead.telephone1,
+                ownerid=lead.ownerid,
+                createdby=user,
+                modifiedby=user,
+            )
+
+        # Create Contact if requested
+        contact = None
+        if dto.create_contact:
+            from apps.contacts.models import Contact
+            contact = Contact.objects.create(
+                firstname=lead.firstname,
+                lastname=lead.lastname,
+                emailaddress1=lead.emailaddress1,
+                telephone1=lead.telephone1,
+                mobilephone=lead.mobilephone,
+                jobtitle=lead.jobtitle,
+                parentcustomerid=account if account else None,
+                ownerid=lead.ownerid,
+                createdby=user,
+                modifiedby=user,
+            )
+
+        # Create Opportunity
+        from apps.opportunities.models import Opportunity, OpportunityStateCode, OpportunityStatusCode
+        opportunity_name = dto.opportunity_name or f"{lead.fullname} - {lead.companyname or 'Opportunity'}"
+        opportunity = Opportunity.objects.create(
+            name=opportunity_name,
+            accountid=account if account else None,
+            contactid=contact if contact else None,
+            estimatedrevenue=dto.estimated_revenue or lead.estimatedvalue,
+            estimatedclosedate=dto.estimated_close_date or lead.estimatedclosedate,
+            originatingleadid=lead,
+            ownerid=lead.ownerid,
+            createdby=user,
+            modifiedby=user,
+            statecode=OpportunityStateCode.OPEN,
+            statuscode=OpportunityStatusCode.IN_PROGRESS,
+            probability=50,  # Default probability for new opportunities
+        )
+
+        # Set the qualifying opportunity ID
+        lead.qualifyingopportunityid = opportunity.opportunityid
+
+        # Update lead state to Qualified
+        lead.statecode = LeadStateCode.QUALIFIED
+        lead.statuscode = LeadStatusCode.QUALIFIED
+        lead.modifiedby = user
+        lead.save()
+
+        return lead
+
+    @staticmethod
+    def disqualify_lead(lead_id: UUID, dto: DisqualifyLeadDto, user: SystemUser) -> Lead:
+        """
+        Disqualify a lead (mark as lost/cannot contact/not interested).
+
+        Args:
+            lead_id: Lead UUID
+            dto: Disqualification parameters
+            user: Current user
+
+        Returns:
+            Updated Lead instance
+
+        Raises:
+            NotFound: If lead doesn't exist
+            PermissionDenied: If user doesn't have access
+            ValidationError: If lead cannot be disqualified
+        """
+        lead = LeadService.get_lead_by_id(lead_id, user)
+
+        # Validate lead is open
+        if lead.statecode != LeadStateCode.OPEN:
+            raise ValidationError(
+                f"Cannot disqualify lead in '{lead.state_name}' state. "
+                "Only open leads can be disqualified."
+            )
+
+        # Validate status code is a disqualified status
+        valid_disqualified_codes = [
+            LeadStatusCode.LOST,
+            LeadStatusCode.CANNOT_CONTACT,
+            LeadStatusCode.NO_LONGER_INTERESTED,
+        ]
+
+        if dto.statuscode not in valid_disqualified_codes:
+            raise ValidationError(
+                f"Invalid disqualification status code. "
+                f"Must be one of: {', '.join([str(c) for c in valid_disqualified_codes])}"
+            )
+
+        # Update lead state
+        lead.statecode = LeadStateCode.DISQUALIFIED
+        lead.statuscode = dto.statuscode
+
+        # Add remarks to description if provided
+        if dto.remarks:
+            lead.description = (lead.description or '') + f"\n\nDisqualification remarks: {dto.remarks}"
+
+        lead.modifiedby = user
+        lead.save()
+
+        return lead
+
+    @staticmethod
+    def delete_lead(lead_id: UUID, user: SystemUser) -> Lead:
+        """
+        Delete (disqualify) a lead.
+
+        Soft delete by marking as disqualified with 'Lost' status.
+
+        Args:
+            lead_id: Lead UUID
+            user: Current user
+
+        Returns:
+            Updated Lead instance
+
+        Raises:
+            NotFound: If lead doesn't exist
+            PermissionDenied: If user doesn't have access
+        """
+        disqualify_dto = DisqualifyLeadDto(
+            statuscode=LeadStatusCode.LOST,
+            remarks="Deleted by user"
+        )
+
+        return LeadService.disqualify_lead(lead_id, disqualify_dto, user)
+
+    @staticmethod
+    def get_lead_stats(user: SystemUser) -> LeadStatsSchema:
+        """
+        Get lead statistics for dashboard.
+
+        Args:
+            user: Current user (for ownership filtering)
+
+        Returns:
+            LeadStatsSchema with aggregated statistics
+        """
+        # Get leads visible to user
+        queryset = filter_by_ownership(Lead.objects.all(), user, owner_field='ownerid')
+
+        # Count by state
+        total_leads = queryset.count()
+        open_leads = queryset.filter(statecode=LeadStateCode.OPEN).count()
+        qualified_leads = queryset.filter(statecode=LeadStateCode.QUALIFIED).count()
+        disqualified_leads = queryset.filter(statecode=LeadStateCode.DISQUALIFIED).count()
+
+        # Count by quality
+        leads_by_quality = {}
+        for quality_code in LeadQualityCode:
+            count = queryset.filter(leadqualitycode=quality_code.value).count()
+            leads_by_quality[quality_code.label] = count
+
+        # Count by source
+        leads_by_source = {}
+        for source_code in LeadSourceCode:
+            count = queryset.filter(leadsourcecode=source_code.value).count()
+            leads_by_source[source_code.label] = count
+
+        # Calculate value metrics
+        value_aggregation = queryset.aggregate(
+            total_value=Sum('estimatedvalue'),
+            avg_value=Avg('estimatedvalue')
+        )
+
+        return LeadStatsSchema(
+            total_leads=total_leads,
+            open_leads=open_leads,
+            qualified_leads=qualified_leads,
+            disqualified_leads=disqualified_leads,
+            leads_by_quality=leads_by_quality,
+            leads_by_source=leads_by_source,
+            total_estimated_value=value_aggregation['total_value'],
+            avg_estimated_value=value_aggregation['avg_value'],
+        )

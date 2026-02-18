@@ -1,0 +1,30 @@
+# CRM Backend Foundation - Python Dependencies
+# Generated from Implementation Plan: 001-crm-backend-foundation
+
+# Core Framework
+Django==5.0.1
+django-ninja==1.1.0
+
+# Database
+psycopg[binary]==3.1.18  # PostgreSQL adapter with binary dependencies
+
+# Configuration & Environment
+python-decouple==3.8
+
+# Filtering & Pagination
+django-filter==23.5
+
+# CORS for Frontend Integration
+django-cors-headers==4.3.1
+
+# Production Servers
+gunicorn==21.2.0
+uvicorn[standard]==0.27.0
+
+# Development & Testing
+pytest==8.0.0
+pytest-django==4.7.0
+pytest-cov==4.1.0
+
+# Django Extensions (useful for development)
+django-extensions==3.2.3

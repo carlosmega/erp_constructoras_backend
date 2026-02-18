@@ -1,0 +1,79 @@
+{
+	"id": "crm-backend-local",
+	"name": "CRM Backend - Local",
+	"values": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000/api",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "admin_email",
+			"value": "admin@test.com",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "admin_password",
+			"value": "admin123",
+			"type": "secret",
+			"enabled": true
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "lead_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "opportunity_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "account_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "contact_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "quote_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "order_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "invoice_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "detail_id",
+			"value": "",
+			"type": "default",
+			"enabled": true
+		}
+	],
+	"_postman_variable_scope": "environment"
+}
