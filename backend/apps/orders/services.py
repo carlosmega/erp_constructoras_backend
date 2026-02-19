@@ -5,7 +5,7 @@ Phase 9 Implementation: Order Management
 """
 
 from django.db import transaction
-from django.core.exceptions import ValidationError, PermissionDenied
+from core.exceptions import ValidationError, NotFound, PermissionDenied
 from django.utils import timezone
 from django.db.models import Sum, Count
 from decimal import Decimal
@@ -47,7 +47,7 @@ class OrderService:
         try:
             quote = Quote.objects.prefetch_related('quote_details').get(quoteid=quote_id)
         except Quote.DoesNotExist:
-            raise ValidationError('Quote not found')
+            raise NotFound('Quote not found')
 
         # Verify quote is won
         if quote.statecode != QuoteStateCode.WON:
@@ -115,7 +115,7 @@ class OrderService:
                 account = quote.accountid
                 contact = quote.contactid
             except Quote.DoesNotExist:
-                raise ValidationError('Quote not found')
+                raise NotFound('Quote not found')
 
         # Override with explicit values if provided
         if dto.accountid:
@@ -123,14 +123,14 @@ class OrderService:
             try:
                 account = Account.objects.get(accountid=dto.accountid)
             except Account.DoesNotExist:
-                raise ValidationError('Account not found')
+                raise NotFound('Account not found')
 
         if dto.contactid:
             from apps.contacts.models import Contact
             try:
                 contact = Contact.objects.get(contactid=dto.contactid)
             except Contact.DoesNotExist:
-                raise ValidationError('Contact not found')
+                raise NotFound('Contact not found')
 
         # Create order
         order = SalesOrder.objects.create(
@@ -159,7 +159,7 @@ class OrderService:
                 'quoteid', 'opportunityid', 'accountid', 'contactid', 'ownerid'
             ).prefetch_related('order_details').get(salesorderid=order_id)
         except SalesOrder.DoesNotExist:
-            raise ValidationError('Order not found')
+            raise NotFound('Order not found')
 
         # Permission check
         if not can_modify_record(user, order.ownerid):

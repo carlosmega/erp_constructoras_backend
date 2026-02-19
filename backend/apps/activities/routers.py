@@ -12,15 +12,17 @@ from uuid import UUID
 from apps.activities.services import ActivityService
 from apps.activities.schemas import *
 from core.permissions import require_permission, Permission, filter_by_ownership
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedActivityList = create_paginated_response(ActivityListItemSchema)
 
 activities_router = Router(tags=['Activities'])
 
 
-@activities_router.get('/', response=List[ActivityListItemSchema])
+@activities_router.get('/', response=PaginatedActivityList)
 @require_permission(Permission.ACTIVITY_READ)
-def list_activities(request: HttpRequest, state: int = None, type: str = None, regarding: UUID = None):
-    """List all activities with optional filtering."""
+def list_activities(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, type: str = None, regarding: UUID = None):
+    """List all activities with optional filtering and pagination."""
     from apps.activities.models import Activity
 
     queryset = filter_by_ownership(Activity.objects.all(), request.user)
@@ -33,7 +35,7 @@ def list_activities(request: HttpRequest, state: int = None, type: str = None, r
         queryset = queryset.filter(regardingobjectid=regarding)
 
     queryset = queryset.select_related('ownerid')
-    return list(queryset)
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @activities_router.get('/{activity_id}', response=ActivityDetailSchema)

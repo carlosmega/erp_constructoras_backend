@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
-from django.core.exceptions import ValidationError, PermissionDenied
+from core.exceptions import ValidationError, NotFound, PermissionDenied
 
 from apps.quotes.models import Quote, QuoteDetail, QuoteStateCode, QuoteStatusCode
 from apps.quotes.services import QuoteService
@@ -26,18 +26,22 @@ class TestGenerateQuoteNumber:
 
     def test_generate_quote_number_first(self, db):
         """Test generating first quote number of the year."""
+        from datetime import date
+        year = date.today().year
         number = QuoteService.generate_quote_number()
 
-        assert number.startswith('Q-2024-') or number.startswith('Q-2025-')
+        assert number.startswith(f'Q-{year}-')
         assert len(number) == 11  # Q-YYYY-NNNN
 
     def test_generate_quote_number_increments(self, db, salesperson):
         """Test quote numbers increment."""
-        QuoteFactory(quotenumber='Q-2024-0001', ownerid=salesperson)
+        from datetime import date
+        year = date.today().year
+        QuoteFactory(quotenumber=f'Q-{year}-0001', ownerid=salesperson)
 
         number = QuoteService.generate_quote_number()
 
-        assert 'Q-2024-0002' in number or 'Q-2025-' in number
+        assert number == f'Q-{year}-0002'
 
 
 @pytest.mark.unit
@@ -70,7 +74,7 @@ class TestCreateQuote:
 
     def test_create_quote_from_invalid_opportunity(self, db, salesperson):
         """Test creating quote from non-existent opportunity."""
-        with pytest.raises(ValidationError, match='Opportunity not found'):
+        with pytest.raises(NotFound, match='Opportunity not found'):
             QuoteService.create_quote_from_opportunity(uuid4(), salesperson)
 
 
@@ -88,7 +92,7 @@ class TestGetQuoteById:
 
     def test_get_quote_by_id_not_found(self, db, salesperson):
         """Test getting non-existent quote."""
-        with pytest.raises(ValidationError, match='Quote not found'):
+        with pytest.raises(NotFound, match='Quote not found'):
             QuoteService.get_quote_by_id(uuid4(), salesperson)
 
     def test_get_quote_by_id_permission_denied(self, db, salesperson, salesperson2):
@@ -209,7 +213,7 @@ class TestRemoveQuoteDetail:
 
     def test_remove_quote_detail_not_found(self, db, salesperson):
         """Test removing non-existent detail."""
-        with pytest.raises(ValidationError, match='Quote detail not found'):
+        with pytest.raises(NotFound, match='Quote detail not found'):
             QuoteService.remove_quote_detail(uuid4(), salesperson)
 
     def test_remove_quote_detail_permission_denied(self, db, salesperson, salesperson2):

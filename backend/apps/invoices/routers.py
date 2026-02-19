@@ -17,6 +17,9 @@ from apps.invoices.schemas import (
 )
 from apps.invoices.services import InvoiceService
 from core.permissions import Permission, require_permission, filter_by_ownership
+from core.pagination import paginate_queryset, create_paginated_response
+
+PaginatedInvoiceList = create_paginated_response(InvoiceListItemSchema)
 
 # Initialize router
 invoices_router = Router(tags=["Invoices"])
@@ -26,23 +29,23 @@ invoices_router = Router(tags=["Invoices"])
 # Invoice CRUD Operations
 # ============================================================================
 
-@invoices_router.get('/', response=List[InvoiceListItemSchema])
+@invoices_router.get('/', response=PaginatedInvoiceList)
 @require_permission(Permission.INVOICE_READ)
 def list_invoices(
     request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
     statecode: int = None,
     overdue: bool = None,
-    limit: int = 100,
-    offset: int = 0
 ):
     """
-    List invoices with filtering.
+    List invoices with filtering and pagination.
 
     Query Parameters:
+    - page: Page number (1-indexed, default: 1)
+    - page_size: Items per page (default: 50, max: 100)
     - statecode: Filter by state (0=Active, 1=Paid, 2=Canceled)
     - overdue: Filter overdue invoices (true/false)
-    - limit: Max results (default 100)
-    - offset: Pagination offset (default 0)
     """
     queryset = filter_by_ownership(Invoice.objects.all(), request.user)
 
@@ -59,9 +62,9 @@ def list_invoices(
             )
 
     # Order by creation date (newest first)
-    queryset = queryset.order_by('-createdon')[offset:offset + limit]
+    queryset = queryset.order_by('-createdon')
 
-    return list(queryset)
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @invoices_router.get('/{invoice_id}', response=InvoiceSchema)

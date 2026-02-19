@@ -28,7 +28,9 @@ from core.permissions import (
     require_authenticated,
     Permission
 )
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedLeadList = create_paginated_response(LeadListSchema)
 
 # ============================================================================
 # Leads Router
@@ -37,10 +39,12 @@ from core.permissions import (
 leads_router = Router(tags=["Leads"])
 
 
-@leads_router.get("/", response=List[LeadListSchema])
+@leads_router.get("/", response=PaginatedLeadList)
 @require_permission(Permission.LEAD_READ)
 def list_leads(
     request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
     statecode: Optional[int] = None,
     statuscode: Optional[int] = None,
     leadqualitycode: Optional[int] = None,
@@ -49,11 +53,13 @@ def list_leads(
     ownerid: Optional[str] = None,
 ):
     """
-    List leads with filtering.
+    List leads with filtering and pagination.
     Requires: LEAD_READ permission
 
     Args:
         request: HTTP request
+        page: Page number (1-indexed, default: 1)
+        page_size: Items per page (default: 50, max: 100)
         statecode: Filter by state code (optional)
         statuscode: Filter by status code (optional)
         leadqualitycode: Filter by quality rating (optional)
@@ -62,7 +68,7 @@ def list_leads(
         ownerid: Filter by owner UUID (optional, admin/manager only)
 
     Returns:
-        List of LeadListSchema
+        Paginated list of leads
     """
     # Convert ownerid string to UUID if provided
     owner_uuid = UUID(ownerid) if ownerid else None
@@ -77,10 +83,10 @@ def list_leads(
         ownerid=owner_uuid,
     )
 
-    return leads
+    return paginate_queryset(leads, page=page, page_size=page_size, request_url=request.path)
 
 
-@leads_router.post("/", response=LeadSchema)
+@leads_router.post("/", response={201: LeadSchema})
 @require_permission(Permission.LEAD_CREATE)
 def create_lead(request: HttpRequest, payload: CreateLeadDto):
     """
@@ -98,7 +104,7 @@ def create_lead(request: HttpRequest, payload: CreateLeadDto):
         ValidationError: If validation fails
     """
     lead = LeadService.create_lead(payload, request.user)
-    return lead
+    return 201, lead
 
 
 @leads_router.get("/stats", response=LeadStatsSchema)
@@ -164,7 +170,7 @@ def update_lead(request: HttpRequest, lead_id: UUID, payload: UpdateLeadDto):
     return lead
 
 
-@leads_router.delete("/{lead_id}")
+@leads_router.delete("/{lead_id}", response={204: None})
 @require_permission(Permission.LEAD_DELETE)
 def delete_lead(request: HttpRequest, lead_id: UUID):
     """
@@ -175,19 +181,12 @@ def delete_lead(request: HttpRequest, lead_id: UUID):
         request: HTTP request
         lead_id: UUID of lead
 
-    Returns:
-        Success message
-
     Raises:
         NotFound: If lead doesn't exist
         PermissionDenied: If user doesn't have access
     """
-    lead = LeadService.delete_lead(lead_id, request.user)
-
-    return {
-        "success": True,
-        "message": f"Lead {lead.fullname} deleted successfully"
-    }
+    LeadService.delete_lead(lead_id, request.user)
+    return 204, None
 
 
 @leads_router.post("/{lead_id}/qualify", response=LeadSchema)

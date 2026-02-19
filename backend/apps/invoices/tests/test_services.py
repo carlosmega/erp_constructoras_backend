@@ -25,18 +25,20 @@ class TestGenerateInvoiceNumber:
 
     def test_generate_invoice_number_first(self, db):
         """Test generating first invoice number of the year."""
+        year = date.today().year
         number = InvoiceService.generate_invoice_number()
 
-        assert number.startswith('INV-2024-') or number.startswith('INV-2025-')
+        assert number.startswith(f'INV-{year}-')
         assert len(number) == 13  # INV-YYYY-NNNN
 
     def test_generate_invoice_number_increments(self, db, salesperson):
         """Test invoice numbers increment."""
-        InvoiceFactory(invoicenumber='INV-2024-0001', ownerid=salesperson)
+        year = date.today().year
+        InvoiceFactory(invoicenumber=f'INV-{year}-0001', ownerid=salesperson)
 
         number = InvoiceService.generate_invoice_number()
 
-        assert 'INV-2024-0002' in number or 'INV-2025-' in number
+        assert number == f'INV-{year}-0002'
 
 
 @pytest.mark.unit

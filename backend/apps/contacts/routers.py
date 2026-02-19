@@ -7,36 +7,40 @@ from django.http import HttpRequest
 from apps.contacts.schemas import ContactSchema, CreateContactDto, UpdateContactDto
 from apps.contacts.services import ContactService
 from core.permissions import require_permission, Permission
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedContactList = create_paginated_response(ContactSchema)
 
 contacts_router = Router(tags=["Contacts"])
 
 
-@contacts_router.get("/", response=List[ContactSchema])
+@contacts_router.get("/", response=PaginatedContactList)
 @require_permission(Permission.CONTACT_READ)
 def list_contacts(
     request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
     statecode: Optional[int] = None,
     parentcustomerid: Optional[str] = None,
     search: Optional[str] = None,
     ownerid: Optional[str] = None
 ):
-    """List contacts with filtering. Requires: CONTACT_READ permission"""
+    """List contacts with filtering and pagination. Requires: CONTACT_READ permission"""
     parent_uuid = UUID(parentcustomerid) if parentcustomerid else None
     owner_uuid = UUID(ownerid) if ownerid else None
     contacts = ContactService.list_contacts(
         user=request.user, statecode=statecode, parentcustomerid=parent_uuid,
         search=search, ownerid=owner_uuid
     )
-    return contacts
+    return paginate_queryset(contacts, page=page, page_size=page_size, request_url=request.path)
 
 
-@contacts_router.post("/", response=ContactSchema)
+@contacts_router.post("/", response={201: ContactSchema})
 @require_permission(Permission.CONTACT_CREATE)
 def create_contact(request: HttpRequest, payload: CreateContactDto):
     """Create new contact. Requires: CONTACT_CREATE permission"""
     contact = ContactService.create_contact(payload, request.user)
-    return contact
+    return 201, contact
 
 
 @contacts_router.get("/{contact_id}", response=ContactSchema)
@@ -55,9 +59,9 @@ def update_contact(request: HttpRequest, contact_id: UUID, payload: UpdateContac
     return contact
 
 
-@contacts_router.delete("/{contact_id}")
+@contacts_router.delete("/{contact_id}", response={204: None})
 @require_permission(Permission.CONTACT_DELETE)
 def delete_contact(request: HttpRequest, contact_id: UUID):
     """Deactivate contact. Requires: CONTACT_DELETE permission"""
-    contact = ContactService.deactivate_contact(contact_id, request.user)
-    return {"success": True, "message": f"Contact {contact.fullname} deactivated successfully"}
+    ContactService.deactivate_contact(contact_id, request.user)
+    return 204, None

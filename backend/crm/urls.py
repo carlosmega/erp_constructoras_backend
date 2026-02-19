@@ -4,11 +4,25 @@ URL configuration for CRM Backend Foundation project.
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/5.0/topics/http/urls/
 """
+import logging
+import traceback
+
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path
 from django.http import JsonResponse
 from ninja import NinjaAPI
-from core.exceptions import PermissionDenied, ValidationError, NotFound
+from core.exceptions import (
+    CRMBaseException,
+    PermissionDenied,
+    ValidationError,
+    NotFound,
+    AuthenticationFailed,
+    AccountLocked,
+    AccountDisabled,
+)
+
+logger = logging.getLogger(__name__)
 
 # Initialize Django Ninja API with OpenAPI documentation
 api = NinjaAPI(
@@ -18,61 +32,92 @@ api = NinjaAPI(
     docs_url="/docs",  # Swagger UI documentation
 )
 
+
 # ============================================================================
 # Global Exception Handlers
 # ============================================================================
 
+def _build_error_response(request, code: str, status: int, message: str, details: dict = None):
+    """Build a standardized error response."""
+    body = {
+        "detail": message,
+        "code": code,
+        "status": status,
+        "path": request.path,
+    }
+    if details:
+        body["details"] = details
+    return JsonResponse(body, status=status)
+
+
 @api.exception_handler(PermissionDenied)
 def permission_denied_handler(request, exc):
-    """Handle permission denied exceptions with clean JSON response."""
-    return JsonResponse(
-        {
-            "detail": str(exc),
-            "code": "permission_denied",
-            "status": 403
-        },
-        status=403
+    """Handle permission denied exceptions."""
+    logger.warning("Permission denied: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "permission_denied", 403, str(exc), getattr(exc, 'details', None)
     )
+
+
+@api.exception_handler(AuthenticationFailed)
+def authentication_failed_handler(request, exc):
+    """Handle authentication failure."""
+    logger.warning("Authentication failed: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "authentication_failed", 401, str(exc), getattr(exc, 'details', None)
+    )
+
+
+@api.exception_handler(AccountLocked)
+def account_locked_handler(request, exc):
+    """Handle locked account."""
+    logger.warning("Account locked: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "account_locked", 401, str(exc), getattr(exc, 'details', None)
+    )
+
+
+@api.exception_handler(AccountDisabled)
+def account_disabled_handler(request, exc):
+    """Handle disabled account."""
+    logger.warning("Account disabled: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "account_disabled", 401, str(exc), getattr(exc, 'details', None)
+    )
+
 
 @api.exception_handler(ValidationError)
 def validation_error_handler(request, exc):
-    """Handle validation errors with clean JSON response."""
-    return JsonResponse(
-        {
-            "detail": str(exc),
-            "code": "validation_error",
-            "status": 400
-        },
-        status=400
+    """Handle validation errors."""
+    logger.info("Validation error: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "validation_error", 400, str(exc), getattr(exc, 'details', None)
     )
+
 
 @api.exception_handler(NotFound)
 def not_found_handler(request, exc):
-    """Handle not found errors with clean JSON response."""
-    return JsonResponse(
-        {
-            "detail": str(exc),
-            "code": "not_found",
-            "status": 404
-        },
-        status=404
+    """Handle not found errors."""
+    logger.info("Not found: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "not_found", 404, str(exc), getattr(exc, 'details', None)
     )
+
 
 @api.exception_handler(Exception)
 def generic_exception_handler(request, exc):
-    """Handle unexpected exceptions with clean JSON response."""
-    import traceback
-    return JsonResponse(
-        {
-            "detail": "An unexpected error occurred",
-            "error": str(exc),
-            "code": "internal_server_error",
-            "status": 500,
-            # Include traceback only in DEBUG mode
-            "traceback": traceback.format_exc() if __debug__ else None
-        },
-        status=500
-    )
+    """Handle unexpected exceptions."""
+    logger.exception("Unhandled exception at %s: %s", request.path, exc)
+    body = {
+        "detail": "An unexpected error occurred",
+        "code": "internal_server_error",
+        "status": 500,
+        "path": request.path,
+    }
+    if settings.DEBUG:
+        body["error"] = str(exc)
+        body["traceback"] = traceback.format_exc()
+    return JsonResponse(body, status=500)
 
 # ============================================================================
 # Register API Routers

@@ -15,18 +15,22 @@ from apps.orders.schemas import (
     UpdateSalesOrderDto, FulfillOrderDto, OrderStatsSchema
 )
 from core.permissions import require_permission, Permission
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedOrderList = create_paginated_response(SalesOrderListItemSchema)
 
 orders_router = Router(tags=['Orders'])
 
 
-@orders_router.get('/', response=List[SalesOrderListItemSchema])
+@orders_router.get('/', response=PaginatedOrderList)
 @require_permission(Permission.ORDER_READ)
-def list_orders(request: HttpRequest, state: int = None, owner: UUID = None):
+def list_orders(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, owner: UUID = None):
     """
-    List all orders with optional filtering.
+    List all orders with optional filtering and pagination.
 
     Filters:
+    - page: Page number (1-indexed, default: 1)
+    - page_size: Items per page (default: 50, max: 100)
     - state: Filter by statecode (0=Active, 1=Submitted, 2=Canceled, 3=Fulfilled, 4=Invoiced)
     - owner: Filter by owner ID
     """
@@ -43,7 +47,7 @@ def list_orders(request: HttpRequest, state: int = None, owner: UUID = None):
         queryset = queryset.filter(ownerid=owner)
 
     queryset = queryset.select_related('accountid', 'contactid', 'ownerid')
-    return list(queryset)
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @orders_router.post('/', response={201: SalesOrderSchema})

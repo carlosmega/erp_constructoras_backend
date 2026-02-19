@@ -17,35 +17,39 @@ from apps.opportunities.schemas import (
 )
 from apps.opportunities.services import OpportunityService
 from core.permissions import require_permission, Permission
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedOpportunityList = create_paginated_response(OpportunitySchema)
 
 opportunities_router = Router(tags=["Opportunities"])
 
 
-@opportunities_router.get("/", response=List[OpportunitySchema])
+@opportunities_router.get("/", response=PaginatedOpportunityList)
 @require_permission(Permission.OPPORTUNITY_READ)
 def list_opportunities(
     request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
     statecode: Optional[int] = None,
     salesstage: Optional[int] = None,
     search: Optional[str] = None,
     ownerid: Optional[str] = None,
 ):
-    """List opportunities with filtering. Requires: OPPORTUNITY_READ permission"""
+    """List opportunities with filtering and pagination. Requires: OPPORTUNITY_READ permission"""
     owner_uuid = UUID(ownerid) if ownerid else None
     opps = OpportunityService.list_opportunities(
         user=request.user, statecode=statecode, salesstage=salesstage,
         search=search, ownerid=owner_uuid
     )
-    return opps
+    return paginate_queryset(opps, page=page, page_size=page_size, request_url=request.path)
 
 
-@opportunities_router.post("/", response=OpportunitySchema)
+@opportunities_router.post("/", response={201: OpportunitySchema})
 @require_permission(Permission.OPPORTUNITY_CREATE)
 def create_opportunity(request: HttpRequest, payload: CreateOpportunityDto):
     """Create new opportunity. Requires: OPPORTUNITY_CREATE permission"""
     opp = OpportunityService.create_opportunity(payload, request.user)
-    return opp
+    return 201, opp
 
 
 @opportunities_router.get("/stats", response=OpportunityStatsSchema)
@@ -72,12 +76,12 @@ def update_opportunity(request: HttpRequest, opportunity_id: UUID, payload: Upda
     return opp
 
 
-@opportunities_router.delete("/{opportunity_id}")
+@opportunities_router.delete("/{opportunity_id}", response={204: None})
 @require_permission(Permission.OPPORTUNITY_DELETE)
 def delete_opportunity(request: HttpRequest, opportunity_id: UUID):
     """Delete opportunity. Requires: OPPORTUNITY_DELETE permission"""
-    opp = OpportunityService.delete_opportunity(opportunity_id, request.user)
-    return {"success": True, "message": f"Opportunity {opp.name} deleted successfully"}
+    OpportunityService.delete_opportunity(opportunity_id, request.user)
+    return 204, None
 
 
 @opportunities_router.post("/{opportunity_id}/close", response=OpportunitySchema)

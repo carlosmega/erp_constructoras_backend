@@ -10,7 +10,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from django.core.exceptions import ValidationError
+from core.exceptions import ValidationError, NotFound
 
 from apps.orders.models import SalesOrder, SalesOrderDetail, OrderStateCode, OrderStatusCode
 from apps.orders.services import OrderService
@@ -25,18 +25,22 @@ class TestGenerateOrderNumber:
 
     def test_generate_order_number_first(self, db):
         """Test generating first order number of the year."""
+        from datetime import date
+        year = date.today().year
         number = OrderService.generate_order_number()
 
-        assert number.startswith('SO-2024-') or number.startswith('SO-2025-')
+        assert number.startswith(f'SO-{year}-')
         assert len(number) == 12  # SO-YYYY-NNNN
 
     def test_generate_order_number_increments(self, db, salesperson):
         """Test order numbers increment."""
-        SalesOrderFactory(ordernumber='SO-2024-0001', ownerid=salesperson)
+        from datetime import date
+        year = date.today().year
+        SalesOrderFactory(ordernumber=f'SO-{year}-0001', ownerid=salesperson)
 
         number = OrderService.generate_order_number()
 
-        assert 'SO-2024-0002' in number or 'SO-2025-' in number
+        assert number == f'SO-{year}-0002'
 
 
 @pytest.mark.unit
@@ -70,7 +74,7 @@ class TestCreateOrderFromQuote:
 
     def test_create_order_from_quote_not_found(self, db, salesperson):
         """Test creating order from non-existent quote."""
-        with pytest.raises(ValidationError, match='Quote not found'):
+        with pytest.raises(NotFound, match='Quote not found'):
             OrderService.create_order_from_quote(uuid4(), salesperson)
 
     def test_create_order_duplicate_from_same_quote_fails(self, db, salesperson):
@@ -99,7 +103,7 @@ class TestGetOrderById:
 
     def test_get_order_by_id_not_found(self, db, salesperson):
         """Test getting non-existent order."""
-        with pytest.raises(ValidationError, match='Order not found'):
+        with pytest.raises(NotFound, match='Order not found'):
             OrderService.get_order_by_id(uuid4(), salesperson)
 
 

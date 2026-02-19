@@ -4,30 +4,33 @@ Pagination utilities for CRM Backend Foundation.
 Provides consistent pagination across all list endpoints.
 """
 
-from typing import Generic, TypeVar, List, Optional
-from pydantic import BaseModel
-
-T = TypeVar('T')
+from typing import Generic, TypeVar, List, Optional, Type
+from ninja import Schema
 
 
-class PaginatedResponse(BaseModel, Generic[T]):
+def create_paginated_response(item_schema: Type):
     """
-    Standard paginated response format for list endpoints.
+    Factory to create a paginated response schema for a given item schema.
 
-    Attributes:
-        count: Total number of records matching the query
-        next: URL to next page (null if last page)
-        previous: URL to previous page (null if first page)
-        results: List of records for current page
+    Usage:
+        PaginatedLeadList = create_paginated_response(LeadListSchema)
+
+        @router.get("/", response=PaginatedLeadList)
+        def list_items(request, page: int = 1, page_size: int = 50):
+            queryset = ...
+            return paginate_queryset(queryset, page, page_size, request.path)
     """
+    class PaginatedResponse(Schema):
+        count: int
+        page: int
+        page_size: int
+        next: Optional[str] = None
+        previous: Optional[str] = None
+        results: List[item_schema]
 
-    count: int
-    next: Optional[str] = None
-    previous: Optional[str] = None
-    results: List[T]
-
-    class Config:
-        from_attributes = True  # Allow ORM models
+    PaginatedResponse.__qualname__ = f'Paginated{item_schema.__name__}'
+    PaginatedResponse.__name__ = f'Paginated{item_schema.__name__}'
+    return PaginatedResponse
 
 
 def paginate_queryset(queryset, page: int = 1, page_size: int = 50, request_url: str = ""):
@@ -37,17 +40,12 @@ def paginate_queryset(queryset, page: int = 1, page_size: int = 50, request_url:
     Args:
         queryset: Django QuerySet to paginate
         page: Page number (1-indexed)
-        page_size: Number of records per page (default: 50)
+        page_size: Number of records per page (default: 50, max: 100)
         request_url: Base URL for next/previous links
 
     Returns:
-        Dictionary with count, next, previous, and results
-
-    Example:
-        queryset = SystemUser.objects.all()
-        paginated = paginate_queryset(queryset, page=1, page_size=50)
+        Dictionary with count, page, page_size, next, previous, and results
     """
-
     # Ensure positive values
     page = max(1, page)
     page_size = min(max(1, page_size), 100)  # Max 100 per page
@@ -63,7 +61,7 @@ def paginate_queryset(queryset, page: int = 1, page_size: int = 50, request_url:
     results = list(queryset[start:end])
 
     # Calculate next/previous URLs
-    total_pages = (total_count + page_size - 1) // page_size
+    total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
 
     next_url = None
     if page < total_pages:
@@ -75,7 +73,9 @@ def paginate_queryset(queryset, page: int = 1, page_size: int = 50, request_url:
 
     return {
         "count": total_count,
+        "page": page,
+        "page_size": page_size,
         "next": next_url,
         "previous": previous_url,
-        "results": results
+        "results": results,
     }

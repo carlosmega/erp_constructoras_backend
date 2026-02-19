@@ -7,60 +7,28 @@ from django.http import HttpRequest
 from apps.accounts.schemas import AccountSchema, CreateAccountDto, UpdateAccountDto
 from apps.accounts.services import AccountService
 from core.permissions import require_permission, Permission
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedAccountList = create_paginated_response(AccountSchema)
 
 accounts_router = Router(tags=["Accounts"])
 
 
-@accounts_router.get("/debug")
-def debug_accounts_auth(request: HttpRequest):
-    """Debug endpoint to check authentication status"""
-    import logging
-    logger = logging.getLogger(__name__)
-
-    user = request.user
-    logger.info(f"DEBUG - User object: {user}")
-    logger.info(f"DEBUG - Is authenticated: {user.is_authenticated if user else 'No user'}")
-
-    if user and user.is_authenticated:
-        logger.info(f"DEBUG - User email: {user.emailaddress1}")
-        logger.info(f"DEBUG - User role_name: {user.role_name}")
-        logger.info(f"DEBUG - SecurityRole ID: {user.securityroleid}")
-
-        from core.permissions import has_permission, Permission
-        has_perm = has_permission(user, Permission.ACCOUNT_READ)
-        logger.info(f"DEBUG - Has ACCOUNT_READ permission: {has_perm}")
-
-        return {
-            "authenticated": True,
-            "user": user.emailaddress1,
-            "role": user.role_name,
-            "has_account_read": has_perm,
-            "session_key": request.session.session_key,
-        }
-    else:
-        return {
-            "authenticated": False,
-            "user": str(user),
-            "session_key": request.session.session_key if hasattr(request, 'session') else None,
-        }
-
-
-@accounts_router.get("/", response=List[AccountSchema])
+@accounts_router.get("/", response=PaginatedAccountList)
 @require_permission(Permission.ACCOUNT_READ)
-def list_accounts(request: HttpRequest, statecode: Optional[int] = None, search: Optional[str] = None, ownerid: Optional[str] = None):
-    """List accounts with filtering. Requires: ACCOUNT_READ permission"""
+def list_accounts(request: HttpRequest, page: int = 1, page_size: int = 50, statecode: Optional[int] = None, search: Optional[str] = None, ownerid: Optional[str] = None):
+    """List accounts with filtering and pagination. Requires: ACCOUNT_READ permission"""
     owner_uuid = UUID(ownerid) if ownerid else None
     accounts = AccountService.list_accounts(user=request.user, statecode=statecode, search=search, ownerid=owner_uuid)
-    return accounts
+    return paginate_queryset(accounts, page=page, page_size=page_size, request_url=request.path)
 
 
-@accounts_router.post("/", response=AccountSchema)
+@accounts_router.post("/", response={201: AccountSchema})
 @require_permission(Permission.ACCOUNT_CREATE)
 def create_account(request: HttpRequest, payload: CreateAccountDto):
     """Create new account. Requires: ACCOUNT_CREATE permission"""
     account = AccountService.create_account(payload, request.user)
-    return account
+    return 201, account
 
 
 @accounts_router.get("/{account_id}", response=AccountSchema)
@@ -79,9 +47,9 @@ def update_account(request: HttpRequest, account_id: UUID, payload: UpdateAccoun
     return account
 
 
-@accounts_router.delete("/{account_id}")
+@accounts_router.delete("/{account_id}", response={204: None})
 @require_permission(Permission.ACCOUNT_DELETE)
 def delete_account(request: HttpRequest, account_id: UUID):
     """Deactivate account. Requires: ACCOUNT_DELETE permission"""
-    account = AccountService.deactivate_account(account_id, request.user)
-    return {"success": True, "message": f"Account {account.name} deactivated successfully"}
+    AccountService.deactivate_account(account_id, request.user)
+    return 204, None

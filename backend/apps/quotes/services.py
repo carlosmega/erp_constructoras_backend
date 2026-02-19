@@ -5,7 +5,7 @@ Phase 8 Implementation: Quote Management
 """
 
 from django.db import transaction
-from django.core.exceptions import ValidationError, PermissionDenied
+from core.exceptions import ValidationError, NotFound, PermissionDenied
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
 from decimal import Decimal
@@ -64,7 +64,7 @@ class QuoteService:
                 account = opportunity.accountid
                 contact = opportunity.contactid
             except Opportunity.DoesNotExist:
-                raise ValidationError('Opportunity not found')
+                raise NotFound('Opportunity not found')
 
         # Override with explicit account/contact if provided
         if dto.accountid:
@@ -72,14 +72,14 @@ class QuoteService:
             try:
                 account = Account.objects.get(accountid=dto.accountid)
             except Account.DoesNotExist:
-                raise ValidationError('Account not found')
+                raise NotFound('Account not found')
 
         if dto.contactid:
             from apps.contacts.models import Contact
             try:
                 contact = Contact.objects.get(contactid=dto.contactid)
             except Contact.DoesNotExist:
-                raise ValidationError('Contact not found')
+                raise NotFound('Contact not found')
 
         # Create quote
         quote = Quote.objects.create(
@@ -118,7 +118,7 @@ class QuoteService:
         try:
             opportunity = Opportunity.objects.get(opportunityid=opportunity_id)
         except Opportunity.DoesNotExist:
-            raise ValidationError('Opportunity not found')
+            raise NotFound('Opportunity not found')
 
         # Create quote with opportunity data
         dto = CreateQuoteDto(
@@ -137,7 +137,7 @@ class QuoteService:
                 'opportunityid', 'accountid', 'contactid', 'ownerid'
             ).prefetch_related('quote_details').get(quoteid=quote_id)
         except Quote.DoesNotExist:
-            raise ValidationError('Quote not found')
+            raise NotFound('Quote not found')
 
         # Permission check
         if not can_modify_record(user, quote.ownerid):
@@ -229,7 +229,7 @@ class QuoteService:
         try:
             detail = QuoteDetail.objects.select_related('quoteid').get(quotedetailid=detail_id)
         except QuoteDetail.DoesNotExist:
-            raise ValidationError('Quote detail not found')
+            raise NotFound('Quote detail not found')
 
         quote = detail.quoteid
 

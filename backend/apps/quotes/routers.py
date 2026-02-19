@@ -16,18 +16,22 @@ from apps.quotes.schemas import (
     QuoteStatsSchema
 )
 from core.permissions import require_permission, Permission
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedQuoteList = create_paginated_response(QuoteListItemSchema)
 
 quotes_router = Router(tags=['Quotes'])
 
 
-@quotes_router.get('/', response=List[QuoteListItemSchema])
+@quotes_router.get('/', response=PaginatedQuoteList)
 @require_permission(Permission.QUOTE_READ)
-def list_quotes(request: HttpRequest, state: int = None, owner: UUID = None):
+def list_quotes(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, owner: UUID = None):
     """
-    List all quotes with optional filtering.
+    List all quotes with optional filtering and pagination.
 
     Filters:
+    - page: Page number (1-indexed, default: 1)
+    - page_size: Items per page (default: 50, max: 100)
     - state: Filter by statecode (0=Draft, 1=Active, 2=Won, 3=Closed)
     - owner: Filter by owner ID
     """
@@ -44,7 +48,7 @@ def list_quotes(request: HttpRequest, state: int = None, owner: UUID = None):
         queryset = queryset.filter(ownerid=owner)
 
     queryset = queryset.select_related('accountid', 'contactid', 'ownerid')
-    return list(queryset)
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @quotes_router.post('/', response={201: QuoteSchema})

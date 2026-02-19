@@ -16,7 +16,9 @@ from apps.products.schemas import (
     PriceListItemSchema, CreatePriceListItemDto, UpdatePriceListItemDto
 )
 from core.permissions import require_permission, Permission, filter_by_ownership
+from core.pagination import paginate_queryset, create_paginated_response
 
+PaginatedProductList = create_paginated_response(ProductListItemSchema)
 
 products_router = Router(tags=['Products'])
 pricelists_router = Router(tags=['Price Lists'])
@@ -26,13 +28,15 @@ pricelists_router = Router(tags=['Price Lists'])
 # Product Endpoints
 # ============================================================================
 
-@products_router.get('/', response=List[ProductListItemSchema])
+@products_router.get('/', response=PaginatedProductList)
 @require_permission(Permission.PRODUCT_READ)
-def list_products(request: HttpRequest, state: int = None, search: str = None):
+def list_products(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, search: str = None):
     """
-    List all products with optional filtering.
+    List all products with optional filtering and pagination.
 
     Filters:
+    - page: Page number (1-indexed, default: 1)
+    - page_size: Items per page (default: 50, max: 100)
     - state: Filter by statecode (0=Active, 1=Inactive)
     - search: Search in name or product number
     """
@@ -49,7 +53,7 @@ def list_products(request: HttpRequest, state: int = None, search: str = None):
             Q(name__icontains=search) | Q(productnumber__icontains=search)
         )
 
-    return list(queryset)
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @products_router.post('/', response={201: ProductSchema})
