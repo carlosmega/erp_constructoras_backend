@@ -16,9 +16,6 @@ from apps.products.schemas import (
     PriceListItemSchema, CreatePriceListItemDto, UpdatePriceListItemDto
 )
 from core.permissions import require_permission, Permission, filter_by_ownership
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedProductList = create_paginated_response(ProductListItemSchema)
 
 products_router = Router(tags=['Products'])
 pricelists_router = Router(tags=['Price Lists'])
@@ -28,23 +25,23 @@ pricelists_router = Router(tags=['Price Lists'])
 # Product Endpoints
 # ============================================================================
 
-@products_router.get('/', response=PaginatedProductList)
+@products_router.get('/', response=List[ProductListItemSchema])
 @require_permission(Permission.PRODUCT_READ)
-def list_products(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, search: str = None):
+def list_products(request: HttpRequest, state: int = None, search: str = None, low_inventory: int = None, min_price: float = None, max_price: float = None):
     """
-    List all products with optional filtering and pagination.
+    List all products with optional filtering.
 
     Filters:
-    - page: Page number (1-indexed, default: 1)
-    - page_size: Items per page (default: 50, max: 100)
     - state: Filter by statecode (0=Active, 1=Inactive)
     - search: Search in name or product number
+    - low_inventory: Filter products with quantityonhand below threshold
+    - min_price: Filter products with price >= min_price
+    - max_price: Filter products with price <= max_price
     """
     from apps.products.models import Product
 
     queryset = Product.objects.all()
 
-    # Apply filters
     if state is not None:
         queryset = queryset.filter(statecode=state)
     if search:
@@ -52,8 +49,14 @@ def list_products(request: HttpRequest, page: int = 1, page_size: int = 50, stat
         queryset = queryset.filter(
             Q(name__icontains=search) | Q(productnumber__icontains=search)
         )
+    if low_inventory is not None:
+        queryset = queryset.filter(quantityonhand__lt=low_inventory)
+    if min_price is not None:
+        queryset = queryset.filter(price__gte=min_price)
+    if max_price is not None:
+        queryset = queryset.filter(price__lte=max_price)
 
-    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
+    return list(queryset)
 
 
 @products_router.post('/', response={201: ProductSchema})
@@ -86,6 +89,30 @@ def delete_product(request: HttpRequest, product_id: UUID):
     """Delete a product (sets to inactive)."""
     ProductService.delete_product(product_id, request.user)
     return 204, None
+
+
+@products_router.post('/{product_id}/activate', response=ProductSchema)
+@require_permission(Permission.PRODUCT_UPDATE)
+def activate_product(request: HttpRequest, product_id: UUID):
+    """Activate a product (set statecode to Active)."""
+    from apps.products.models import Product
+    from django.shortcuts import get_object_or_404
+    product = get_object_or_404(Product, productid=product_id)
+    product.statecode = 0  # Active
+    product.save()
+    return product
+
+
+@products_router.post('/{product_id}/deactivate', response=ProductSchema)
+@require_permission(Permission.PRODUCT_UPDATE)
+def deactivate_product(request: HttpRequest, product_id: UUID):
+    """Deactivate a product (set statecode to Inactive)."""
+    from apps.products.models import Product
+    from django.shortcuts import get_object_or_404
+    product = get_object_or_404(Product, productid=product_id)
+    product.statecode = 1  # Inactive
+    product.save()
+    return product
 
 
 @products_router.get('/stats/summary', response=ProductStatsSchema)

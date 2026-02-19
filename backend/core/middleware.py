@@ -1,11 +1,12 @@
 """
 Custom middleware for CRM Backend Foundation.
 
-Provides audit trail support by capturing current user context.
+Provides audit trail support and API URL normalization.
 """
 
 import threading
 from typing import Optional
+from django.urls import resolve, Resolver404
 
 # Thread-local storage for current user
 _thread_locals = threading.local()
@@ -35,6 +36,37 @@ def set_current_user(user):
         user: SystemUser instance or None
     """
     _thread_locals.user = user
+
+
+class ApiTrailingSlashMiddleware:
+    """
+    Rewrites API mutation URLs to include trailing slash when needed.
+
+    Django's CommonMiddleware with APPEND_SLASH=True redirects GET requests
+    to trailing-slash URLs, but raises RuntimeError for POST/PATCH/PUT/DELETE.
+    This middleware intercepts mutation requests and rewrites the URL path
+    (not redirect) to include the trailing slash if a matching route exists.
+
+    Must be placed BEFORE django.middleware.common.CommonMiddleware.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if (
+            request.method in ('POST', 'PATCH', 'PUT', 'DELETE')
+            and not request.path.endswith('/')
+            and request.path.startswith('/api/')
+        ):
+            try:
+                resolve(request.path + '/')
+                # Route exists with trailing slash — rewrite in-place
+                request.path_info = request.path_info + '/'
+                request.path = request.path + '/'
+            except Resolver404:
+                pass  # No match with trailing slash either; leave as-is
+        return self.get_response(request)
 
 
 class AuditMiddleware:
