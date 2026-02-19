@@ -338,6 +338,70 @@ class ActivityService:
         return activity
 
     @staticmethod
+    def send_document_email(
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        document_type: str,
+        document_id: str,
+        sender_name: str = 'Sales Team',
+        cc: str = '',
+        bcc: str = '',
+        pdf_content: bytes | None = None,
+        pdf_filename: str | None = None,
+        user: SystemUser,
+    ) -> Activity:
+        """Send a real email with optional PDF and create a completed Activity record.
+
+        First sends the email; if that fails, raises ValidationError without
+        creating a phantom Activity. On success, creates Activity + Email child.
+        """
+        from core.email_service import send_document_email as _send_email, EmailSendError
+
+        # 1. Send the real email (fail-fast: no Activity if this fails)
+        try:
+            _send_email(
+                to=to,
+                subject=subject,
+                body=body,
+                document_type=document_type,
+                sender_name=sender_name,
+                cc=cc,
+                bcc=bcc,
+                pdf_content=pdf_content,
+                pdf_filename=pdf_filename,
+            )
+        except EmailSendError as exc:
+            raise ValidationError(str(exc))
+
+        # 2. Create completed Activity + Email child
+        activity = Activity.objects.create(
+            activitytypecode=ActivityTypeCode.EMAIL,
+            subject=subject,
+            description=f'TO: {to}' + (f'\nCC: {cc}' if cc else '') + (f'\nBCC: {bcc}' if bcc else '') + f'\n\n{body}',
+            statecode=ActivityStateCode.COMPLETED,
+            actualend=timezone.now(),
+            regardingobjectid=document_id if document_id else None,
+            regardingobjectidtype=document_type,
+            ownerid=user,
+            createdby=user,
+            modifiedby=user,
+        )
+
+        Email.objects.create(
+            activity=activity,
+            to=to,
+            sender=sender_name,
+            cc=cc or None,
+            bcc=bcc or None,
+            body=body,
+            directioncode=True,
+        )
+
+        return activity
+
+    @staticmethod
     def get_activity_stats(user: SystemUser):
         """Get activity statistics."""
         from django.db.models import Count, Q

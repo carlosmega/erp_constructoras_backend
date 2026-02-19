@@ -256,6 +256,13 @@ class UpdateAppointmentDto(Schema):
 # Statistics
 # ============================================================================
 
+class SendDocumentEmailResponse(Schema):
+    """Response for send-document-email endpoint."""
+    success: bool
+    activityid: UUID
+    message: str
+
+
 class ActivityStatsSchema(Schema):
     """Activity statistics."""
     total_activities: int

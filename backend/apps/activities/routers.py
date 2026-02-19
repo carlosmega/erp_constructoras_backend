@@ -4,7 +4,8 @@ Activity API routers.
 Phase 12 Implementation: Activity Management
 """
 
-from ninja import Router
+from ninja import Router, File, Form
+from ninja.files import UploadedFile
 from django.http import HttpRequest
 from typing import List, Optional
 from uuid import UUID
@@ -89,6 +90,53 @@ def create_activity(request: HttpRequest, payload: CreateActivityDto):
     """
     result = ActivityService.create_activity(payload, request.user)
     return 201, result
+
+
+@activities_router.post('/send-document-email', response={200: SendDocumentEmailResponse})
+@require_permission(Permission.ACTIVITY_CREATE)
+def send_document_email(
+    request: HttpRequest,
+    to: str = Form(...),
+    subject: str = Form(...),
+    body: str = Form(...),
+    document_type: str = Form(...),
+    document_id: str = Form(...),
+    sender_name: str = Form('Sales Team'),
+    cc: str = Form(''),
+    bcc: str = Form(''),
+    pdf_file: UploadedFile = File(None),
+):
+    """Send a real document email with optional PDF attachment.
+
+    Accepts multipart/form-data with text fields and an optional PDF file.
+    Creates a completed Activity + Email record on success.
+    """
+    pdf_content = None
+    pdf_filename = None
+
+    if pdf_file:
+        pdf_content = pdf_file.read()
+        pdf_filename = pdf_file.name or f'{document_type}-document.pdf'
+
+    activity = ActivityService.send_document_email(
+        to=to,
+        subject=subject,
+        body=body,
+        document_type=document_type,
+        document_id=document_id,
+        sender_name=sender_name,
+        cc=cc,
+        bcc=bcc,
+        pdf_content=pdf_content,
+        pdf_filename=pdf_filename,
+        user=request.user,
+    )
+
+    return {
+        'success': True,
+        'activityid': activity.activityid,
+        'message': 'Email sent successfully',
+    }
 
 
 @activities_router.get('/{activity_id}', response=ActivityDetailSchema)
