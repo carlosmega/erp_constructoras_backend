@@ -1,7 +1,16 @@
 """
 Pagination utilities for CRM Backend Foundation.
 
-Provides consistent pagination across all list endpoints.
+These utilities are available for future use when the frontend adopts
+server-side pagination. Currently, all list endpoints return plain arrays
+to match frontend expectations (client-side filtering/sorting).
+
+To re-enable pagination on an endpoint:
+    1. Import: from core.pagination import paginate_queryset, create_paginated_response
+    2. Create schema: PaginatedLeadList = create_paginated_response(LeadListSchema)
+    3. Set response: @router.get("/", response=PaginatedLeadList)
+    4. Add params: page: int = 1, page_size: int = 50
+    5. Return: paginate_queryset(queryset, page, page_size, request.path)
 """
 
 from typing import Generic, TypeVar, List, Optional, Type

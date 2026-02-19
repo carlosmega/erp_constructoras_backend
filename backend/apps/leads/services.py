@@ -243,25 +243,15 @@ class LeadService:
 
     @staticmethod
     @transaction.atomic
-    def qualify_lead(lead_id: UUID, dto: QualifyLeadDto, user: SystemUser) -> Lead:
+    def qualify_lead(lead_id: UUID, dto: QualifyLeadDto, user: SystemUser) -> dict:
         """
         Qualify a lead (convert to Opportunity).
 
-        Creates Account and/or Contact if requested, then creates Opportunity.
+        Creates or links Account and/or Contact, then creates Opportunity.
         Sets lead state to Qualified.
 
-        Args:
-            lead_id: Lead UUID
-            dto: Qualification parameters
-            user: Current user
-
         Returns:
-            Updated Lead instance with qualifyingopportunityid set
-
-        Raises:
-            NotFound: If lead doesn't exist
-            PermissionDenied: If user doesn't have access
-            ValidationError: If lead cannot be qualified
+            Dict matching QualifyLeadResponse schema with created/linked entity info.
         """
         lead = LeadService.get_lead_by_id(lead_id, user)
 
@@ -272,9 +262,15 @@ class LeadService:
                 "Only open leads can be qualified."
             )
 
-        # Create Account if requested and company name exists
+        # Resolve Account: link existing or create new
         account = None
-        if dto.create_account and lead.companyname:
+        if dto.existingAccountId:
+            from apps.accounts.models import Account
+            try:
+                account = Account.objects.get(accountid=dto.existingAccountId)
+            except Account.DoesNotExist:
+                raise NotFound(f"Account with ID {dto.existingAccountId} not found")
+        elif dto.createAccount and lead.companyname:
             from apps.accounts.models import Account
             account = Account.objects.create(
                 name=lead.companyname,
@@ -285,9 +281,15 @@ class LeadService:
                 modifiedby=user,
             )
 
-        # Create Contact if requested
+        # Resolve Contact: link existing or create new
         contact = None
-        if dto.create_contact:
+        if dto.existingContactId:
+            from apps.contacts.models import Contact
+            try:
+                contact = Contact.objects.get(contactid=dto.existingContactId)
+            except Contact.DoesNotExist:
+                raise NotFound(f"Contact with ID {dto.existingContactId} not found")
+        elif dto.createContact:
             from apps.contacts.models import Contact
             contact = Contact.objects.create(
                 firstname=lead.firstname,
@@ -304,50 +306,62 @@ class LeadService:
 
         # Create Opportunity
         from apps.opportunities.models import Opportunity, OpportunityStateCode, OpportunityStatusCode
-        opportunity_name = dto.opportunity_name or f"{lead.fullname} - {lead.companyname or 'Opportunity'}"
+        opportunity_name = dto.opportunityName or f"{lead.fullname} - {lead.companyname or 'Opportunity'}"
         opportunity = Opportunity.objects.create(
             name=opportunity_name,
-            accountid=account if account else None,
-            contactid=contact if contact else None,
-            estimatedrevenue=dto.estimated_revenue or lead.estimatedvalue,
-            estimatedclosedate=dto.estimated_close_date or lead.estimatedclosedate,
+            description=dto.description,
+            accountid=account,
+            contactid=contact,
+            estimatedrevenue=dto.estimatedValue or lead.estimatedvalue,
+            estimatedclosedate=dto.estimatedCloseDate or lead.estimatedclosedate,
             originatingleadid=lead,
             ownerid=lead.ownerid,
             createdby=user,
             modifiedby=user,
             statecode=OpportunityStateCode.OPEN,
             statuscode=OpportunityStatusCode.IN_PROGRESS,
-            probability=50,  # Default probability for new opportunities
+            probability=50,
         )
 
-        # Set the qualifying opportunity ID
-        lead.qualifyingopportunityid = opportunity.opportunityid
-
         # Update lead state to Qualified
+        lead.qualifyingopportunityid = opportunity.opportunityid
         lead.statecode = LeadStateCode.QUALIFIED
         lead.statuscode = LeadStatusCode.QUALIFIED
         lead.modifiedby = user
         lead.save()
 
-        return lead
+        # Build response matching QualifyLeadResponse schema
+        response = {
+            'leadId': str(lead.leadid),
+            'opportunityId': str(opportunity.opportunityid),
+            'opportunity': {
+                'opportunityid': str(opportunity.opportunityid),
+                'name': opportunity.name,
+            },
+        }
+
+        if account:
+            response['accountId'] = str(account.accountid)
+            response['account'] = {
+                'accountid': str(account.accountid),
+                'name': account.name,
+            }
+
+        if contact:
+            response['contactId'] = str(contact.contactid)
+            response['contact'] = {
+                'contactid': str(contact.contactid),
+                'fullname': contact.fullname,
+            }
+
+        return response
 
     @staticmethod
     def disqualify_lead(lead_id: UUID, dto: DisqualifyLeadDto, user: SystemUser) -> Lead:
         """
-        Disqualify a lead (mark as lost/cannot contact/not interested).
+        Disqualify a lead.
 
-        Args:
-            lead_id: Lead UUID
-            dto: Disqualification parameters
-            user: Current user
-
-        Returns:
-            Updated Lead instance
-
-        Raises:
-            NotFound: If lead doesn't exist
-            PermissionDenied: If user doesn't have access
-            ValidationError: If lead cannot be disqualified
+        Frontend sends just an optional reason. Defaults statuscode to LOST (4).
         """
         lead = LeadService.get_lead_by_id(lead_id, user)
 
@@ -358,26 +372,13 @@ class LeadService:
                 "Only open leads can be disqualified."
             )
 
-        # Validate status code is a disqualified status
-        valid_disqualified_codes = [
-            LeadStatusCode.LOST,
-            LeadStatusCode.CANNOT_CONTACT,
-            LeadStatusCode.NO_LONGER_INTERESTED,
-        ]
-
-        if dto.statuscode not in valid_disqualified_codes:
-            raise ValidationError(
-                f"Invalid disqualification status code. "
-                f"Must be one of: {', '.join([str(c) for c in valid_disqualified_codes])}"
-            )
-
-        # Update lead state
+        # Update lead state (default to LOST)
         lead.statecode = LeadStateCode.DISQUALIFIED
-        lead.statuscode = dto.statuscode
+        lead.statuscode = LeadStatusCode.LOST
 
-        # Add remarks to description if provided
-        if dto.remarks:
-            lead.description = (lead.description or '') + f"\n\nDisqualification remarks: {dto.remarks}"
+        # Add reason to description if provided
+        if dto.reason:
+            lead.description = (lead.description or '') + f"\n\nDisqualification reason: {dto.reason}"
 
         lead.modifiedby = user
         lead.save()
@@ -403,8 +404,7 @@ class LeadService:
             PermissionDenied: If user doesn't have access
         """
         disqualify_dto = DisqualifyLeadDto(
-            statuscode=LeadStatusCode.LOST,
-            remarks="Deleted by user"
+            reason="Deleted by user"
         )
 
         return LeadService.disqualify_lead(lead_id, disqualify_dto, user)

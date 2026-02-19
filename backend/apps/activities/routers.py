@@ -6,36 +6,89 @@ Phase 12 Implementation: Activity Management
 
 from ninja import Router
 from django.http import HttpRequest
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from apps.activities.services import ActivityService
 from apps.activities.schemas import *
 from core.permissions import require_permission, Permission, filter_by_ownership
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedActivityList = create_paginated_response(ActivityListItemSchema)
 
 activities_router = Router(tags=['Activities'])
 
 
-@activities_router.get('/', response=PaginatedActivityList)
+@activities_router.get('/', response=List[ActivityListItemSchema])
 @require_permission(Permission.ACTIVITY_READ)
-def list_activities(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, type: str = None, regarding: UUID = None):
-    """List all activities with optional filtering and pagination."""
-    from apps.activities.models import Activity
+def list_activities(
+    request: HttpRequest,
+    state: int = None,
+    statecode: Optional[int] = None,
+    type: str = None,
+    activitytypecode: Optional[str] = None,
+    regarding: UUID = None,
+    regardingobjectid: Optional[UUID] = None,
+    ownerid: Optional[str] = None,
+    regardingobjectidtype: Optional[str] = None,
+    upcoming: Optional[bool] = None,
+    overdue: Optional[bool] = None,
+):
+    """List all activities with optional filtering."""
+    from apps.activities.models import Activity, ActivityStateCode, ACTIVITY_TYPE_INT_MAP
+    from django.utils import timezone
 
     queryset = filter_by_ownership(Activity.objects.all(), request.user)
 
-    if state is not None:
-        queryset = queryset.filter(statecode=state)
-    if type:
-        queryset = queryset.filter(activitytypecode=type)
-    if regarding:
-        queryset = queryset.filter(regardingobjectid=regarding)
+    # Support both 'state' and 'statecode' param names
+    effective_state = statecode if statecode is not None else state
+    if effective_state is not None:
+        queryset = queryset.filter(statecode=effective_state)
+
+    # Support both 'type' and 'activitytypecode' param names
+    # Accept integer codes from frontend and map to string
+    effective_type = activitytypecode or type
+    if effective_type:
+        try:
+            int_code = int(effective_type)
+            mapped = ACTIVITY_TYPE_INT_MAP.get(int_code)
+            if mapped:
+                effective_type = mapped
+        except (ValueError, TypeError):
+            pass
+        queryset = queryset.filter(activitytypecode=effective_type)
+
+    # Support both 'regarding' and 'regardingobjectid' param names
+    effective_regarding = regardingobjectid or regarding
+    if effective_regarding:
+        queryset = queryset.filter(regardingobjectid=effective_regarding)
+    if ownerid:
+        queryset = queryset.filter(ownerid_id=ownerid)
+    if regardingobjectidtype:
+        queryset = queryset.filter(regardingobjectidtype=regardingobjectidtype)
+    if upcoming:
+        queryset = queryset.filter(
+            statecode=ActivityStateCode.OPEN,
+            scheduledstart__gte=timezone.now()
+        )
+    if overdue:
+        queryset = queryset.filter(
+            statecode=ActivityStateCode.OPEN,
+            scheduledend__lt=timezone.now()
+        )
 
     queryset = queryset.select_related('ownerid')
-    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
+    return list(queryset)
+
+
+@activities_router.post('/', response={201: ActivityDetailSchema})
+@require_permission(Permission.ACTIVITY_CREATE)
+def create_activity(request: HttpRequest, payload: CreateActivityDto):
+    """Create a new activity (generic endpoint).
+
+    Accepts activitytypecode as integer:
+    1=Email, 2=PhoneCall, 3=Task, 4=Appointment, 5=Meeting, 6=Note.
+    Creates the base Activity and any type-specific child record.
+    """
+    result = ActivityService.create_activity(payload, request.user)
+    return 201, result
 
 
 @activities_router.get('/{activity_id}', response=ActivityDetailSchema)
@@ -102,9 +155,19 @@ def complete_activity(request: HttpRequest, activity_id: UUID, payload: Complete
     return activity
 
 
+@activities_router.post('/{activity_id}/cancel', response=ActivitySchema)
+@require_permission(Permission.ACTIVITY_UPDATE)
+def cancel_activity(request: HttpRequest, activity_id: UUID):
+    """Cancel an activity (soft delete by setting statecode to Canceled)."""
+    ActivityService.delete_activity(activity_id, request.user)
+    from apps.activities.models import Activity
+    activity = Activity.objects.get(activityid=activity_id)
+    return activity
+
+
 @activities_router.get('/stats/summary', response=ActivityStatsSchema)
 @require_permission(Permission.ACTIVITY_READ)
-def get_activity_stats(request: HttpRequest):
+def get_activity_stats(request: HttpRequest, ownerid: Optional[str] = None):
     """Get activity statistics."""
     stats = ActivityService.get_activity_stats(request.user)
     return stats

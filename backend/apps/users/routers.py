@@ -29,9 +29,6 @@ from core.permissions import (
     require_authenticated,
     Permission
 )
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedUserList = create_paginated_response(UserSchema)
 
 
 # ============================================================================
@@ -101,27 +98,27 @@ def logout(request: HttpRequest):
     return {"success": True, "message": "Logout successful"}
 
 
-@auth_router.get("/me", response=UserInfo)
+@auth_router.get("/me")
 @require_authenticated
 def get_current_user_info(request: HttpRequest):
     """
     Get current authenticated user info (T049).
 
-    Args:
-        request: HTTP request
-
-    Returns:
-        UserInfo of current user
+    Returns wrapped response: {success: true, data: UserInfo}
+    Frontend uses unwrapBackendResponse() for this endpoint.
     """
     user = request.user
 
-    return UserInfo(
-        systemuserid=user.systemuserid,
-        emailaddress1=user.emailaddress1,
-        fullname=user.fullname,
-        role_name=user.role_name,
-        isdisabled=user.isdisabled,
-    )
+    return {
+        "success": True,
+        "data": {
+            "systemuserid": str(user.systemuserid),
+            "emailaddress1": user.emailaddress1,
+            "fullname": user.fullname,
+            "role_name": user.role_name,
+            "isdisabled": user.isdisabled,
+        }
+    }
 
 
 @auth_router.post("/change-password")
@@ -156,30 +153,17 @@ def change_password(request: HttpRequest, payload: ChangePasswordDto):
 users_router = Router(tags=["Users"])
 
 
-@users_router.get("/", response=PaginatedUserList)
+@users_router.get("/", response=List[UserSchema])
 @require_permission(Permission.USER_READ)
 def list_users(
     request: HttpRequest,
-    page: int = 1,
-    page_size: int = 50,
     role: Optional[str] = None,
     isdisabled: Optional[bool] = None,
     search: Optional[str] = None,
 ):
     """
-    List users with filtering and pagination (T051).
+    List users with filtering.
     Requires: USER_READ permission
-
-    Args:
-        request: HTTP request
-        page: Page number (1-indexed, default: 1)
-        page_size: Items per page (default: 50, max: 100)
-        role: Filter by role name (optional)
-        isdisabled: Filter by disabled status (optional)
-        search: Search in email or full name (optional)
-
-    Returns:
-        Paginated list of users
     """
     users = UserService.list_users(
         role_filter=role,
@@ -187,7 +171,7 @@ def list_users(
         search=search
     )
 
-    return paginate_queryset(users, page=page, page_size=page_size, request_url=request.path)
+    return list(users)
 
 
 @users_router.post("/", response={201: UserSchema})

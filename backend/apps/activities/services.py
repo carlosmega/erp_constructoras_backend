@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from uuid import UUID
 
-from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment, ActivityStateCode, ActivityTypeCode
+from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment, ActivityStateCode, ActivityTypeCode, ACTIVITY_TYPE_INT_MAP
 from apps.activities.schemas import *
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, PermissionDenied
@@ -16,6 +16,78 @@ from core.exceptions import ValidationError, PermissionDenied
 
 class ActivityService:
     """Business logic for Activity operations."""
+
+    @staticmethod
+    def create_activity(payload: CreateActivityDto, user: SystemUser) -> dict:
+        """Create an activity from the generic DTO.
+
+        Maps frontend integer activitytypecode to backend string type,
+        creates the base Activity and any type-specific child record.
+        Returns dict matching ActivityDetailSchema.
+        """
+        # Map integer type code to string
+        type_code_str = ACTIVITY_TYPE_INT_MAP.get(payload.activitytypecode)
+        if not type_code_str:
+            raise ValidationError(
+                f"Invalid activitytypecode: {payload.activitytypecode}. "
+                "Must be 1 (Email), 2 (PhoneCall), 3 (Task), 4 (Appointment), 5 (Meeting), or 6 (Note)."
+            )
+
+        # Create base activity
+        activity = Activity.objects.create(
+            activitytypecode=type_code_str,
+            subject=payload.subject,
+            description=payload.description,
+            scheduledstart=payload.scheduledstart,
+            scheduledend=payload.scheduledend,
+            prioritycode=payload.prioritycode,
+            regardingobjectid=payload.regardingobjectid,
+            regardingobjectidtype=payload.regardingobjectidtype,
+            ownerid_id=payload.ownerid,
+            createdby=user,
+            modifiedby=user,
+        )
+
+        # Create type-specific child records with defaults
+        result = {
+            'activity': activity,
+            'email': None,
+            'phonecall': None,
+            'task': None,
+            'appointment': None,
+        }
+
+        if type_code_str == ActivityTypeCode.EMAIL:
+            email = Email.objects.create(activity=activity)
+            result['email'] = {
+                'to': email.to,
+                'sender': email.sender,
+                'cc': email.cc,
+                'bcc': email.bcc,
+                'body': email.body,
+                'directioncode': email.directioncode,
+            }
+        elif type_code_str == ActivityTypeCode.PHONECALL:
+            phonecall = PhoneCall.objects.create(activity=activity)
+            result['phonecall'] = {
+                'phonenumber': phonecall.phonenumber,
+                'directioncode': phonecall.directioncode,
+            }
+        elif type_code_str == ActivityTypeCode.TASK:
+            task = Task.objects.create(activity=activity, percentcomplete=0)
+            result['task'] = {
+                'percentcomplete': task.percentcomplete,
+            }
+        elif type_code_str == ActivityTypeCode.APPOINTMENT:
+            appointment = Appointment.objects.create(activity=activity)
+            result['appointment'] = {
+                'location': appointment.location,
+                'requiredattendees': appointment.requiredattendees,
+                'optionalattendees': appointment.optionalattendees,
+            }
+        # Meeting and Note types: base activity only, no child record needed
+
+        return result
 
     @staticmethod
     def create_email(payload: CreateEmailDto, user: SystemUser) -> Email:
@@ -243,13 +315,23 @@ class ActivityService:
 
     @staticmethod
     def complete_activity(activity_id: UUID, payload: CompleteActivityDto, user: SystemUser) -> Activity:
-        """Mark an activity as completed."""
+        """Mark an activity as completed.
+
+        Accepts both CDS names and snake_case names from frontend.
+        """
         activity = get_object_or_404(Activity, activityid=activity_id)
 
         activity.statecode = ActivityStateCode.COMPLETED
-        activity.actualend = payload.actualend or timezone.now()
-        if payload.actualdurationminutes:
-            activity.actualdurationminutes = payload.actualdurationminutes
+        # Accept both CDS and snake_case field names
+        actual_end = payload.actualend or payload.actual_end
+        actual_start = payload.actual_start
+        actual_duration = payload.actualdurationminutes or payload.actual_duration_minutes
+
+        activity.actualend = actual_end or timezone.now()
+        if actual_start:
+            activity.actualstart = actual_start
+        if actual_duration:
+            activity.actualdurationminutes = actual_duration
         activity.modifiedby = user
         activity.save()
 

@@ -18,6 +18,7 @@ from apps.leads.schemas import (
     CreateLeadDto,
     UpdateLeadDto,
     QualifyLeadDto,
+    QualifyLeadResponse,
     DisqualifyLeadDto,
     LeadStatsSchema,
 )
@@ -28,9 +29,6 @@ from core.permissions import (
     require_authenticated,
     Permission
 )
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedLeadList = create_paginated_response(LeadListSchema)
 
 # ============================================================================
 # Leads Router
@@ -39,12 +37,10 @@ PaginatedLeadList = create_paginated_response(LeadListSchema)
 leads_router = Router(tags=["Leads"])
 
 
-@leads_router.get("/", response=PaginatedLeadList)
+@leads_router.get("/", response=List[LeadListSchema])
 @require_permission(Permission.LEAD_READ)
 def list_leads(
     request: HttpRequest,
-    page: int = 1,
-    page_size: int = 50,
     statecode: Optional[int] = None,
     statuscode: Optional[int] = None,
     leadqualitycode: Optional[int] = None,
@@ -53,24 +49,9 @@ def list_leads(
     ownerid: Optional[str] = None,
 ):
     """
-    List leads with filtering and pagination.
+    List leads with filtering.
     Requires: LEAD_READ permission
-
-    Args:
-        request: HTTP request
-        page: Page number (1-indexed, default: 1)
-        page_size: Items per page (default: 50, max: 100)
-        statecode: Filter by state code (optional)
-        statuscode: Filter by status code (optional)
-        leadqualitycode: Filter by quality rating (optional)
-        leadsourcecode: Filter by source (optional)
-        search: Search in fullname, email, company (optional)
-        ownerid: Filter by owner UUID (optional, admin/manager only)
-
-    Returns:
-        Paginated list of leads
     """
-    # Convert ownerid string to UUID if provided
     owner_uuid = UUID(ownerid) if ownerid else None
 
     leads = LeadService.list_leads(
@@ -83,7 +64,7 @@ def list_leads(
         ownerid=owner_uuid,
     )
 
-    return paginate_queryset(leads, page=page, page_size=page_size, request_url=request.path)
+    return list(leads)
 
 
 @leads_router.post("/", response={201: LeadSchema})
@@ -189,54 +170,28 @@ def delete_lead(request: HttpRequest, lead_id: UUID):
     return 204, None
 
 
-@leads_router.post("/{lead_id}/qualify", response=LeadSchema)
+@leads_router.post("/{lead_id}/qualify", response=QualifyLeadResponse)
 @require_permission(Permission.LEAD_QUALIFY)
 def qualify_lead(request: HttpRequest, lead_id: UUID, payload: QualifyLeadDto):
     """
     Qualify a lead (convert to Opportunity).
     Requires: LEAD_QUALIFY permission
 
-    Creates Account and/or Contact if requested, then creates Opportunity.
-    Sets lead state to Qualified.
-
-    Args:
-        request: HTTP request
-        lead_id: UUID of lead
-        payload: Qualification parameters
-
-    Returns:
-        Updated LeadSchema with qualifyingopportunityid set
-
-    Raises:
-        NotFound: If lead doesn't exist
-        PermissionDenied: If user doesn't have access
-        ValidationError: If lead cannot be qualified
+    Creates/links Account and Contact, creates Opportunity.
+    Returns IDs and nested objects of all created/linked entities.
     """
-    lead = LeadService.qualify_lead(lead_id, payload, request.user)
-
-    return lead
+    result = LeadService.qualify_lead(lead_id, payload, request.user)
+    return result
 
 
 @leads_router.post("/{lead_id}/disqualify", response=LeadSchema)
 @require_permission(Permission.LEAD_UPDATE)
 def disqualify_lead(request: HttpRequest, lead_id: UUID, payload: DisqualifyLeadDto):
     """
-    Disqualify a lead (mark as lost/cannot contact/not interested).
+    Disqualify a lead.
     Requires: LEAD_UPDATE permission
 
-    Args:
-        request: HTTP request
-        lead_id: UUID of lead
-        payload: Disqualification parameters
-
-    Returns:
-        Updated LeadSchema
-
-    Raises:
-        NotFound: If lead doesn't exist
-        PermissionDenied: If user doesn't have access
-        ValidationError: If lead cannot be disqualified or invalid status code
+    Accepts optional reason string. Defaults to LOST status.
     """
     lead = LeadService.disqualify_lead(lead_id, payload, request.user)
-
     return lead

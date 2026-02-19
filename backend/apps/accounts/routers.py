@@ -7,20 +7,17 @@ from django.http import HttpRequest
 from apps.accounts.schemas import AccountSchema, CreateAccountDto, UpdateAccountDto
 from apps.accounts.services import AccountService
 from core.permissions import require_permission, Permission
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedAccountList = create_paginated_response(AccountSchema)
 
 accounts_router = Router(tags=["Accounts"])
 
 
-@accounts_router.get("/", response=PaginatedAccountList)
+@accounts_router.get("/", response=List[AccountSchema])
 @require_permission(Permission.ACCOUNT_READ)
-def list_accounts(request: HttpRequest, page: int = 1, page_size: int = 50, statecode: Optional[int] = None, search: Optional[str] = None, ownerid: Optional[str] = None):
-    """List accounts with filtering and pagination. Requires: ACCOUNT_READ permission"""
+def list_accounts(request: HttpRequest, statecode: Optional[int] = None, search: Optional[str] = None, ownerid: Optional[str] = None):
+    """List accounts with filtering. Requires: ACCOUNT_READ permission"""
     owner_uuid = UUID(ownerid) if ownerid else None
     accounts = AccountService.list_accounts(user=request.user, statecode=statecode, search=search, ownerid=owner_uuid)
-    return paginate_queryset(accounts, page=page, page_size=page_size, request_url=request.path)
+    return list(accounts)
 
 
 @accounts_router.post("/", response={201: AccountSchema})

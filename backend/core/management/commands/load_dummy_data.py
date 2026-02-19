@@ -22,6 +22,9 @@ from apps.contacts.models import Contact, ContactStateCode
 from apps.quotes.models import Quote, QuoteDetail, QuoteStateCode, QuoteStatusCode
 from apps.orders.models import SalesOrder, SalesOrderDetail, OrderStateCode, OrderStatusCode
 from apps.invoices.models import Invoice, InvoiceDetail, InvoiceStateCode, InvoiceStatusCode
+from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment
+from apps.cases.models import Case
+from apps.quotes.models import QuoteTemplate
 
 
 class Command(BaseCommand):
@@ -99,6 +102,14 @@ class Command(BaseCommand):
     def clear_data(self):
         """Clear existing test data (keeps admin users)."""
         # Delete in order (child first, parent last)
+        # Activities and Cases first (they reference Users, Accounts, Contacts, etc.)
+        Email.objects.all().delete()
+        PhoneCall.objects.all().delete()
+        Task.objects.all().delete()
+        Appointment.objects.all().delete()
+        Activity.objects.all().delete()
+        Case.objects.all().delete()
+        QuoteTemplate.objects.all().delete()
         InvoiceDetail.objects.all().delete()
         Invoice.objects.all().delete()
         SalesOrderDetail.objects.all().delete()

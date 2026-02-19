@@ -9,7 +9,7 @@ from typing import Optional
 from datetime import datetime
 from uuid import UUID
 
-from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment
+from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment, ACTIVITY_TYPE_STR_MAP
 
 
 # ============================================================================
@@ -18,29 +18,45 @@ from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment
 
 class ActivitySchema(ModelSchema):
     """Full activity response schema."""
+    activitytypecode: int
     state_name: Optional[str] = None
     priority_name: Optional[str] = None
 
-    class Config:
+    class Meta:
         model = Activity
-        model_fields = '__all__'
+        fields = '__all__'
+
+    @staticmethod
+    def resolve_activitytypecode(obj):
+        """Convert backend string type code to frontend integer code."""
+        return ACTIVITY_TYPE_STR_MAP.get(obj.activitytypecode, 0)
 
 
 class ActivityListItemSchema(ModelSchema):
     """Simplified activity schema for list views."""
+    activitytypecode: int
     state_name: Optional[str] = None
 
-    class Config:
+    class Meta:
         model = Activity
-        model_fields = [
+        fields = [
             'activityid', 'activitytypecode', 'subject', 'statecode',
             'scheduledstart', 'scheduledend', 'ownerid', 'createdon'
         ]
 
+    @staticmethod
+    def resolve_activitytypecode(obj):
+        """Convert backend string type code to frontend integer code."""
+        return ACTIVITY_TYPE_STR_MAP.get(obj.activitytypecode, 0)
+
 
 class CreateActivityDto(Schema):
-    """Base DTO for creating an activity."""
-    activitytypecode: str
+    """Base DTO for creating an activity.
+
+    Accepts activitytypecode as integer matching frontend enum:
+    1=Email, 2=PhoneCall, 3=Task, 4=Appointment, 5=Meeting, 6=Note
+    """
+    activitytypecode: int
     subject: str
     description: Optional[str] = None
     regardingobjectid: Optional[UUID] = None
@@ -68,9 +84,17 @@ class UpdateActivityDto(Schema):
 
 
 class CompleteActivityDto(Schema):
-    """DTO for completing an activity."""
+    """DTO for completing an activity.
+
+    Accepts both CDS names (actualend, actualdurationminutes) and
+    snake_case names (actual_end, actual_duration_minutes) from frontend.
+    """
     actualend: Optional[datetime] = None
     actualdurationminutes: Optional[int] = None
+    # Frontend sends snake_case variants
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
+    actual_duration_minutes: Optional[int] = None
 
 
 class ActivityDetailSchema(Schema):

@@ -38,15 +38,19 @@ api = NinjaAPI(
 # ============================================================================
 
 def _build_error_response(request, code: str, status: int, message: str, details: dict = None):
-    """Build a standardized error response."""
+    """Build a standardized error response matching frontend expectations.
+
+    Frontend expects: {success: false, error: {code, message, details}}
+    """
     body = {
-        "detail": message,
-        "code": code,
-        "status": status,
-        "path": request.path,
+        "success": False,
+        "error": {
+            "code": code.upper(),
+            "message": message,
+        },
     }
     if details:
-        body["details"] = details
+        body["error"]["details"] = details
     return JsonResponse(body, status=status)
 
 
@@ -109,14 +113,15 @@ def generic_exception_handler(request, exc):
     """Handle unexpected exceptions."""
     logger.exception("Unhandled exception at %s: %s", request.path, exc)
     body = {
-        "detail": "An unexpected error occurred",
-        "code": "internal_server_error",
-        "status": 500,
-        "path": request.path,
+        "success": False,
+        "error": {
+            "code": "INTERNAL_ERROR",
+            "message": "An unexpected error occurred",
+        },
     }
     if settings.DEBUG:
-        body["error"] = str(exc)
-        body["traceback"] = traceback.format_exc()
+        body["error"]["debug_message"] = str(exc)
+        body["error"]["traceback"] = traceback.format_exc()
     return JsonResponse(body, status=500)
 
 # ============================================================================
@@ -129,10 +134,12 @@ from apps.opportunities.routers import opportunities_router
 from apps.accounts.routers import accounts_router
 from apps.contacts.routers import contacts_router
 from apps.quotes.routers import quotes_router
+from apps.quotes.template_routers import quote_templates_router
 from apps.orders.routers import orders_router
 from apps.invoices.routers import invoices_router
 from apps.products.routers import products_router, pricelists_router
 from apps.activities.routers import activities_router
+from apps.cases.routers import cases_router
 
 api.add_router("/auth", auth_router)
 api.add_router("/users", users_router)
@@ -142,11 +149,13 @@ api.add_router("/opportunities", opportunities_router)
 api.add_router("/accounts", accounts_router)
 api.add_router("/contacts", contacts_router)
 api.add_router("/quotes", quotes_router)
+api.add_router("/quote-templates", quote_templates_router)
 api.add_router("/orders", orders_router)
 api.add_router("/invoices", invoices_router)
 api.add_router("/products", products_router)
 api.add_router("/pricelists", pricelists_router)
 api.add_router("/activities", activities_router)
+api.add_router("/cases", cases_router)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

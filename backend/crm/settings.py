@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'apps.invoices',  # Invoice management (Phase 10)
     'apps.products',  # Product catalog (Phase 11)
     'apps.activities',  # Activity management (Phase 12)
+    'apps.cases',  # Case management (Phase 13)
     'core',  # Shared utilities
 ]
 

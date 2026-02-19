@@ -12,43 +12,37 @@ from uuid import UUID
 from apps.quotes.services import QuoteService
 from apps.quotes.schemas import (
     QuoteSchema, QuoteListItemSchema, CreateQuoteDto, UpdateQuoteDto,
-    CreateQuoteDetailDto, QuoteDetailSchema, ActivateQuoteDto, CloseQuoteDto,
-    QuoteStatsSchema
+    CreateQuoteDetailDto, UpdateQuoteDetailDto, QuoteDetailSchema,
+    ActivateQuoteDto, CloseQuoteDto, QuoteStatsSchema
 )
 from core.permissions import require_permission, Permission
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedQuoteList = create_paginated_response(QuoteListItemSchema)
 
 quotes_router = Router(tags=['Quotes'])
 
 
-@quotes_router.get('/', response=PaginatedQuoteList)
+@quotes_router.get('/', response=List[QuoteListItemSchema])
 @require_permission(Permission.QUOTE_READ)
-def list_quotes(request: HttpRequest, page: int = 1, page_size: int = 50, state: int = None, owner: UUID = None):
+def list_quotes(request: HttpRequest, state: int = None, statecode: int = None, owner: UUID = None):
     """
-    List all quotes with optional filtering and pagination.
+    List all quotes with optional filtering.
 
     Filters:
-    - page: Page number (1-indexed, default: 1)
-    - page_size: Items per page (default: 50, max: 100)
-    - state: Filter by statecode (0=Draft, 1=Active, 2=Won, 3=Closed)
+    - state/statecode: Filter by statecode (0=Draft, 1=Active, 2=Won, 3=Closed)
     - owner: Filter by owner ID
     """
     from apps.quotes.models import Quote
     from core.permissions import filter_by_ownership
 
-    # Base queryset filtered by ownership (System Admin/Sales Manager see all)
     queryset = filter_by_ownership(Quote.objects.all(), request.user)
 
-    # Apply filters
-    if state is not None:
-        queryset = queryset.filter(statecode=state)
+    effective_state = statecode if statecode is not None else state
+    if effective_state is not None:
+        queryset = queryset.filter(statecode=effective_state)
     if owner:
         queryset = queryset.filter(ownerid=owner)
 
     queryset = queryset.select_related('accountid', 'contactid', 'ownerid')
-    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
+    return list(queryset)
 
 
 @quotes_router.post('/', response={201: QuoteSchema})
@@ -93,12 +87,62 @@ def delete_quote(request: HttpRequest, quote_id: UUID):
 
 # ============ Quote Detail Endpoints ============
 
+@quotes_router.get('/{quote_id}/details', response=List[QuoteDetailSchema])
+@require_permission(Permission.QUOTE_READ)
+def list_quote_details(request: HttpRequest, quote_id: UUID):
+    """List all line items for a quote."""
+    from apps.quotes.models import QuoteDetail as QuoteDetailModel
+    details = QuoteDetailModel.objects.filter(quoteid_id=quote_id).order_by('sequencenumber')
+    return list(details)
+
+
 @quotes_router.post('/{quote_id}/details', response={201: QuoteDetailSchema})
 @require_permission(Permission.QUOTE_UPDATE)
 def add_quote_detail(request: HttpRequest, quote_id: UUID, payload: CreateQuoteDetailDto):
     """Add a line item to a quote."""
     detail = QuoteService.add_quote_detail(quote_id, payload, request.user)
     return 201, detail
+
+
+@quotes_router.get('/details/{detail_id}', response=QuoteDetailSchema)
+@require_permission(Permission.QUOTE_READ)
+def get_quote_detail(request: HttpRequest, detail_id: UUID):
+    """Get a single quote detail by ID."""
+    from apps.quotes.models import QuoteDetail as QuoteDetailModel
+    from django.shortcuts import get_object_or_404
+    detail = get_object_or_404(QuoteDetailModel, quotedetailid=detail_id)
+    return detail
+
+
+@quotes_router.patch('/details/{detail_id}', response=QuoteDetailSchema)
+@require_permission(Permission.QUOTE_UPDATE)
+def update_quote_detail(request: HttpRequest, detail_id: UUID, payload: UpdateQuoteDetailDto):
+    """Update a quote detail line item."""
+    from apps.quotes.models import QuoteDetail as QuoteDetailModel
+    from django.shortcuts import get_object_or_404
+    detail = get_object_or_404(QuoteDetailModel, quotedetailid=detail_id)
+
+    if payload.productname is not None:
+        detail.productname = payload.productname
+    if payload.productdescription is not None:
+        detail.productdescription = payload.productdescription
+    if payload.quantity is not None:
+        detail.quantity = payload.quantity
+    if payload.priceperunit is not None:
+        detail.priceperunit = payload.priceperunit
+    if payload.manualdiscountamount is not None:
+        detail.manualdiscountamount = payload.manualdiscountamount
+    if payload.tax is not None:
+        detail.tax = payload.tax
+    if payload.sequencenumber is not None:
+        detail.sequencenumber = payload.sequencenumber
+
+    detail.save()
+
+    # Recalculate quote totals
+    detail.quoteid.calculate_totals()
+
+    return detail
 
 
 @quotes_router.delete('/details/{detail_id}', response={204: None})

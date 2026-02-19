@@ -18,6 +18,8 @@ class OpportunitySchema(ModelSchema):
     stage_name: Optional[str] = None
     owner_name: Optional[str] = None
     weighted_revenue: Optional[Decimal] = None
+    customerid: Optional[str] = None
+    customeridtype: Optional[str] = None
 
     class Meta:
         model = Opportunity
@@ -43,15 +45,29 @@ class OpportunitySchema(ModelSchema):
     def resolve_weighted_revenue(obj):
         return obj.weighted_revenue
 
+    @staticmethod
+    def resolve_customerid(obj):
+        from core.customers import get_customerid
+        return get_customerid(obj)
+
+    @staticmethod
+    def resolve_customeridtype(obj):
+        from core.customers import get_customeridtype
+        return get_customeridtype(obj)
+
 
 class CreateOpportunityDto(Schema):
     """DTO for creating opportunity."""
     name: str
     description: Optional[str] = None
     customername: Optional[str] = None
+    customerid: Optional[UUID] = None
+    customeridtype: Optional[str] = None  # 'account' or 'contact'
     estimatedrevenue: Optional[Decimal] = None
+    estimatedvalue: Optional[Decimal] = None  # Alias for estimatedrevenue (frontend uses this name)
     estimatedclosedate: Optional[date] = None
     salesstage: Optional[int] = 0
+    closeprobability: Optional[int] = None  # Alias for probability (frontend uses this name)
     probability: Optional[int] = 0
     originatingleadid: Optional[UUID] = None
     ownerid: Optional[UUID] = None
@@ -62,11 +78,13 @@ class UpdateOpportunityDto(Schema):
     name: Optional[str] = None
     description: Optional[str] = None
     customername: Optional[str] = None
-    accountid: Optional[UUID] = None  # B2B customer reference
-    contactid: Optional[UUID] = None  # B2C customer reference
+    customerid: Optional[UUID] = None
+    customeridtype: Optional[str] = None  # 'account' or 'contact'
     estimatedrevenue: Optional[Decimal] = None
+    estimatedvalue: Optional[Decimal] = None  # Alias for estimatedrevenue
     estimatedclosedate: Optional[date] = None
     salesstage: Optional[int] = None
+    closeprobability: Optional[int] = None  # Alias for probability
     probability: Optional[int] = None
     statuscode: Optional[int] = None
 

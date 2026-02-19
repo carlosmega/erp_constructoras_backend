@@ -182,28 +182,61 @@ class UpdateLeadDto(Schema):
 class QualifyLeadDto(Schema):
     """
     DTO for qualifying a lead (convert to Opportunity).
+    Accepts camelCase field names matching frontend conventions.
     """
-    # Flag to create Account from lead
-    create_account: bool = True
+    # Account options (B2B)
+    createAccount: bool = True
+    existingAccountId: Optional[UUID] = None
 
-    # Flag to create Contact from lead
-    create_contact: bool = True
+    # Contact options
+    createContact: bool = True
+    existingContactId: Optional[UUID] = None
 
-    # Optional opportunity information (defaults to lead data if not provided)
-    opportunity_name: Optional[str] = None
-    estimated_revenue: Optional[Decimal] = None
-    estimated_close_date: Optional[date] = None
+    # Opportunity details
+    opportunityName: Optional[str] = None
+    estimatedValue: Optional[Decimal] = None
+    estimatedCloseDate: Optional[date] = None
+    description: Optional[str] = None
+
+
+class QualifyLeadResponseAccount(Schema):
+    """Nested account info in qualify response."""
+    accountid: str
+    name: str
+
+
+class QualifyLeadResponseContact(Schema):
+    """Nested contact info in qualify response."""
+    contactid: str
+    fullname: str
+
+
+class QualifyLeadResponseOpportunity(Schema):
+    """Nested opportunity info in qualify response."""
+    opportunityid: str
+    name: str
+
+
+class QualifyLeadResponse(Schema):
+    """
+    Response schema for lead qualification.
+    Returns IDs and nested objects for created/linked entities.
+    """
+    leadId: str
+    accountId: Optional[str] = None
+    contactId: Optional[str] = None
+    opportunityId: str
+    account: Optional[QualifyLeadResponseAccount] = None
+    contact: Optional[QualifyLeadResponseContact] = None
+    opportunity: QualifyLeadResponseOpportunity
 
 
 class DisqualifyLeadDto(Schema):
     """
     DTO for disqualifying a lead.
+    Frontend sends just an optional reason string.
     """
-    # Required: reason for disqualification
-    statuscode: int  # Must be one of the disqualified status codes (4, 5, 6)
-
-    # Optional: remarks about why the lead was disqualified
-    remarks: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class LeadStatsSchema(Schema):

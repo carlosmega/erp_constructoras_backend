@@ -87,6 +87,12 @@ class Permission(str, Enum):
     ACTIVITY_UPDATE = "activity_update"
     ACTIVITY_DELETE = "activity_delete"
 
+    # Case permissions
+    CASE_CREATE = "case_create"
+    CASE_READ = "case_read"
+    CASE_UPDATE = "case_update"
+    CASE_DELETE = "case_delete"
+
 
 # ============================================================================
 # Role Permission Matrix
@@ -105,6 +111,7 @@ ROLE_PERMISSIONS = {
         Permission.INVOICE_CREATE, Permission.INVOICE_READ, Permission.INVOICE_UPDATE, Permission.INVOICE_DELETE,
         Permission.PRODUCT_CREATE, Permission.PRODUCT_READ, Permission.PRODUCT_UPDATE, Permission.PRODUCT_DELETE,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE, Permission.ACTIVITY_DELETE,
+        Permission.CASE_CREATE, Permission.CASE_READ, Permission.CASE_UPDATE, Permission.CASE_DELETE,
     ],
 
     "Sales Manager": [
@@ -120,6 +127,7 @@ ROLE_PERMISSIONS = {
         Permission.INVOICE_CREATE, Permission.INVOICE_READ, Permission.INVOICE_UPDATE, Permission.INVOICE_DELETE,
         Permission.PRODUCT_READ,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE, Permission.ACTIVITY_DELETE,
+        Permission.CASE_CREATE, Permission.CASE_READ, Permission.CASE_UPDATE, Permission.CASE_DELETE,
     ],
 
     "Salesperson": [
@@ -134,6 +142,7 @@ ROLE_PERMISSIONS = {
         Permission.INVOICE_READ,
         Permission.PRODUCT_READ,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE, Permission.ACTIVITY_DELETE,
+        Permission.CASE_CREATE, Permission.CASE_READ, Permission.CASE_UPDATE,
     ],
 
     "Marketing User": [
@@ -142,6 +151,7 @@ ROLE_PERMISSIONS = {
         Permission.ACCOUNT_READ,
         Permission.CONTACT_CREATE, Permission.CONTACT_READ, Permission.CONTACT_UPDATE,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE,
+        Permission.CASE_READ,
     ],
 
     "Read-Only User": [
@@ -156,6 +166,7 @@ ROLE_PERMISSIONS = {
         Permission.INVOICE_READ,
         Permission.PRODUCT_READ,
         Permission.ACTIVITY_READ,
+        Permission.CASE_READ,
     ],
 }
 

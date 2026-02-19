@@ -47,6 +47,8 @@ class InvoiceSchema(ModelSchema):
     """Full Invoice response schema with nested details."""
     invoice_details: List[InvoiceDetailSchema] = []
     customer_name: Optional[str] = None
+    customerid: Optional[str] = None
+    customeridtype: Optional[str] = None
     is_overdue: bool = False
 
     class Meta:
@@ -60,10 +62,22 @@ class InvoiceSchema(ModelSchema):
             'createdon', 'modifiedon', 'createdby', 'modifiedby'
         ]
 
+    @staticmethod
+    def resolve_customerid(obj):
+        from core.customers import get_customerid
+        return get_customerid(obj)
+
+    @staticmethod
+    def resolve_customeridtype(obj):
+        from core.customers import get_customeridtype
+        return get_customeridtype(obj)
+
 
 class InvoiceListItemSchema(ModelSchema):
     """Simplified Invoice schema for list views."""
     customer_name: Optional[str] = None
+    customerid: Optional[str] = None
+    customeridtype: Optional[str] = None
     is_overdue: bool = False
 
     class Meta:
@@ -74,16 +88,28 @@ class InvoiceListItemSchema(ModelSchema):
             'statuscode', 'ownerid', 'createdon'
         ]
 
+    @staticmethod
+    def resolve_customerid(obj):
+        from core.customers import get_customerid
+        return get_customerid(obj)
+
+    @staticmethod
+    def resolve_customeridtype(obj):
+        from core.customers import get_customeridtype
+        return get_customeridtype(obj)
+
 
 class CreateInvoiceDto(Schema):
     """DTO for creating a new invoice manually."""
     name: str
     salesorderid: Optional[UUID] = None
-    accountid: Optional[UUID] = None
-    contactid: Optional[UUID] = None
+    opportunityid: Optional[UUID] = None
+    customerid: Optional[UUID] = None
+    customeridtype: Optional[str] = None  # 'account' or 'contact'
     datedelivered: Optional[date] = None
     duedate: Optional[date] = None
     description: Optional[str] = None
+    ownerid: Optional[UUID] = None
 
 
 class UpdateInvoiceDto(Schema):

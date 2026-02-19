@@ -59,18 +59,30 @@ class OpportunityService:
             except SystemUser.DoesNotExist:
                 raise ValidationError(f"Owner with ID {dto.ownerid} not found")
 
+        # Resolve field aliases (frontend sends estimatedvalue, backend uses estimatedrevenue)
+        estimated_revenue = dto.estimatedrevenue or dto.estimatedvalue
+        probability = dto.probability if dto.probability != 0 else (dto.closeprobability or 0)
+
         # Validate probability range
-        if dto.probability is not None and (dto.probability < 0 or dto.probability > 100):
+        if probability is not None and (probability < 0 or probability > 100):
             raise ValidationError("Probability must be between 0 and 100")
+
+        # Resolve polymorphic customer
+        account, contact = None, None
+        if dto.customerid and dto.customeridtype:
+            from core.customers import resolve_customer
+            account, contact = resolve_customer(dto.customerid, dto.customeridtype)
 
         opportunity = Opportunity(
             name=dto.name,
             description=dto.description,
             customername=dto.customername,
-            estimatedrevenue=dto.estimatedrevenue,
+            accountid=account,
+            contactid=contact,
+            estimatedrevenue=estimated_revenue,
             estimatedclosedate=dto.estimatedclosedate,
             salesstage=dto.salesstage,
-            probability=dto.probability,
+            probability=probability,
             originatingleadid_id=dto.originatingleadid,
             ownerid=owner,
             statecode=OpportunityStateCode.OPEN,
@@ -105,6 +117,12 @@ class OpportunityService:
         if opp.statecode != OpportunityStateCode.OPEN:
             raise ValidationError(f"Cannot update opportunity in '{opp.state_name}' state")
 
+        # Resolve field aliases
+        if dto.estimatedvalue is not None and dto.estimatedrevenue is None:
+            dto.estimatedrevenue = dto.estimatedvalue
+        if dto.closeprobability is not None and dto.probability is None:
+            dto.probability = dto.closeprobability
+
         # Update fields
         update_fields = ['name', 'description', 'customername', 'estimatedrevenue',
                         'estimatedclosedate', 'salesstage', 'probability', 'statuscode']
@@ -116,28 +134,12 @@ class OpportunityService:
                     raise ValidationError("Probability must be between 0 and 100")
                 setattr(opp, field, value)
 
-        # Handle customer relationship updates (accountid or contactid)
-        if dto.accountid is not None:
-            # Validate account exists
-            from apps.accounts.models import Account
-            try:
-                Account.objects.get(accountid=dto.accountid)
-                opp.accountid_id = dto.accountid
-                # Clear contactid when setting account
-                opp.contactid_id = None
-            except Account.DoesNotExist:
-                raise ValidationError(f"Account with ID {dto.accountid} not found")
-
-        if dto.contactid is not None:
-            # Validate contact exists
-            from apps.contacts.models import Contact
-            try:
-                Contact.objects.get(contactid=dto.contactid)
-                opp.contactid_id = dto.contactid
-                # Clear accountid when setting contact
-                opp.accountid_id = None
-            except Contact.DoesNotExist:
-                raise ValidationError(f"Contact with ID {dto.contactid} not found")
+        # Handle polymorphic customer update
+        if dto.customerid is not None and dto.customeridtype is not None:
+            from core.customers import resolve_customer
+            account, contact = resolve_customer(dto.customerid, dto.customeridtype)
+            opp.accountid = account
+            opp.contactid = contact
 
         opp.modifiedby = user
         opp.save()

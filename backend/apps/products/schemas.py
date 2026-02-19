@@ -24,9 +24,9 @@ class ProductSchema(ModelSchema):
     type_name: Optional[str] = None
     available_quantity: Optional[Decimal] = None
 
-    class Config:
+    class Meta:
         model = Product
-        model_fields = '__all__'
+        fields = '__all__'
 
 
 class ProductListItemSchema(ModelSchema):
@@ -34,9 +34,9 @@ class ProductListItemSchema(ModelSchema):
     state_name: Optional[str] = None
     available_quantity: Optional[Decimal] = None
 
-    class Config:
+    class Meta:
         model = Product
-        model_fields = [
+        fields = [
             'productid', 'name', 'productnumber', 'statecode',
             'price', 'standardcost', 'quantityonhand', 'quantityallocated',
             'createdon'
@@ -109,9 +109,9 @@ class PriceListSchema(ModelSchema):
     """Full price list response schema."""
     is_active: bool
 
-    class Config:
+    class Meta:
         model = PriceList
-        model_fields = '__all__'
+        fields = '__all__'
 
 
 class CreatePriceListDto(Schema):
@@ -140,9 +140,9 @@ class PriceListItemSchema(ModelSchema):
     product_name: Optional[str] = None
     pricelist_name: Optional[str] = None
 
-    class Config:
+    class Meta:
         model = PriceListItem
-        model_fields = '__all__'
+        fields = '__all__'
 
 
 class CreatePriceListItemDto(Schema):

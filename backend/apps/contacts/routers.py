@@ -7,32 +7,27 @@ from django.http import HttpRequest
 from apps.contacts.schemas import ContactSchema, CreateContactDto, UpdateContactDto
 from apps.contacts.services import ContactService
 from core.permissions import require_permission, Permission
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedContactList = create_paginated_response(ContactSchema)
 
 contacts_router = Router(tags=["Contacts"])
 
 
-@contacts_router.get("/", response=PaginatedContactList)
+@contacts_router.get("/", response=List[ContactSchema])
 @require_permission(Permission.CONTACT_READ)
 def list_contacts(
     request: HttpRequest,
-    page: int = 1,
-    page_size: int = 50,
     statecode: Optional[int] = None,
     parentcustomerid: Optional[str] = None,
     search: Optional[str] = None,
     ownerid: Optional[str] = None
 ):
-    """List contacts with filtering and pagination. Requires: CONTACT_READ permission"""
+    """List contacts with filtering. Requires: CONTACT_READ permission"""
     parent_uuid = UUID(parentcustomerid) if parentcustomerid else None
     owner_uuid = UUID(ownerid) if ownerid else None
     contacts = ContactService.list_contacts(
         user=request.user, statecode=statecode, parentcustomerid=parent_uuid,
         search=search, ownerid=owner_uuid
     )
-    return paginate_queryset(contacts, page=page, page_size=page_size, request_url=request.path)
+    return list(contacts)
 
 
 @contacts_router.post("/", response={201: ContactSchema})

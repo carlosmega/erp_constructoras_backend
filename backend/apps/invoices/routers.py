@@ -17,9 +17,6 @@ from apps.invoices.schemas import (
 )
 from apps.invoices.services import InvoiceService
 from core.permissions import Permission, require_permission, filter_by_ownership
-from core.pagination import paginate_queryset, create_paginated_response
-
-PaginatedInvoiceList = create_paginated_response(InvoiceListItemSchema)
 
 # Initialize router
 invoices_router = Router(tags=["Invoices"])
@@ -29,27 +26,26 @@ invoices_router = Router(tags=["Invoices"])
 # Invoice CRUD Operations
 # ============================================================================
 
-@invoices_router.get('/', response=PaginatedInvoiceList)
+@invoices_router.get('/', response=List[InvoiceListItemSchema])
 @require_permission(Permission.INVOICE_READ)
 def list_invoices(
     request: HttpRequest,
-    page: int = 1,
-    page_size: int = 50,
     statecode: int = None,
     overdue: bool = None,
+    salesorderid: str = None,
+    opportunityid: str = None,
+    customerid: str = None,
+    ownerid: str = None,
 ):
     """
-    List invoices with filtering and pagination.
+    List invoices with filtering.
 
     Query Parameters:
-    - page: Page number (1-indexed, default: 1)
-    - page_size: Items per page (default: 50, max: 100)
     - statecode: Filter by state (0=Active, 1=Paid, 2=Canceled)
     - overdue: Filter overdue invoices (true/false)
     """
     queryset = filter_by_ownership(Invoice.objects.all(), request.user)
 
-    # Apply filters
     if statecode is not None:
         queryset = queryset.filter(statecode=statecode)
 
@@ -61,10 +57,21 @@ def list_invoices(
                 duedate__lt=date.today()
             )
 
-    # Order by creation date (newest first)
+    if salesorderid:
+        queryset = queryset.filter(salesorderid_id=salesorderid)
+    if opportunityid:
+        queryset = queryset.filter(opportunityid_id=opportunityid)
+    if customerid:
+        from django.db.models import Q
+        queryset = queryset.filter(
+            Q(accountid_id=customerid) | Q(contactid_id=customerid)
+        )
+    if ownerid:
+        queryset = queryset.filter(ownerid_id=ownerid)
+
     queryset = queryset.order_by('-createdon')
 
-    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
+    return list(queryset)
 
 
 @invoices_router.get('/{invoice_id}', response=InvoiceSchema)
@@ -122,26 +129,75 @@ def delete_invoice(request: HttpRequest, invoice_id: UUID):
 # Invoice Line Items
 # ============================================================================
 
+@invoices_router.get('/{invoice_id}/details', response=List[InvoiceDetailSchema])
+@require_permission(Permission.INVOICE_READ)
+def list_invoice_details(request: HttpRequest, invoice_id: UUID):
+    """List all line items for an invoice."""
+    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
+    details = InvoiceDetailModel.objects.filter(invoiceid_id=invoice_id).order_by('sequencenumber')
+    return list(details)
+
+
 @invoices_router.post('/{invoice_id}/details', response={201: InvoiceDetailSchema})
 @require_permission(Permission.INVOICE_UPDATE)
 def add_invoice_detail(request: HttpRequest, invoice_id: UUID, payload: CreateInvoiceDetailDto):
-    """
-    Add a line item to an invoice.
-
-    Automatically recalculates invoice totals.
-    """
+    """Add a line item to an invoice."""
     detail = InvoiceService.add_invoice_detail(invoice_id, payload, request.user)
     return 201, detail
+
+
+@invoices_router.get('/details/{detail_id}', response=InvoiceDetailSchema)
+@require_permission(Permission.INVOICE_READ)
+def get_invoice_detail(request: HttpRequest, detail_id: UUID):
+    """Get a single invoice detail by ID."""
+    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
+    from django.shortcuts import get_object_or_404
+    detail = get_object_or_404(InvoiceDetailModel, invoicedetailid=detail_id)
+    return detail
+
+
+@invoices_router.patch('/details/{detail_id}', response=InvoiceDetailSchema)
+@require_permission(Permission.INVOICE_UPDATE)
+def update_invoice_detail(request: HttpRequest, detail_id: UUID, payload: dict):
+    """Update an invoice detail line item."""
+    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
+    from django.shortcuts import get_object_or_404
+    from decimal import Decimal
+
+    detail = get_object_or_404(InvoiceDetailModel, invoicedetailid=detail_id)
+
+    if 'productdescription' in payload and payload['productdescription'] is not None:
+        detail.productdescription = payload['productdescription']
+    if 'quantity' in payload and payload['quantity'] is not None:
+        detail.quantity = Decimal(str(payload['quantity']))
+    if 'priceperunit' in payload and payload['priceperunit'] is not None:
+        detail.priceperunit = Decimal(str(payload['priceperunit']))
+    if 'manualdiscountamount' in payload and payload['manualdiscountamount'] is not None:
+        detail.manualdiscountamount = Decimal(str(payload['manualdiscountamount']))
+    if 'tax' in payload and payload['tax'] is not None:
+        detail.tax = Decimal(str(payload['tax']))
+
+    detail.save()
+    return detail
+
+
+@invoices_router.delete('/details/{detail_id}', response={204: None})
+@require_permission(Permission.INVOICE_UPDATE)
+def remove_invoice_detail_by_id(request: HttpRequest, detail_id: UUID):
+    """Remove a line item from an invoice by detail ID."""
+    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
+    from django.shortcuts import get_object_or_404
+
+    detail = get_object_or_404(InvoiceDetailModel, invoicedetailid=detail_id)
+    invoice = detail.invoiceid
+    detail.delete()
+    return 204, None
 
 
 @invoices_router.delete('/{invoice_id}/details/{detail_id}', response={204: None})
 @require_permission(Permission.INVOICE_UPDATE)
 def remove_invoice_detail(request: HttpRequest, invoice_id: UUID, detail_id: UUID):
-    """
-    Remove a line item from an invoice.
-
-    Automatically recalculates invoice totals.
-    """
+    """Remove a line item from an invoice."""
     InvoiceService.remove_invoice_detail(invoice_id, detail_id, request.user)
     return 204, None
 

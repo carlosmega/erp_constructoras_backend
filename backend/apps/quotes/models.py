@@ -332,3 +332,56 @@ class QuoteDetail(models.Model):
         self.extendedamount = self.baseamount - self.manualdiscountamount + self.tax
 
         super().save(*args, **kwargs)
+
+
+class QuoteTemplateCategory(models.TextChoices):
+    STANDARD = 'standard', 'Standard'
+    CUSTOM = 'custom', 'Custom'
+    INDUSTRY = 'industry', 'Industry'
+    SERVICE = 'service', 'Service'
+    PRODUCT = 'product', 'Product'
+    BUNDLE = 'bundle', 'Bundle'
+
+
+class QuoteTemplate(AuditMixin):
+    """
+    Reusable quote templates with pre-defined line items.
+    CDS Entity: quotetemplate
+    """
+    quotetemplateid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='quotetemplateid'
+    )
+    name = models.CharField(max_length=300, db_column='name')
+    description = models.TextField(blank=True, null=True, db_column='description')
+    category = models.CharField(
+        max_length=20,
+        choices=QuoteTemplateCategory.choices,
+        null=True,
+        blank=True,
+        db_column='category'
+    )
+    templatedata = models.JSONField(
+        default=dict,
+        db_column='templatedata',
+        help_text='JSON with quote fields and line items'
+    )
+    isshared = models.BooleanField(default=False, db_column='isshared')
+    usagecount = models.IntegerField(default=0, db_column='usagecount')
+    ownerid = models.ForeignKey(
+        'users.SystemUser',
+        on_delete=models.PROTECT,
+        db_column='ownerid',
+        related_name='owned_quote_templates'
+    )
+
+    class Meta:
+        db_table = 'quotetemplate'
+        ordering = ['-createdon']
+        verbose_name = 'Quote Template'
+        verbose_name_plural = 'Quote Templates'
+
+    def __str__(self):
+        return self.name

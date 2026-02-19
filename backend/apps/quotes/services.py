@@ -66,20 +66,10 @@ class QuoteService:
             except Opportunity.DoesNotExist:
                 raise NotFound('Opportunity not found')
 
-        # Override with explicit account/contact if provided
-        if dto.accountid:
-            from apps.accounts.models import Account
-            try:
-                account = Account.objects.get(accountid=dto.accountid)
-            except Account.DoesNotExist:
-                raise NotFound('Account not found')
-
-        if dto.contactid:
-            from apps.contacts.models import Contact
-            try:
-                contact = Contact.objects.get(contactid=dto.contactid)
-            except Contact.DoesNotExist:
-                raise NotFound('Contact not found')
+        # Override with polymorphic customer if provided
+        if dto.customerid and dto.customeridtype:
+            from core.customers import resolve_customer
+            account, contact = resolve_customer(dto.customerid, dto.customeridtype)
 
         # Create quote
         quote = Quote.objects.create(

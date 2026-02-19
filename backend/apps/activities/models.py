@@ -20,6 +20,22 @@ class ActivityTypeCode(models.TextChoices):
     PHONECALL = 'phonecall', 'Phone Call'
     TASK = 'task', 'Task'
     APPOINTMENT = 'appointment', 'Appointment'
+    MEETING = 'meeting', 'Meeting'
+    NOTE = 'note', 'Note'
+
+
+# Mapping from frontend integer codes to backend string codes
+ACTIVITY_TYPE_INT_MAP = {
+    1: ActivityTypeCode.EMAIL,
+    2: ActivityTypeCode.PHONECALL,
+    3: ActivityTypeCode.TASK,
+    4: ActivityTypeCode.APPOINTMENT,
+    5: ActivityTypeCode.MEETING,
+    6: ActivityTypeCode.NOTE,
+}
+
+# Reverse mapping: string code to integer
+ACTIVITY_TYPE_STR_MAP = {v: k for k, v in ACTIVITY_TYPE_INT_MAP.items()}
 
 
 class ActivityStateCode(models.IntegerChoices):

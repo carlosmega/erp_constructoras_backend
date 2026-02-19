@@ -55,6 +55,8 @@ class QuoteSchema(ModelSchema):
     """Full Quote response schema with nested details."""
     quote_details: List[QuoteDetailSchema] = []
     customer_name: Optional[str] = None
+    customerid: Optional[str] = None
+    customeridtype: Optional[str] = None
 
     class Meta:
         model = Quote
@@ -66,10 +68,22 @@ class QuoteSchema(ModelSchema):
             'createdon', 'modifiedon', 'createdby', 'modifiedby'
         ]
 
+    @staticmethod
+    def resolve_customerid(obj):
+        from core.customers import get_customerid
+        return get_customerid(obj)
+
+    @staticmethod
+    def resolve_customeridtype(obj):
+        from core.customers import get_customeridtype
+        return get_customeridtype(obj)
+
 
 class QuoteListItemSchema(ModelSchema):
     """Simplified Quote schema for list views."""
     customer_name: Optional[str] = None
+    customerid: Optional[str] = None
+    customeridtype: Optional[str] = None
 
     class Meta:
         model = Quote
@@ -79,18 +93,28 @@ class QuoteListItemSchema(ModelSchema):
             'createdon', 'ownerid'
         ]
 
+    @staticmethod
+    def resolve_customerid(obj):
+        from core.customers import get_customerid
+        return get_customerid(obj)
+
+    @staticmethod
+    def resolve_customeridtype(obj):
+        from core.customers import get_customeridtype
+        return get_customeridtype(obj)
+
 
 class CreateQuoteDto(Schema):
     """DTO for creating a new quote."""
     name: str
     opportunityid: Optional[UUID] = None
-    accountid: Optional[UUID] = None
-    contactid: Optional[UUID] = None
+    customerid: Optional[UUID] = None
+    customeridtype: Optional[str] = None  # 'account' or 'contact'
     discountpercentage: Decimal = Decimal('0.00')
     effectivefrom: Optional[date] = None
     effectiveto: Optional[date] = None
     description: Optional[str] = None
-    # Quote details can be added separately or included here
+    ownerid: Optional[UUID] = None
     quote_details: List[CreateQuoteDetailDto] = []
 
 

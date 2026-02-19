@@ -139,12 +139,20 @@ class InvoiceService:
         # Set default due date if not provided
         duedate = dto.duedate or (date.today() + timedelta(days=30))
 
+        # Resolve polymorphic customer
+        account = None
+        contact = None
+        if dto.customerid and dto.customeridtype:
+            from core.customers import resolve_customer
+            account, contact = resolve_customer(dto.customerid, dto.customeridtype)
+
         invoice = Invoice.objects.create(
             name=dto.name,
             invoicenumber=invoicenumber,
             salesorderid_id=dto.salesorderid,
-            accountid_id=dto.accountid,
-            contactid_id=dto.contactid,
+            opportunityid_id=dto.opportunityid,
+            accountid=account,
+            contactid=contact,
             datedelivered=dto.datedelivered,
             duedate=duedate,
             description=dto.description,
