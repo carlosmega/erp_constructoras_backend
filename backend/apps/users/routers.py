@@ -12,6 +12,8 @@ from ninja import Router
 from typing import List, Optional
 from uuid import UUID
 from django.http import HttpRequest
+import logging
+
 from apps.users.schemas import (
     LoginDto,
     LoginResponse,
@@ -23,12 +25,16 @@ from apps.users.schemas import (
     SecurityRoleSchema,
 )
 from apps.users.services import UserService
+from apps.graph.schemas import SSOInitResponse, SSOExchangeDto
+from apps.graph.services import MicrosoftSSOService
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import (
     require_permission,
     require_authenticated,
     Permission
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -144,6 +150,44 @@ def change_password(request: HttpRequest, payload: ChangePasswordDto):
     )
 
     return {"success": True, "message": "Password changed successfully"}
+
+
+@auth_router.get("/sso/init", response=SSOInitResponse, auth=None)
+def sso_init(request: HttpRequest):
+    """
+    Get Microsoft SSO authorization URL.
+
+    Public endpoint — returns a Microsoft login URL that the frontend
+    redirects the user to. No authentication required.
+    """
+    url = MicrosoftSSOService.get_sso_authorization_url()
+    return {'authorization_url': url}
+
+
+@auth_router.post("/sso/exchange", response=LoginResponse, auth=None)
+def sso_exchange(request: HttpRequest, payload: SSOExchangeDto):
+    """
+    Exchange SSO token for Django session + user info.
+
+    Public endpoint. Called by both the browser (to get Django session cookies)
+    and NextAuth server (to get user info for JWT creation).
+    """
+    user = MicrosoftSSOService.exchange_sso_token(
+        token_value=payload.token,
+        request=request,
+    )
+
+    return LoginResponse(
+        success=True,
+        message="SSO login successful",
+        user=UserInfo(
+            systemuserid=user.systemuserid,
+            emailaddress1=user.emailaddress1,
+            fullname=user.fullname,
+            role_name=user.role_name,
+            isdisabled=user.isdisabled,
+        )
+    )
 
 
 # ============================================================================
