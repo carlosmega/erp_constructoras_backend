@@ -30,6 +30,7 @@ from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment
 from apps.cases.models import Case
 from apps.quotes.models import QuoteTemplate
 from apps.products.models import Product, PriceList, PriceListItem, ProductStructure, ProductTypeCode, ProductStateCode
+from apps.notifications.models import Notification, NotificationTypeCode, NotificationPriorityCode
 
 
 class Command(BaseCommand):
@@ -104,6 +105,10 @@ class Command(BaseCommand):
                 invoices = self.create_invoices(orders, users, admin)
                 self.stdout.write(self.style.SUCCESS(f'Created {len(invoices)} invoices'))
 
+                # Create notifications
+                notifications = self.create_notifications(users, leads, opportunities, quotes, admin)
+                self.stdout.write(self.style.SUCCESS(f'Created {len(notifications)} notifications'))
+
                 self.stdout.write(self.style.SUCCESS('\nDummy data loaded successfully!'))
                 self.print_summary()
 
@@ -115,6 +120,7 @@ class Command(BaseCommand):
         """Clear existing test data (keeps admin users)."""
         # Delete in order (child first, parent last)
         # Activities and Cases first (they reference Users, Accounts, Contacts, etc.)
+        Notification.objects.all().delete()
         Email.objects.all().delete()
         PhoneCall.objects.all().delete()
         Task.objects.all().delete()
@@ -1402,6 +1408,138 @@ class Command(BaseCommand):
         )['total'] or Decimal('0')
         self.stdout.write(f'  Total Outstanding: MXN ${total_due:,.2f}')
 
+        # Notifications
+        self.stdout.write(f'  Notifications: {Notification.objects.count()}')
+        self.stdout.write(f'    Unread: {Notification.objects.filter(isread=False).count()}')
+
         self.stdout.write(self.style.SUCCESS('\n[SUCCESS] Complete Sales Pipeline Ready!'))
         self.stdout.write(self.style.SUCCESS('   Lead -> Opportunity -> Quote -> Order -> Invoice'))
         self.stdout.write(self.style.SUCCESS('\n[READY] Ready to test in Postman!'))
+
+    def create_notifications(self, users, leads, opportunities, quotes, admin):
+        """Create sample notifications for all users."""
+        notifications = []
+        now = timezone.now()
+
+        notification_templates = [
+            {
+                'typecode': NotificationTypeCode.LEAD,
+                'prioritycode': NotificationPriorityCode.HIGH,
+                'title': 'New lead assigned to you',
+                'description': 'A new lead has been assigned to you for follow-up',
+                'entity_type': 'lead',
+            },
+            {
+                'typecode': NotificationTypeCode.LEAD,
+                'prioritycode': NotificationPriorityCode.MEDIUM,
+                'title': 'Lead qualified',
+                'description': 'One of your leads has been qualified and an opportunity was created',
+                'entity_type': 'lead',
+            },
+            {
+                'typecode': NotificationTypeCode.OPPORTUNITY,
+                'prioritycode': NotificationPriorityCode.HIGH,
+                'title': 'Opportunity won!',
+                'description': 'Congratulations! An opportunity has been closed as Won',
+                'entity_type': 'opportunity',
+            },
+            {
+                'typecode': NotificationTypeCode.OPPORTUNITY,
+                'prioritycode': NotificationPriorityCode.MEDIUM,
+                'title': 'Opportunity stage changed',
+                'description': 'An opportunity has moved to the next stage in the pipeline',
+                'entity_type': 'opportunity',
+            },
+            {
+                'typecode': NotificationTypeCode.QUOTE,
+                'prioritycode': NotificationPriorityCode.HIGH,
+                'title': 'Quote activated',
+                'description': 'A quote has been activated and is ready for customer review',
+                'entity_type': 'quote',
+            },
+            {
+                'typecode': NotificationTypeCode.TASK,
+                'prioritycode': NotificationPriorityCode.MEDIUM,
+                'title': 'New task assigned',
+                'description': 'A new task has been assigned to you',
+                'entity_type': None,
+            },
+            {
+                'typecode': NotificationTypeCode.SYSTEM,
+                'prioritycode': NotificationPriorityCode.LOW,
+                'title': 'System maintenance scheduled',
+                'description': 'The system will undergo maintenance this weekend',
+                'entity_type': None,
+            },
+        ]
+
+        for user in users:
+            # Each user gets 4-7 random notifications
+            num_notifications = random.randint(4, 7)
+            selected_templates = random.sample(
+                notification_templates,
+                min(num_notifications, len(notification_templates))
+            )
+
+            for i, template in enumerate(selected_templates):
+                # Determine related entity
+                related_entity_id = None
+                related_entity_name = None
+                related_entity_type = template['entity_type']
+                action_url = None
+
+                if template['entity_type'] == 'lead' and leads:
+                    lead = random.choice(leads)
+                    related_entity_id = lead.leadid
+                    related_entity_name = lead.fullname or lead.lastname
+                    action_url = f"/leads/{lead.leadid}"
+                elif template['entity_type'] == 'opportunity' and opportunities:
+                    opp = random.choice(opportunities)
+                    related_entity_id = opp.opportunityid
+                    related_entity_name = opp.name
+                    action_url = f"/opportunities/{opp.opportunityid}"
+                elif template['entity_type'] == 'quote' and quotes:
+                    quote = random.choice(quotes)
+                    related_entity_id = quote.quoteid
+                    related_entity_name = quote.name
+                    action_url = f"/quotes/{quote.quoteid}"
+
+                # Vary the timing (spread over last 7 days)
+                created_offset = timedelta(
+                    hours=random.randint(1, 168),
+                    minutes=random.randint(0, 59),
+                )
+
+                # Some are read, some aren't
+                is_read = random.random() < 0.4
+
+                # Pick a random actor (another user or admin)
+                other_users = [u for u in users if u.systemuserid != user.systemuserid]
+                actor = random.choice(other_users) if other_users else admin
+
+                notification = Notification(
+                    ownerid=user,
+                    typecode=template['typecode'],
+                    prioritycode=template['prioritycode'],
+                    title=template['title'],
+                    description=f"{template['description']} — {related_entity_name or 'CRM System'}",
+                    isread=is_read,
+                    readon=now - created_offset + timedelta(hours=1) if is_read else None,
+                    relatedentityid=related_entity_id,
+                    relatedentitytype=related_entity_type,
+                    relatedentityname=related_entity_name,
+                    actionurl=action_url,
+                    actorid=actor,
+                )
+                notifications.append(notification)
+
+        Notification.objects.bulk_create(notifications)
+
+        # Fix createdon timestamps (auto_now_add doesn't work with bulk_create on all DBs)
+        for notification in Notification.objects.all():
+            offset = timedelta(hours=random.randint(1, 168), minutes=random.randint(0, 59))
+            Notification.objects.filter(notificationid=notification.notificationid).update(
+                createdon=now - offset
+            )
+
+        return notifications

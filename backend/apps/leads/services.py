@@ -146,6 +146,20 @@ class LeadService:
         )
 
         lead.save()
+
+        # Notification: lead assigned
+        try:
+            from apps.notifications.services import NotificationService
+            NotificationService.notify_record_assigned(
+                entity_type='lead',
+                entity_id=str(lead.leadid),
+                entity_name=lead.fullname or lead.lastname,
+                new_owner=lead.ownerid,
+                actor=user,
+            )
+        except Exception:
+            pass  # Never fail the main operation
+
         return lead
 
     @staticmethod
@@ -219,6 +233,7 @@ class LeadService:
                 setattr(lead, field, value)
 
         # Handle owner change (if specified)
+        old_owner_id = lead.ownerid_id
         if dto.ownerid:
             try:
                 new_owner = SystemUser.objects.get(systemuserid=dto.ownerid)
@@ -238,6 +253,20 @@ class LeadService:
 
         lead.modifiedby = user
         lead.save()
+
+        # Notification: lead re-assigned
+        if dto.ownerid and lead.ownerid_id != old_owner_id:
+            try:
+                from apps.notifications.services import NotificationService
+                NotificationService.notify_record_assigned(
+                    entity_type='lead',
+                    entity_id=str(lead.leadid),
+                    entity_name=lead.fullname or lead.lastname,
+                    new_owner=lead.ownerid,
+                    actor=user,
+                )
+            except Exception:
+                pass
 
         return lead
 
@@ -329,6 +358,13 @@ class LeadService:
         lead.statuscode = LeadStatusCode.QUALIFIED
         lead.modifiedby = user
         lead.save()
+
+        # Notification: lead qualified
+        try:
+            from apps.notifications.services import NotificationService
+            NotificationService.notify_lead_qualified(lead, opportunity, actor=user)
+        except Exception:
+            pass
 
         # Build response matching QualifyLeadResponse schema
         response = {

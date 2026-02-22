@@ -117,6 +117,8 @@ class OpportunityService:
         if opp.statecode != OpportunityStateCode.OPEN:
             raise ValidationError(f"Cannot update opportunity in '{opp.state_name}' state")
 
+        old_salesstage = opp.salesstage
+
         # Resolve field aliases
         if dto.estimatedvalue is not None and dto.estimatedrevenue is None:
             dto.estimatedrevenue = dto.estimatedvalue
@@ -143,6 +145,23 @@ class OpportunityService:
 
         opp.modifiedby = user
         opp.save()
+
+        # Notification: stage changed
+        if dto.salesstage is not None and dto.salesstage != old_salesstage:
+            try:
+                from apps.notifications.services import NotificationService
+                stage_label = SalesStage(opp.salesstage).label if opp.salesstage else 'Unknown'
+                NotificationService.notify_state_changed(
+                    entity_type='opportunity',
+                    entity_id=str(opp.opportunityid),
+                    entity_name=opp.name,
+                    new_state=stage_label,
+                    owner=opp.ownerid,
+                    actor=user,
+                )
+            except Exception:
+                pass
+
         return opp
 
     @staticmethod
@@ -175,6 +194,17 @@ class OpportunityService:
 
         opp.modifiedby = user
         opp.save()
+
+        # Notification: opportunity won or lost
+        try:
+            from apps.notifications.services import NotificationService
+            if opp.statecode == OpportunityStateCode.WON:
+                NotificationService.notify_opportunity_won(opp, actor=user)
+            elif opp.statecode == OpportunityStateCode.LOST:
+                NotificationService.notify_opportunity_lost(opp, actor=user)
+        except Exception:
+            pass
+
         return opp
 
     @staticmethod

@@ -264,6 +264,13 @@ class QuoteService:
         quote.modifiedby = user
         quote.save()
 
+        # Notification: quote activated
+        try:
+            from apps.notifications.services import NotificationService
+            NotificationService.notify_quote_activated(quote, actor=user)
+        except Exception:
+            pass
+
         return quote
 
     @staticmethod
@@ -295,6 +302,14 @@ class QuoteService:
 
         quote.modifiedby = user
         quote.save()
+
+        # Notification: quote won
+        if dto.statuscode == QuoteStatusCode.WON:
+            try:
+                from apps.notifications.services import NotificationService
+                NotificationService.notify_quote_won(quote, actor=user)
+            except Exception:
+                pass
 
         return quote
 

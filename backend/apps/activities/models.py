@@ -14,6 +14,14 @@ from django.contrib.contenttypes.models import ContentType
 import uuid
 
 
+class MatchMethod(models.TextChoices):
+    """Email matching method choices."""
+    EMAIL_ADDRESS = 'email_address', 'Email Address'
+    TRACKING_TOKEN = 'tracking_token', 'Tracking Token'
+    THREAD_CORRELATION = 'thread_correlation', 'Thread Correlation'
+    MANUAL = 'manual', 'Manual'
+
+
 class ActivityTypeCode(models.TextChoices):
     """Activity type codes."""
     EMAIL = 'email', 'Email'
@@ -265,6 +273,46 @@ class Email(models.Model):
         default=True,
         db_column='directioncode',
         help_text='True=Outgoing, False=Incoming'
+    )
+
+    # Email Matching Fields
+    messageid = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_column='messageid',
+        db_index=True,
+        help_text='RFC 5322 Message-ID header for thread correlation'
+    )
+    inreplyto = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_column='inreplyto',
+        help_text='In-Reply-To header referencing parent messageid'
+    )
+    trackingtokenid = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_column='trackingtokenid',
+        db_index=True,
+        help_text='CRM tracking token extracted from subject [CRM:OPP-abc12345]'
+    )
+    matchconfidence = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        db_column='matchconfidence',
+        help_text='Auto-match confidence score (0-100)'
+    )
+    matchmethod = models.CharField(
+        max_length=30,
+        choices=MatchMethod.choices,
+        null=True,
+        blank=True,
+        db_column='matchmethod',
+        help_text='Method used for matching: email_address, tracking_token, thread_correlation, manual'
     )
 
     class Meta:

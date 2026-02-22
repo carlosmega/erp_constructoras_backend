@@ -134,6 +134,8 @@ class CreateEmailDto(Schema):
     regardingobjectid: Optional[UUID] = None
     regardingobjectidtype: Optional[str] = None
     ownerid: UUID
+    messageid: Optional[str] = None
+    inreplyto: Optional[str] = None
 
 
 class UpdateEmailDto(Schema):
@@ -147,6 +149,77 @@ class UpdateEmailDto(Schema):
     body: Optional[str] = None
     directioncode: Optional[bool] = None
     statecode: Optional[int] = None
+
+
+# ============================================================================
+# Email Matching Schemas
+# ============================================================================
+
+class LinkEmailDto(Schema):
+    """DTO for manually linking an email to a CRM record."""
+    regardingobjectid: UUID
+    regardingobjectidtype: str
+
+
+class UnlinkedEmailSchema(Schema):
+    """Schema for unlinked email list items."""
+    activityid: UUID
+    subject: str
+    statecode: int
+    createdon: datetime
+    ownerid: str
+    to: Optional[str] = None
+    sender: Optional[str] = None
+    cc: Optional[str] = None
+    directioncode: bool = True
+
+
+class UnlinkedEmailCountSchema(Schema):
+    """Schema for unlinked email count."""
+    count: int
+
+
+class MatchedContactSchema(Schema):
+    """Schema for a matched contact in suggestions."""
+    contactid: str
+    fullname: Optional[str] = None
+    emailaddress1: Optional[str] = None
+    parentcustomerid: Optional[str] = None
+
+
+class MatchedAccountSchema(Schema):
+    """Schema for a matched account in suggestions."""
+    accountid: str
+    name: Optional[str] = None
+    emailaddress1: Optional[str] = None
+
+
+class CandidateOpportunitySchema(Schema):
+    """Schema for a candidate opportunity in suggestions."""
+    opportunityid: str
+    name: Optional[str] = None
+    estimatedvalue: Optional[float] = None
+    salesstage: Optional[str] = None
+    statecode: Optional[int] = None
+    modifiedon: Optional[str] = None
+
+
+class MatchSuggestionSchema(Schema):
+    """Schema for a single match suggestion."""
+    regardingobjectid: str
+    regardingobjectidtype: str
+    matchmethod: str
+    matchconfidence: int
+
+
+class MatchSuggestionsResponseSchema(Schema):
+    """Schema for match suggestions response."""
+    activityid: str
+    matched: bool
+    suggestion: Optional[MatchSuggestionSchema] = None
+    matched_contacts: list[MatchedContactSchema] = []
+    matched_accounts: list[MatchedAccountSchema] = []
+    candidate_opportunities: list[CandidateOpportunitySchema] = []
 
 
 # ============================================================================

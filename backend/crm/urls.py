@@ -140,6 +140,8 @@ from apps.invoices.routers import invoices_router
 from apps.products.routers import products_router, pricelists_router
 from apps.activities.routers import activities_router
 from apps.cases.routers import cases_router
+from apps.notifications.routers import notifications_router
+from apps.graph.routers import graph_router
 
 api.add_router("/auth", auth_router)
 api.add_router("/users", users_router)
@@ -156,6 +158,8 @@ api.add_router("/products", products_router)
 api.add_router("/pricelists", pricelists_router)
 api.add_router("/activities", activities_router)
 api.add_router("/cases", cases_router)
+api.add_router("/notifications", notifications_router)
+api.add_router("/graph", graph_router)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

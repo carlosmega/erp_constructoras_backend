@@ -87,6 +87,20 @@ class ActivityService:
             }
         # Meeting and Note types: base activity only, no child record needed
 
+        # Notification: activity assigned
+        try:
+            from apps.notifications.services import NotificationService
+            owner = SystemUser.objects.get(systemuserid=payload.ownerid)
+            NotificationService.notify_activity_assigned(
+                activity_type=str(type_code_str),
+                activity_id=str(activity.activityid),
+                activity_subject=payload.subject,
+                owner=owner,
+                actor=user,
+            )
+        except Exception:
+            pass
+
         return result
 
     @staticmethod
@@ -110,8 +124,25 @@ class ActivityService:
             cc=payload.cc,
             bcc=payload.bcc,
             body=payload.body,
-            directioncode=payload.directioncode
+            directioncode=payload.directioncode,
+            messageid=getattr(payload, 'messageid', None),
+            inreplyto=getattr(payload, 'inreplyto', None),
         )
+
+        # Auto-match: if no regarding object provided, try to match automatically
+        if not payload.regardingobjectid:
+            try:
+                from apps.activities.matching_service import EmailMatchingService
+                match_result = EmailMatchingService.match_email(email)
+                if match_result.get('matched'):
+                    activity.regardingobjectid = match_result['regardingobjectid']
+                    activity.regardingobjectidtype = match_result['regardingobjectidtype']
+                    activity.save()
+                    email.matchmethod = match_result['matchmethod']
+                    email.matchconfidence = match_result['matchconfidence']
+                    email.save()
+            except Exception:
+                pass  # Don't block email creation if matching fails
 
         return email
 

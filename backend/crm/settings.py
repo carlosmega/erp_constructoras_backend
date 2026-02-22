@@ -47,6 +47,8 @@ INSTALLED_APPS = [
     'apps.products',  # Product catalog (Phase 11)
     'apps.activities',  # Activity management (Phase 12)
     'apps.cases',  # Case management (Phase 13)
+    'apps.notifications',  # Notification system
+    'apps.graph',  # Microsoft Graph integration (Office 365 email sync)
     'core',  # Shared utilities
 ]
 
@@ -299,3 +301,13 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='CRM Sales <noreply@example.com>')
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=30, cast=int)
+
+# ============================================================================
+# Microsoft Graph Integration (Office 365 Email Sync)
+# ============================================================================
+
+MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='')
+MICROSOFT_CLIENT_SECRET = config('MICROSOFT_CLIENT_SECRET', default='')
+MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='')
+MICROSOFT_REDIRECT_URI = config('MICROSOFT_REDIRECT_URI', default='http://localhost:8000/api/graph/callback')
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')

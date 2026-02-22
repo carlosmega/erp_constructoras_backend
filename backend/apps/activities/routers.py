@@ -11,6 +11,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from apps.activities.services import ActivityService
+from apps.activities.matching_service import EmailMatchingService
 from apps.activities.schemas import *
 from core.permissions import require_permission, Permission, filter_by_ownership
 
@@ -90,6 +91,53 @@ def create_activity(request: HttpRequest, payload: CreateActivityDto):
     """
     result = ActivityService.create_activity(payload, request.user)
     return 201, result
+
+
+# ============================================================================
+# Email Matching Endpoints
+# ============================================================================
+
+@activities_router.get('/emails/unlinked', response=List[UnlinkedEmailSchema])
+@require_permission(Permission.ACTIVITY_READ)
+def get_unlinked_emails(request: HttpRequest):
+    """List emails without a regarding object (unlinked emails)."""
+    return EmailMatchingService.get_unlinked_emails(request.user)
+
+
+@activities_router.get('/emails/unlinked/count', response=UnlinkedEmailCountSchema)
+@require_permission(Permission.ACTIVITY_READ)
+def get_unlinked_email_count(request: HttpRequest):
+    """Get count of unlinked emails for badge display."""
+    count = EmailMatchingService.get_unlinked_email_count(request.user)
+    return {'count': count}
+
+
+@activities_router.get('/emails/match-suggestions/{activity_id}', response=MatchSuggestionsResponseSchema)
+@require_permission(Permission.ACTIVITY_READ)
+def get_match_suggestions(request: HttpRequest, activity_id: UUID):
+    """Get match suggestions for an email activity."""
+    return EmailMatchingService.get_match_suggestions(activity_id, request.user)
+
+
+@activities_router.post('/{activity_id}/link', response=ActivitySchema)
+@require_permission(Permission.ACTIVITY_UPDATE)
+def link_email(request: HttpRequest, activity_id: UUID, payload: LinkEmailDto):
+    """Manually link an email to a CRM record."""
+    activity = EmailMatchingService.link_email_to_record(
+        activity_id,
+        payload.regardingobjectid,
+        payload.regardingobjectidtype,
+        request.user,
+    )
+    return activity
+
+
+@activities_router.post('/{activity_id}/unlink', response=ActivitySchema)
+@require_permission(Permission.ACTIVITY_UPDATE)
+def unlink_email(request: HttpRequest, activity_id: UUID):
+    """Remove the regarding association from an email."""
+    activity = EmailMatchingService.unlink_email(activity_id, request.user)
+    return activity
 
 
 @activities_router.post('/send-document-email', response={200: SendDocumentEmailResponse})
