@@ -295,20 +295,21 @@ class TestQualifyLead:
         )
 
         dto = QualifyLeadDto(
-            create_account=False,
-            create_contact=False,
+            createAccount=False,
+            createContact=False,
         )
 
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
-        # Check lead state changed
-        assert qualified_lead.statecode == LeadStateCode.QUALIFIED
-        assert qualified_lead.statuscode == LeadStatusCode.QUALIFIED
-        assert qualified_lead.qualifyingopportunityid is not None
+        # Check lead state changed (reload from DB)
+        lead.refresh_from_db()
+        assert lead.statecode == LeadStateCode.QUALIFIED
+        assert lead.statuscode == LeadStatusCode.QUALIFIED
+        assert lead.qualifyingopportunityid is not None
 
         # Check opportunity was created
         from apps.opportunities.models import Opportunity
-        opportunity = Opportunity.objects.get(opportunityid=qualified_lead.qualifyingopportunityid)
+        opportunity = Opportunity.objects.get(opportunityid=result['opportunityId'])
         assert opportunity.originatingleadid == lead
         assert opportunity.ownerid == salesperson
 
@@ -322,11 +323,11 @@ class TestQualifyLead:
         )
 
         dto = QualifyLeadDto(
-            create_account=True,
-            create_contact=False,
+            createAccount=True,
+            createContact=False,
         )
 
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
         # Check account was created
         from apps.accounts.models import Account
@@ -339,7 +340,7 @@ class TestQualifyLead:
 
         # Check opportunity linked to account
         from apps.opportunities.models import Opportunity
-        opportunity = Opportunity.objects.get(opportunityid=qualified_lead.qualifyingopportunityid)
+        opportunity = Opportunity.objects.get(opportunityid=result['opportunityId'])
         assert opportunity.accountid == account
 
     def test_qualify_lead_with_contact(self, db, salesperson):
@@ -354,11 +355,11 @@ class TestQualifyLead:
         )
 
         dto = QualifyLeadDto(
-            create_account=False,
-            create_contact=True,
+            createAccount=False,
+            createContact=True,
         )
 
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
         # Check contact was created
         from apps.contacts.models import Contact
@@ -370,7 +371,7 @@ class TestQualifyLead:
 
         # Check opportunity linked to contact
         from apps.opportunities.models import Opportunity
-        opportunity = Opportunity.objects.get(opportunityid=qualified_lead.qualifyingopportunityid)
+        opportunity = Opportunity.objects.get(opportunityid=result['opportunityId'])
         assert opportunity.contactid == contact
 
     def test_qualify_lead_with_both_account_and_contact(self, db, salesperson):
@@ -384,11 +385,11 @@ class TestQualifyLead:
         )
 
         dto = QualifyLeadDto(
-            create_account=True,
-            create_contact=True,
+            createAccount=True,
+            createContact=True,
         )
 
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
         # Check both were created
         from apps.accounts.models import Account
@@ -402,7 +403,7 @@ class TestQualifyLead:
 
         # Check opportunity linked to both
         from apps.opportunities.models import Opportunity
-        opportunity = Opportunity.objects.get(opportunityid=qualified_lead.qualifyingopportunityid)
+        opportunity = Opportunity.objects.get(opportunityid=result['opportunityId'])
         assert opportunity.accountid == account
         assert opportunity.contactid == contact
 
@@ -411,15 +412,15 @@ class TestQualifyLead:
         lead = LeadFactory(ownerid=salesperson)
 
         dto = QualifyLeadDto(
-            create_account=False,
-            create_contact=False,
-            opportunity_name='Big Deal 2025',
+            createAccount=False,
+            createContact=False,
+            opportunityName='Big Deal 2025',
         )
 
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
         from apps.opportunities.models import Opportunity
-        opportunity = Opportunity.objects.get(opportunityid=qualified_lead.qualifyingopportunityid)
+        opportunity = Opportunity.objects.get(opportunityid=result['opportunityId'])
         assert opportunity.name == 'Big Deal 2025'
 
     def test_qualify_lead_custom_revenue_and_date(self, db, salesperson):
@@ -428,16 +429,16 @@ class TestQualifyLead:
         close_date = date.today() + timedelta(days=60)
 
         dto = QualifyLeadDto(
-            create_account=False,
-            create_contact=False,
-            estimated_revenue=Decimal('100000.00'),
-            estimated_close_date=close_date,
+            createAccount=False,
+            createContact=False,
+            estimatedValue=Decimal('100000.00'),
+            estimatedCloseDate=close_date,
         )
 
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
         from apps.opportunities.models import Opportunity
-        opportunity = Opportunity.objects.get(opportunityid=qualified_lead.qualifyingopportunityid)
+        opportunity = Opportunity.objects.get(opportunityid=result['opportunityId'])
         assert opportunity.estimatedrevenue == Decimal('100000.00')
         assert opportunity.estimatedclosedate == close_date
 
@@ -445,7 +446,7 @@ class TestQualifyLead:
         """Test cannot qualify an already qualified lead."""
         lead = QualifiedLeadFactory(ownerid=salesperson)
 
-        dto = QualifyLeadDto(create_account=False, create_contact=False)
+        dto = QualifyLeadDto(createAccount=False, createContact=False)
 
         with pytest.raises(ValidationError, match='Only open leads can be qualified'):
             LeadService.qualify_lead(lead.leadid, dto, salesperson)
@@ -454,7 +455,7 @@ class TestQualifyLead:
         """Test cannot qualify a disqualified lead."""
         lead = DisqualifiedLeadFactory(ownerid=salesperson)
 
-        dto = QualifyLeadDto(create_account=False, create_contact=False)
+        dto = QualifyLeadDto(createAccount=False, createContact=False)
 
         with pytest.raises(ValidationError, match='Only open leads can be qualified'):
             LeadService.qualify_lead(lead.leadid, dto, salesperson)
@@ -469,12 +470,12 @@ class TestQualifyLead:
         )
 
         dto = QualifyLeadDto(
-            create_account=True,
-            create_contact=True,
+            createAccount=True,
+            createContact=True,
         )
 
         # Qualify the lead
-        qualified_lead = LeadService.qualify_lead(lead.leadid, dto, salesperson)
+        result = LeadService.qualify_lead(lead.leadid, dto, salesperson)
 
         # Verify all entities were created
         from apps.opportunities.models import Opportunity
@@ -484,10 +485,11 @@ class TestQualifyLead:
         # All should exist
         assert Account.objects.filter(name='Test Corp').exists()
         assert Contact.objects.filter(firstname='John', lastname='Doe').exists()
-        assert Opportunity.objects.filter(opportunityid=qualified_lead.qualifyingopportunityid).exists()
+        assert Opportunity.objects.filter(opportunityid=result['opportunityId']).exists()
 
-        # Lead should be qualified
-        assert qualified_lead.statecode == LeadStateCode.QUALIFIED
+        # Lead should be qualified (reload from DB)
+        lead.refresh_from_db()
+        assert lead.statecode == LeadStateCode.QUALIFIED
 
 
 @pytest.mark.unit
@@ -496,13 +498,10 @@ class TestDisqualifyLead:
     """Tests for LeadService.disqualify_lead method."""
 
     def test_disqualify_lead_lost(self, db, salesperson):
-        """Test disqualifying lead as lost."""
+        """Test disqualifying lead as lost with reason."""
         lead = LeadFactory(ownerid=salesperson)
 
-        dto = DisqualifyLeadDto(
-            statuscode=LeadStatusCode.LOST,
-            remarks='Price too high',
-        )
+        dto = DisqualifyLeadDto(reason='Price too high')
 
         disqualified = LeadService.disqualify_lead(lead.leadid, dto, salesperson)
 
@@ -510,41 +509,28 @@ class TestDisqualifyLead:
         assert disqualified.statuscode == LeadStatusCode.LOST
         assert 'Price too high' in disqualified.description
 
-    def test_disqualify_lead_cannot_contact(self, db, salesperson):
-        """Test disqualifying lead as cannot contact."""
+    def test_disqualify_lead_without_reason(self, db, salesperson):
+        """Test disqualifying lead without a reason."""
         lead = LeadFactory(ownerid=salesperson)
 
-        dto = DisqualifyLeadDto(
-            statuscode=LeadStatusCode.CANNOT_CONTACT,
-        )
+        dto = DisqualifyLeadDto()
 
         disqualified = LeadService.disqualify_lead(lead.leadid, dto, salesperson)
 
-        assert disqualified.statuscode == LeadStatusCode.CANNOT_CONTACT
+        assert disqualified.statecode == LeadStateCode.DISQUALIFIED
+        assert disqualified.statuscode == LeadStatusCode.LOST
 
-    def test_disqualify_lead_no_longer_interested(self, db, salesperson):
-        """Test disqualifying lead as no longer interested."""
-        lead = LeadFactory(ownerid=salesperson)
+    def test_disqualify_lead_with_reason(self, db, salesperson):
+        """Test disqualifying lead appends reason to description."""
+        lead = LeadFactory(ownerid=salesperson, description='Original description')
 
-        dto = DisqualifyLeadDto(
-            statuscode=LeadStatusCode.NO_LONGER_INTERESTED,
-            remarks='Found another vendor',
-        )
+        dto = DisqualifyLeadDto(reason='Found another vendor')
 
         disqualified = LeadService.disqualify_lead(lead.leadid, dto, salesperson)
 
-        assert disqualified.statuscode == LeadStatusCode.NO_LONGER_INTERESTED
-
-    def test_disqualify_lead_invalid_status(self, db, salesperson):
-        """Test disqualifying with invalid status code."""
-        lead = LeadFactory(ownerid=salesperson)
-
-        dto = DisqualifyLeadDto(
-            statuscode=LeadStatusCode.NEW,  # Not a disqualification status
-        )
-
-        with pytest.raises(ValidationError, match='Invalid disqualification status'):
-            LeadService.disqualify_lead(lead.leadid, dto, salesperson)
+        assert disqualified.statuscode == LeadStatusCode.LOST
+        assert 'Found another vendor' in disqualified.description
+        assert 'Original description' in disqualified.description
 
     def test_disqualify_lead_cannot_disqualify_qualified(self, db, salesperson):
         """Test cannot disqualify an already qualified lead."""

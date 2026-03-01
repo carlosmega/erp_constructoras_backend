@@ -279,23 +279,23 @@ class TestUpdateOpportunity:
             OpportunityService.update_opportunity(opp.opportunityid, dto, salesperson)
 
     def test_update_opportunity_account_reference(self, db, salesperson):
-        """Test updating account reference."""
+        """Test updating account reference via customerid."""
         owner = salesperson
         account = AccountFactory(ownerid=owner, createdby=owner, modifiedby=owner)
         opp = OpportunityFactory(ownerid=salesperson, accountid=None)
 
-        dto = UpdateOpportunityDto(accountid=account.accountid)
+        dto = UpdateOpportunityDto(customerid=account.accountid, customeridtype='account')
         updated_opp = OpportunityService.update_opportunity(opp.opportunityid, dto, salesperson)
 
         assert updated_opp.accountid == account
 
     def test_update_opportunity_invalid_account(self, db, salesperson):
-        """Test updating with invalid account."""
+        """Test updating with invalid account via customerid."""
         opp = OpportunityFactory(ownerid=salesperson)
 
-        dto = UpdateOpportunityDto(accountid=uuid4())
+        dto = UpdateOpportunityDto(customerid=uuid4(), customeridtype='account')
 
-        with pytest.raises(ValidationError, match='Account with ID'):
+        with pytest.raises(NotFound, match='Account with ID'):
             OpportunityService.update_opportunity(opp.opportunityid, dto, salesperson)
 
     def test_update_opportunity_cannot_update_closed(self, db, salesperson):
