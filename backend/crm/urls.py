@@ -142,6 +142,9 @@ from apps.activities.routers import activities_router
 from apps.cases.routers import cases_router
 from apps.notifications.routers import notifications_router
 from apps.graph.routers import graph_router
+from apps.projects.routers import projects_router, zones_router, suppliers_router, team_members_router
+from apps.budgets.routers import categories_router, imputation_codes_router, periods_router
+from apps.expenses.routers import expenses_router, expense_lines_router, attachments_router, estimates_router
 
 api.add_router("/auth", auth_router)
 api.add_router("/users", users_router)
@@ -160,6 +163,19 @@ api.add_router("/activities", activities_router)
 api.add_router("/cases", cases_router)
 api.add_router("/notifications", notifications_router)
 api.add_router("/graph", graph_router)
+
+# Operations module routers
+api.add_router("/projects", projects_router)
+api.add_router("/zones", zones_router)
+api.add_router("/suppliers", suppliers_router)
+api.add_router("/team-members", team_members_router)
+api.add_router("/categories", categories_router)
+api.add_router("/codes", imputation_codes_router)
+api.add_router("/periods", periods_router)
+api.add_router("/expenses", expenses_router)
+api.add_router("/expense-lines", expense_lines_router)
+api.add_router("/attachments", attachments_router)
+api.add_router("/estimates", estimates_router)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

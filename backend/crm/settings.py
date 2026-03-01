@@ -49,6 +49,9 @@ INSTALLED_APPS = [
     'apps.cases',  # Case management (Phase 13)
     'apps.notifications',  # Notification system
     'apps.graph',  # Microsoft Graph integration (Office 365 email sync)
+    'apps.projects',  # Construction project management (Operations module)
+    'apps.budgets',  # Budget & cost structure (Operations module)
+    'apps.expenses',  # Expense management & classification (Operations module)
     'core',  # Shared utilities
 ]
 

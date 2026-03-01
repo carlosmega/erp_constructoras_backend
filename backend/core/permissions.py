@@ -93,6 +93,32 @@ class Permission(str, Enum):
     CASE_UPDATE = "case_update"
     CASE_DELETE = "case_delete"
 
+    # Construction Project permissions
+    PROJECT_CREATE = "project_create"
+    PROJECT_READ = "project_read"
+    PROJECT_UPDATE = "project_update"
+    PROJECT_DELETE = "project_delete"
+
+    # Budget permissions
+    BUDGET_CREATE = "budget_create"
+    BUDGET_READ = "budget_read"
+    BUDGET_UPDATE = "budget_update"
+    BUDGET_DELETE = "budget_delete"
+
+    # Expense permissions
+    EXPENSE_CREATE = "expense_create"
+    EXPENSE_READ = "expense_read"
+    EXPENSE_UPDATE = "expense_update"
+    EXPENSE_DELETE = "expense_delete"
+    EXPENSE_CLASSIFY = "expense_classify"
+    EXPENSE_VERIFY = "expense_verify"
+
+    # Client Estimate permissions
+    ESTIMATE_CREATE = "estimate_create"
+    ESTIMATE_READ = "estimate_read"
+    ESTIMATE_UPDATE = "estimate_update"
+    ESTIMATE_DELETE = "estimate_delete"
+
 
 # ============================================================================
 # Role Permission Matrix
@@ -112,6 +138,11 @@ ROLE_PERMISSIONS = {
         Permission.PRODUCT_CREATE, Permission.PRODUCT_READ, Permission.PRODUCT_UPDATE, Permission.PRODUCT_DELETE,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE, Permission.ACTIVITY_DELETE,
         Permission.CASE_CREATE, Permission.CASE_READ, Permission.CASE_UPDATE, Permission.CASE_DELETE,
+        # Operations module - full access
+        Permission.PROJECT_CREATE, Permission.PROJECT_READ, Permission.PROJECT_UPDATE, Permission.PROJECT_DELETE,
+        Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE, Permission.BUDGET_DELETE,
+        Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_DELETE, Permission.EXPENSE_CLASSIFY, Permission.EXPENSE_VERIFY,
+        Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
     ],
 
     "Sales Manager": [
@@ -128,6 +159,11 @@ ROLE_PERMISSIONS = {
         Permission.PRODUCT_READ,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE, Permission.ACTIVITY_DELETE,
         Permission.CASE_CREATE, Permission.CASE_READ, Permission.CASE_UPDATE, Permission.CASE_DELETE,
+        # Operations module - full access
+        Permission.PROJECT_CREATE, Permission.PROJECT_READ, Permission.PROJECT_UPDATE, Permission.PROJECT_DELETE,
+        Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE, Permission.BUDGET_DELETE,
+        Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_DELETE, Permission.EXPENSE_CLASSIFY, Permission.EXPENSE_VERIFY,
+        Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
     ],
 
     "Salesperson": [
@@ -143,6 +179,11 @@ ROLE_PERMISSIONS = {
         Permission.PRODUCT_READ,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE, Permission.ACTIVITY_DELETE,
         Permission.CASE_CREATE, Permission.CASE_READ, Permission.CASE_UPDATE,
+        # Operations module - manage own projects
+        Permission.PROJECT_CREATE, Permission.PROJECT_READ, Permission.PROJECT_UPDATE,
+        Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE,
+        Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_CLASSIFY,
+        Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE,
     ],
 
     "Marketing User": [
@@ -167,6 +208,11 @@ ROLE_PERMISSIONS = {
         Permission.PRODUCT_READ,
         Permission.ACTIVITY_READ,
         Permission.CASE_READ,
+        # Operations module - read only
+        Permission.PROJECT_READ,
+        Permission.BUDGET_READ,
+        Permission.EXPENSE_READ,
+        Permission.ESTIMATE_READ,
     ],
 }
 
