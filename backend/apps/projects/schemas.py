@@ -36,10 +36,15 @@ class ProjectBondDto(Schema):
 
 class ProjectTeamMemberSchema(ModelSchema):
     """Full team member response schema."""
+    id: Optional[UUID] = None
 
     class Meta:
         model = ProjectTeamMember
         fields = ['teammemberid', 'name', 'role', 'phone', 'email']
+
+    @staticmethod
+    def resolve_id(obj):
+        return obj.teammemberid
 
 
 class CreateTeamMemberDto(Schema):
@@ -119,9 +124,9 @@ class CreateSupplierDto(Schema):
 class ConstructionProjectSchema(ModelSchema):
     """Full project response schema with computed fields."""
     state_name: Optional[str] = None
-    owner_name: Optional[str] = None
-    account_name: Optional[str] = None
-    opportunity_name: Optional[str] = None
+    ownername: Optional[str] = None
+    accountname: Optional[str] = None
+    opportunityname: Optional[str] = None
     teammembers: List[ProjectTeamMemberSchema] = []
     advancebond: Optional[ProjectBondSchema] = None
     completionbond: Optional[ProjectBondSchema] = None
@@ -149,15 +154,15 @@ class ConstructionProjectSchema(ModelSchema):
         return obj.state_name
 
     @staticmethod
-    def resolve_owner_name(obj):
+    def resolve_ownername(obj):
         return obj.ownerid.fullname if obj.ownerid else None
 
     @staticmethod
-    def resolve_account_name(obj):
+    def resolve_accountname(obj):
         return obj.accountid.name if obj.accountid else None
 
     @staticmethod
-    def resolve_opportunity_name(obj):
+    def resolve_opportunityname(obj):
         return obj.opportunityid.name if obj.opportunityid else None
 
     @staticmethod

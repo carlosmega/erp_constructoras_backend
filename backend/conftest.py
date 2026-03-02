@@ -305,3 +305,43 @@ def mock_current_user(mocker, salesperson):
             result = LeadService.create_lead(mock_current_user, data)
     """
     return salesperson
+
+
+# ============================================================================
+# Django Test Client Fixtures (Full-stack HTTP testing)
+# ============================================================================
+
+@pytest.fixture
+def auth_client(db, salesperson):
+    """Django test client authenticated as salesperson."""
+    from django.test import Client
+    client = Client()
+    client.force_login(salesperson)
+    return client
+
+
+@pytest.fixture
+def admin_auth_client(db, system_admin):
+    """Django test client authenticated as system admin."""
+    from django.test import Client
+    client = Client()
+    client.force_login(system_admin)
+    return client
+
+
+@pytest.fixture
+def readonly_auth_client(db, readonly_user):
+    """Django test client authenticated as read-only user."""
+    from django.test import Client
+    client = Client()
+    client.force_login(readonly_user)
+    return client
+
+
+@pytest.fixture
+def manager_auth_client(db, sales_manager):
+    """Django test client authenticated as sales manager."""
+    from django.test import Client
+    client = Client()
+    client.force_login(sales_manager)
+    return client

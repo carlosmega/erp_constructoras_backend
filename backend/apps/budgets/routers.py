@@ -63,10 +63,11 @@ def list_codes(
     project_id: UUID,
     costtype: Optional[int] = None,
     categoryid: Optional[UUID] = None,
+    zoneid: Optional[UUID] = None,
 ):
     """List imputation codes for a project with optional filtering."""
     codes = ImputationCodeService.list_codes(
-        project_id, request.user, costtype=costtype, categoryid=categoryid
+        project_id, request.user, costtype=costtype, categoryid=categoryid, zoneid=zoneid
     )
     return list(codes)
 

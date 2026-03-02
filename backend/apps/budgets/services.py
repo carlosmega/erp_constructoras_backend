@@ -120,6 +120,7 @@ class ImputationCodeService:
         user,
         costtype: Optional[int] = None,
         categoryid: Optional[UUID] = None,
+        zoneid: Optional[UUID] = None,
     ) -> QuerySet[ImputationCode]:
         """List imputation codes for a project with optional filtering."""
         queryset = ImputationCode.objects.filter(projectid=project_id)
@@ -128,6 +129,8 @@ class ImputationCodeService:
             queryset = queryset.filter(costtype=costtype)
         if categoryid is not None:
             queryset = queryset.filter(categoryid=categoryid)
+        if zoneid is not None:
+            queryset = queryset.filter(zoneid=zoneid)
 
         return queryset.select_related(
             'categoryid', 'zoneid', 'createdby', 'modifiedby'

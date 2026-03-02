@@ -50,7 +50,7 @@ class ProjectExpenseSchema(ModelSchema):
     periodlabel: Optional[str] = None
     imputationcodename: Optional[str] = None
     imputationcode: Optional[str] = None
-    owner_name: Optional[str] = None
+    ownername: Optional[str] = None
 
     class Meta:
         model = ProjectExpense
@@ -69,7 +69,7 @@ class ProjectExpenseSchema(ModelSchema):
         return obj.imputationcodeid.code if obj.imputationcodeid else None
 
     @staticmethod
-    def resolve_owner_name(obj):
+    def resolve_ownername(obj):
         return obj.ownerid.fullname if obj.ownerid else None
 
 
@@ -198,11 +198,14 @@ class VerifyExpenseDto(Schema):
 
 class ExpenseSummarySchema(Schema):
     """Aggregate expense summary for a project."""
-    total_count: int = 0
-    total_amount: Decimal = Decimal('0.00')
-    classified_count: int = 0
-    unclassified_count: int = 0
-    by_document_type: list[dict] = []
+    totalExpenses: int = 0
+    totalAmount: Decimal = Decimal('0.00')
+    classifiedCount: int = 0
+    unclassifiedCount: int = 0
+    verifiedCount: int = 0
+    pendingVerificationCount: int = 0
+    discrepancyCount: int = 0
+    byDocumentType: dict = {}
 
 
 # =============================================================================

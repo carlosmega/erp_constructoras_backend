@@ -221,19 +221,34 @@ class ExpenseService:
             classificationstatus=ClassificationStatusCode.PENDING
         ).count()
 
-        by_document_type = list(
-            base_qs.values('documenttype').annotate(
-                count=Count('expenseid'),
-                amount=Sum('netamount'),
-            ).order_by('documenttype')
-        )
+        # Verification status counts
+        verified_count = base_qs.filter(verificationstatus=1).count()
+        pending_verification_count = base_qs.filter(verificationstatus=0).count()
+        discrepancy_count = base_qs.filter(verificationstatus=2).count()
+
+        # By document type as dict keyed by document type code
+        by_doc_type_qs = base_qs.values('documenttype').annotate(
+            count=Count('expenseid'),
+            amount=Sum('netamount'),
+        ).order_by('documenttype')
+
+        by_document_type = {}
+        for row in by_doc_type_qs:
+            doc_type = row['documenttype']
+            by_document_type[doc_type] = {
+                'count': row['count'],
+                'amount': float(row['amount'] or 0),
+            }
 
         return {
-            'total_count': totals['total_count'] or 0,
-            'total_amount': totals['total_amount'] or Decimal('0.00'),
-            'classified_count': classified_count,
-            'unclassified_count': unclassified_count,
-            'by_document_type': by_document_type,
+            'totalExpenses': totals['total_count'] or 0,
+            'totalAmount': totals['total_amount'] or Decimal('0.00'),
+            'classifiedCount': classified_count,
+            'unclassifiedCount': unclassified_count,
+            'verifiedCount': verified_count,
+            'pendingVerificationCount': pending_verification_count,
+            'discrepancyCount': discrepancy_count,
+            'byDocumentType': by_document_type,
         }
 
 
@@ -558,6 +573,16 @@ class EstimateService:
         return ClientEstimate.objects.filter(
             projectid=project_id
         ).select_related('periodid')
+
+    @staticmethod
+    def get_estimate_by_id(estimate_id: UUID, user) -> ClientEstimate:
+        """Get a single estimate by ID."""
+        try:
+            return ClientEstimate.objects.select_related(
+                'periodid', 'createdby', 'modifiedby'
+            ).get(estimateid=estimate_id)
+        except ClientEstimate.DoesNotExist:
+            raise NotFound(f"Estimate with ID {estimate_id} not found")
 
     @staticmethod
     @transaction.atomic

@@ -306,6 +306,16 @@ def list_estimates(request: HttpRequest, project_id: UUID):
     return list(EstimateService.list_estimates(project_id, request.user))
 
 
+@estimates_router.get(
+    "/estimates/{estimate_id}/",
+    response=ClientEstimateSchema,
+)
+def get_estimate(request: HttpRequest, estimate_id: UUID):
+    """Get a single client estimate by ID."""
+    # TODO: add @require_permission decorator
+    return EstimateService.get_estimate_by_id(estimate_id, request.user)
+
+
 @estimates_router.post(
     "/projects/{project_id}/estimates/",
     response={201: ClientEstimateSchema},
