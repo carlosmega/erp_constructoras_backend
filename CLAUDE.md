@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a CRM backend built with **Django 5.0+ and Django Ninja**, following the **Microsoft Dynamics 365 Sales (Common Data Service)** data model. The system implements a complete sales pipeline with activities, product catalog, and RBAC security.
+This is a CRM + Operations backend built with **Django 5.0+ and Django Ninja**, following the **Microsoft Dynamics 365 Sales (Common Data Service)** data model. The system implements a complete sales pipeline with activities, product catalog, RBAC security, and an **Operations module** for managing expenses and income of civil construction and mining companies.
 
 ## Technology Stack
 
@@ -16,6 +16,8 @@ This is a CRM backend built with **Django 5.0+ and Django Ninja**, following the
 - **python-decouple** - Environment configuration
 - **gunicorn** + **uvicorn** - ASGI/WSGI server
 - **Celery** (optional) - Async tasks (email sending, PDF generation)
+- **Factory Boy** - Test data generation (pytest factories)
+- **python-dateutil** - Date utilities (period generation with `relativedelta`)
 
 ## Project Structure
 
@@ -41,7 +43,25 @@ backend/
 │   ├── products/
 │   ├── activities/
 │   ├── users/
-│   └── audit/
+│   ├── audit/
+│   ├── projects/            # Construction project management (Operations)
+│   │   ├── models.py        # ConstructionProject, Zone, Supplier, TeamMember
+│   │   ├── schemas.py       # DTOs with nested bonds, resolved FKs
+│   │   ├── services.py      # CRUD + auto project numbering (PRY-YYYY-NNN)
+│   │   ├── routers.py       # /projects, /zones, /suppliers, /team-members
+│   │   └── tests/           # factories.py, test_models.py, test_services.py
+│   ├── budgets/             # Budget & cost structure (Operations)
+│   │   ├── models.py        # CostCategory, ImputationCode, ImputationPeriod
+│   │   ├── schemas.py       # DTOs for categories, codes, periods
+│   │   ├── services.py      # Seed defaults, auto code gen, period init
+│   │   ├── routers.py       # /categories, /codes, /periods
+│   │   └── tests/           # factories.py, test_models.py, test_services.py
+│   └── expenses/            # Expense management (Operations)
+│       ├── models.py        # ProjectExpense, ExpenseLine, Attachment, Estimate
+│       ├── schemas.py       # DTOs + classify/verify/summary schemas
+│       ├── services.py      # 7 services (expense, classification, verification...)
+│       ├── routers.py       # /expenses, /expense-lines, /attachments, /estimates
+│       └── tests/           # factories.py, test_models.py, test_services.py
 └── core/
     ├── permissions.py           # RBAC implementation
     ├── pagination.py            # Pagination utilities
@@ -127,6 +147,20 @@ All inherit from base Activity entity:
 
 These link to any entity via `regardingobjectid` (polymorphic).
 
+#### Operations Module Entities
+- **ConstructionProject**: Main project entity with flattened bond fields, account/owner relations, project numbering (PRY-YYYY-NNN)
+- **ProjectTeamMember**: Team members with role enum (ProjectManager, SiteEngineer, SafetyOfficer, etc.)
+- **ProjectZone**: Geographic zones with unique prefix per project (e.g., TAM, MTY)
+- **ProjectSupplier**: Suppliers with RFC validation and auto-numbering
+- **CostCategory**: Direct (P1-P10) and indirect (C1-C8) cost categories with seed defaults
+- **ImputationCode**: Budget line items with auto-generated codes (e.g., TAM-P4-17 for direct, C1-5 for indirect)
+- **ImputationPeriod**: Weekly or fortnightly periods with Spanish month labels (ENE, FEB, MAR...)
+- **ProjectExpense**: Multi-document expenses (invoice, payroll, provision) with classification and verification workflows
+- **ExpenseLine**: Line items per expense with automatic total recalculation
+- **ExpenseAttachment**: File attachment metadata for expenses
+- **ClassificationLog**: Audit trail for expense classification changes
+- **ClientEstimate**: Client billing estimates with computed IVA totals and auto-numbering
+
 ### Security Model (RBAC)
 
 System implements 5 predefined roles:
@@ -137,6 +171,11 @@ System implements 5 predefined roles:
 5. **Read-Only User**: View-only access
 
 Permissions are entity-level (Create, Read, Update, Delete) with record-level ownership filters.
+
+Operations module permissions: `PROJECT_*`, `BUDGET_*`, `EXPENSE_*` (+ CLASSIFY, VERIFY), `ESTIMATE_*`.
+- **System Administrator / Sales Manager**: Full access to all operations entities
+- **Salesperson**: Create/read/update own projects, budgets, expenses, estimates (no delete). Can classify but not verify expenses.
+- **Read-Only User**: View-only access to all operations entities
 
 ## Implementation Pattern
 
@@ -205,6 +244,41 @@ Many totals are calculated, not stored:
 - `fullname` = firstname + " " + lastname
 - `estimatedvalue` on Opportunity rolls up quote values
 
+## Operations Module Architecture
+
+The Operations module manages construction project finances across 3 Django apps:
+
+### Data Flow
+```
+ConstructionProject
+  ├── ProjectZone (geographic zones like TAM, MTY)
+  ├── ProjectSupplier (vendors with RFC)
+  ├── ProjectTeamMember (roles: PM, Engineer, etc.)
+  ├── CostCategory (P1-P10 direct, C1-C8 indirect)
+  │   └── ImputationCode (budget lines: TAM-P4-17)
+  ├── ImputationPeriod (weekly/fortnightly with Spanish labels)
+  ├── ProjectExpense (invoice, payroll, provision)
+  │   ├── ExpenseLine (line items)
+  │   ├── ExpenseAttachment (file metadata)
+  │   └── ClassificationLog (audit trail)
+  └── ClientEstimate (billing to client)
+```
+
+### Key Business Logic
+- **Auto-numbering**: Projects (PRY-YYYY-NNN), suppliers, estimates, imputation codes
+- **Seed defaults**: `CostCategoryService.seed_default_categories()` creates 18 standard categories
+- **Period generation**: `PeriodService.initialize_periods()` creates weekly/fortnightly periods from project dates with Spanish labels
+- **Classification workflow**: Expenses can be classified/unclassified with full audit logging in ClassificationLog
+- **Verification**: Independent verification status tracking per expense
+- **Provision conversion**: Provisions can be converted to real expenses via `ProvisionService`
+- **Auto-recalculation**: Adding/removing expense lines auto-recalculates expense totals
+
+### Testing Pattern
+- **Factory Boy** factories for all models (e.g., `ConstructionProjectFactory`, `ActiveProjectFactory`)
+- Tests use `@pytest.mark.unit` and `@pytest.mark.workflow` markers
+- All test files follow: `tests/factories.py`, `tests/test_models.py`, `tests/test_services.py`
+- Run operations tests: `python -m pytest apps/projects/tests/ apps/budgets/tests/ apps/expenses/tests/ -v`
+
 ## Development Notes
 
 - Entity names use CDS naming: lowercase, no underscores (e.g., `leadid`, `emailaddress1`)
@@ -213,6 +287,8 @@ Many totals are calculated, not stored:
 - All list endpoints must support filtering by `statecode`, `ownerid`, date ranges
 - Use `select_related()`/`prefetch_related()` to avoid N+1 queries
 - Return proper HTTP status codes (200, 201, 400, 404, 403)
+- Operations module schemas accept nested bond objects (`ProjectBondDto`) but store them as flat fields in the model
+- Direct imputation codes require a zone; indirect codes must NOT have a zone
 
 ## Reference Documentation
 

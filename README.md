@@ -2,18 +2,29 @@
 
 **Microsoft Dynamics 365 CDS-Compatible CRM Backend**
 
-A complete Django 5.0+ backend implementing Microsoft Dynamics 365 Common Data Service architecture with Django Ninja REST APIs. Full sales pipeline from Lead to Invoice with RBAC security.
+A complete Django 5.0+ backend implementing Microsoft Dynamics 365 Common Data Service architecture with Django Ninja REST APIs. Full sales pipeline from Lead to Invoice with RBAC security, plus an **Operations module** for managing expenses and income of civil construction and mining companies.
 
 ## Features
 
+### CRM Module
 - 🔐 **Secure Authentication** - Session-based auth with 30-min timeout
 - 👥 **RBAC System** - 5 predefined roles with entity-level permissions
 - 💼 **Complete Sales Pipeline** - Lead → Opportunity → Quote → Order → Invoice
-- 🚀 **Type-Safe APIs** - Django Ninja with automatic OpenAPI documentation (68+ endpoints)
+- 🚀 **Type-Safe APIs** - Django Ninja with automatic OpenAPI documentation (100+ endpoints)
 - 📊 **CDS Data Model** - UUID primary keys, state/status patterns, audit trail
 - 🏗️ **Four-Layer Architecture** - Models → Schemas → Services → Routers
 - 🔍 **Advanced Filtering** - Query by state, owner, date ranges with pagination
 - 💰 **Payment Tracking** - Partial and full payment recording on invoices
+
+### Operations Module
+- 🏗️ **Construction Project Management** - Full project lifecycle (Draft → Active → Completed)
+- 📊 **Budget & Cost Structure** - Direct/indirect cost categories with imputation codes
+- 💸 **Expense Management** - Multi-document expenses (invoices, payroll, provisions)
+- 🏷️ **Expense Classification** - Assign imputation codes with full audit trail
+- ✅ **Verification Workflow** - Independent expense verification tracking
+- 📅 **Period Management** - Weekly/fortnightly periods with Spanish labels
+- 📋 **Client Estimates** - Billing estimates with computed IVA totals
+- 🔢 **Auto-numbering** - Projects (PRY-YYYY-NNN), suppliers, estimates, imputation codes
 
 ## Quick Start
 
@@ -69,7 +80,7 @@ backend/
 │   ├── settings.py     # Configuration
 │   ├── urls.py         # URL routing + API registration
 │   └── wsgi.py         # WSGI entry point
-├── apps/               # Django applications (10 apps)
+├── apps/               # Django applications (13 apps)
 │   ├── users/          # User management & authentication
 │   ├── leads/          # Lead management + qualification
 │   ├── opportunities/  # Opportunity tracking + win/lose
@@ -79,7 +90,10 @@ backend/
 │   ├── orders/         # Sales orders + fulfillment
 │   ├── invoices/       # Billing + payment tracking
 │   ├── products/       # Product catalog (partial)
-│   └── activities/     # Email, calls, meetings (partial)
+│   ├── activities/     # Email, calls, meetings (partial)
+│   ├── projects/       # Construction project management (Operations)
+│   ├── budgets/        # Budget & cost structure (Operations)
+│   └── expenses/       # Expense management & classification (Operations)
 ├── core/               # Shared utilities
 │   ├── models.py       # AuditMixin base class
 │   ├── permissions.py  # RBAC implementation
@@ -233,7 +247,7 @@ POST /api/invoices/{invoice_id}/record-payment
 }
 ```
 
-## API Endpoints (68+)
+## API Endpoints (100+)
 
 ### Authentication
 - `POST /api/auth/login` - User login
@@ -302,30 +316,90 @@ POST /api/invoices/{invoice_id}/record-payment
 - `POST /api/invoices/{id}/record-payment` - Record payment
 - `POST /api/invoices/{id}/cancel` - Cancel invoice
 
+### Operations Module - Projects
+- `GET /api/projects` - List projects (with state/search/owner filters)
+- `POST /api/projects` - Create project (auto-generates PRY-YYYY-NNN)
+- `GET /api/projects/{id}` - Get project details
+- `PATCH /api/projects/{id}` - Update project
+- `DELETE /api/projects/{id}` - Soft delete (set to Canceled)
+- `GET /api/projects/search/?q=` - Search by name/number/account
+- `GET /api/projects/{id}/zones/` - List project zones
+- `POST /api/projects/{id}/zones/` - Create zone
+- `PATCH /api/zones/{id}` - Update zone
+- `DELETE /api/zones/{id}` - Delete zone
+- `GET /api/projects/{id}/suppliers/` - List project suppliers
+- `POST /api/projects/{id}/suppliers/` - Add supplier (auto-numbering, RFC validation)
+- `DELETE /api/suppliers/{id}` - Remove supplier
+- `GET /api/projects/{id}/team-members/` - List team members
+- `POST /api/projects/{id}/team-members/` - Add team member
+- `PATCH /api/team-members/{id}` - Update team member
+- `DELETE /api/team-members/{id}` - Remove team member
+
+### Operations Module - Budgets
+- `GET /api/categories/projects/{id}/categories/` - List cost categories
+- `POST /api/categories/projects/{id}/categories/` - Create category or seed defaults (18 standard categories)
+- `GET /api/codes/projects/{id}/codes/` - List imputation codes (filter by costtype, categoryid)
+- `POST /api/codes/projects/{id}/codes/` - Create imputation code (auto-generates code string)
+- `GET /api/codes/codes/{id}/` - Get imputation code
+- `PATCH /api/codes/codes/{id}/` - Update imputation code
+- `GET /api/periods/projects/{id}/periods/` - List periods
+- `POST /api/periods/projects/{id}/periods/init/` - Initialize periods from project dates
+- `POST /api/periods/projects/{id}/periods/extend/` - Extend periods by N months
+- `PATCH /api/periods/periods/{id}/close/` - Close period
+- `PATCH /api/periods/periods/{id}/reopen/` - Reopen period
+
+### Operations Module - Expenses
+- `GET /api/expenses/projects/{id}/expenses/` - List expenses (filter by period, type, status)
+- `POST /api/expenses/projects/{id}/expenses/` - Create expense
+- `GET /api/expenses/expenses/{id}/` - Get expense
+- `PATCH /api/expenses/expenses/{id}/` - Update expense
+- `PATCH /api/expenses/expenses/{id}/cancel/` - Cancel expense
+- `POST /api/expenses/expenses/{id}/classify/` - Classify expense with imputation code
+- `POST /api/expenses/expenses/bulk-classify/` - Bulk classify multiple expenses
+- `POST /api/expenses/expenses/{id}/unclassify/` - Remove classification
+- `PATCH /api/expenses/expenses/{id}/verify/` - Update verification status
+- `POST /api/expenses/expenses/{id}/convert-provision/` - Convert provision to real expense
+- `GET /api/expenses/projects/{id}/expenses/unclassified/` - List unclassified expenses
+- `GET /api/expenses/projects/{id}/expenses/summary/` - Aggregate expense summary
+- `GET /api/expense-lines/expenses/{id}/lines/` - List expense lines
+- `POST /api/expense-lines/expenses/{id}/lines/` - Add line (auto-recalculates totals)
+- `PATCH /api/expense-lines/expense-lines/{id}/` - Update line
+- `DELETE /api/expense-lines/expense-lines/{id}/` - Delete line
+- `GET /api/attachments/expenses/{id}/attachments/` - List attachments
+- `POST /api/attachments/expenses/{id}/attachments/` - Add attachment
+- `DELETE /api/attachments/attachments/{id}/` - Delete attachment
+- `GET /api/expenses/expenses/{id}/logs/` - Classification audit logs
+- `GET /api/estimates/projects/{id}/estimates/` - List client estimates
+- `POST /api/estimates/projects/{id}/estimates/` - Create estimate (auto-numbering, computed IVA)
+- `PATCH /api/estimates/estimates/{id}/` - Update estimate
+- `DELETE /api/estimates/estimates/{id}/` - Cancel estimate
+
 ## Role-Based Access Control (RBAC)
 
 The system implements 5 predefined security roles with different permission levels:
 
 ### System Administrator
-- Full access to all entities
+- Full access to all entities (CRM + Operations)
 - Can create/manage users
 - Can modify any record
 - Views all records across the organization
 
 ### Sales Manager
 - Full access to sales entities (Leads, Opportunities, Quotes, Orders, Invoices)
+- Full access to Operations module (projects, budgets, expenses, estimates)
 - Can view all sales records (not filtered by ownership)
 - Cannot create/manage users
-- Can read product catalog
 
 **Example permissions:**
 - ✅ Create/update/delete leads and opportunities
 - ✅ View all team members' records
 - ✅ Activate quotes and fulfill orders
+- ✅ Full operations management (classify + verify expenses)
 - ❌ Create or manage users
 
 ### Salesperson
 - Can create and manage own sales records
+- Can manage own operations projects, budgets, and expenses
 - Limited delete permissions
 - Records filtered by ownership (sees only own records)
 
@@ -333,7 +407,10 @@ The system implements 5 predefined security roles with different permission leve
 - ✅ Create/update own leads and opportunities
 - ✅ Qualify leads and win opportunities
 - ✅ Create quotes and orders
-- ❌ Delete leads or opportunities
+- ✅ Create/update own projects, budgets, expenses, estimates
+- ✅ Classify expenses
+- ❌ Delete leads, opportunities, projects, or expenses
+- ❌ Verify expenses
 - ❌ View other salespeople's records
 
 ### Marketing User
@@ -349,11 +426,12 @@ The system implements 5 predefined security roles with different permission leve
 - ❌ Access quotes or orders
 
 ### Read-Only User
-- View-only access to all entities
+- View-only access to all entities (CRM + Operations)
 - Cannot create, update, or delete any records
 
 **Example permissions:**
 - ✅ View leads, opportunities, quotes, orders, invoices
+- ✅ View projects, budgets, expenses, estimates (read-only)
 - ❌ Create any records
 - ❌ Update any records
 - ❌ Delete any records
@@ -382,6 +460,25 @@ curl -X POST http://localhost:8000/api/users/ \
 
 ## Testing & Development
 
+### Run Tests
+
+```bash
+cd backend
+
+# Run all tests
+python -m pytest -v --no-cov
+
+# Run CRM tests only
+python -m pytest apps/leads/tests/ apps/opportunities/tests/ apps/accounts/tests/ -v --no-cov
+
+# Run Operations module tests only (190 tests)
+python -m pytest apps/projects/tests/ apps/budgets/tests/ apps/expenses/tests/ -v --no-cov
+
+# Run by marker
+python -m pytest -m unit -v --no-cov        # Unit tests only
+python -m pytest -m workflow -v --no-cov     # Workflow tests only
+```
+
 ### Load Dummy Data
 
 The system includes a comprehensive dummy data generator:
@@ -405,7 +502,7 @@ This creates:
 Import the Postman collection: `CRM-Backend-Collection.json`
 
 The collection includes:
-- All 68+ API endpoints
+- All 100+ API endpoints
 - Pre-configured environment variables
 - Auto-saving of IDs (lead_id, opportunity_id, quote_id, etc.)
 - Example workflows for complete sales pipeline
@@ -434,13 +531,90 @@ has_permission(user, Permission.LEAD_CREATE)  # True
 has_permission(user, Permission.USER_CREATE)  # False
 ```
 
+## Operations Module Workflow
+
+### Complete Flow: Project Setup → Expense Tracking
+
+```
+1. Create Project (PRY-2026-001)
+   ├── Add Zones (TAM, MTY, CDMX)
+   ├── Add Team Members (PM, Engineers)
+   └── Add Suppliers (with RFC validation)
+
+2. Setup Budget Structure
+   ├── Seed Default Categories (18 standard: P1-P10 direct, C1-C8 indirect)
+   ├── Create Imputation Codes (TAM-P4-1, C1-5, etc.)
+   └── Initialize Periods (fortnightly with Spanish labels)
+
+3. Track Expenses
+   ├── Create Expenses (invoice, payroll, provision)
+   ├── Add Lines (auto-recalculates totals)
+   ├── Classify → Assign imputation code (audit logged)
+   ├── Verify → Mark as verified/discrepant
+   └── Convert Provisions → Real expenses
+
+4. Client Estimates
+   └── Create Estimates (auto-numbering, computed IVA)
+```
+
+### Example: Create and Classify an Expense
+
+```bash
+# 1. Create a project
+POST /api/projects/
+{
+  "name": "Highway Bridge Project",
+  "accountid": "uuid-of-account",
+  "projecttype": 0,
+  "biddingtype": 0,
+  "startdate": "2026-01-01",
+  "contractenddate": "2026-12-31"
+}
+# Returns: { "projectid": "...", "projectnumber": "PRY-2026-001", ... }
+
+# 2. Seed default cost categories
+POST /api/categories/projects/{project_id}/categories/
+# Returns: 18 categories (P1-P10 direct + C1-C8 indirect)
+
+# 3. Create an imputation code
+POST /api/codes/projects/{project_id}/codes/
+{
+  "categoryid": "uuid-of-category-P4",
+  "zoneid": "uuid-of-zone-TAM",
+  "costtype": 0,
+  "name": "Concrete Materials",
+  "totalbudget": "500000.00"
+}
+# Returns: { "code": "TAM-P4-1", ... }
+
+# 4. Create an expense
+POST /api/expenses/projects/{project_id}/expenses/
+{
+  "documenttype": 0,
+  "suppliername": "Cemex SA",
+  "invoicenumber": "FAC-2026-001",
+  "subtotal": "100000.00",
+  "tax": "16000.00",
+  "total": "116000.00",
+  "periodid": "uuid-of-period"
+}
+
+# 5. Classify the expense
+POST /api/expenses/expenses/{expense_id}/classify/
+{
+  "imputationcodeid": "uuid-of-code",
+  "notes": "Concrete for bridge foundation"
+}
+```
+
 ## Technology Stack
 
 - **Framework**: Django 5.0.1
 - **API**: Django Ninja 1.1.0
 - **Database**: PostgreSQL (production), SQLite (dev)
 - **Server**: Gunicorn + Uvicorn
-- **Testing**: pytest + pytest-django
+- **Testing**: pytest + pytest-django + Factory Boy
+- **Date Utils**: python-dateutil (period generation)
 
 ## Documentation
 
