@@ -164,10 +164,10 @@ class TestExpenseService:
 
         summary = ExpenseService.get_expense_summary(project.projectid, salesperson)
 
-        assert summary['total_count'] == 2
-        assert summary['total_amount'] == Decimal('3000.00')
-        assert summary['classified_count'] == 1
-        assert summary['unclassified_count'] == 1
+        assert summary['totalExpenses'] == 2
+        assert summary['totalAmount'] == Decimal('3000.00')
+        assert summary['classifiedCount'] == 1
+        assert summary['unclassifiedCount'] == 1
 
 
 # =============================================================================
