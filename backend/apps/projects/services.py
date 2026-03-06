@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import date
 from django.db import models
-from django.db.models import Q, QuerySet
+from django.db.models import Q, QuerySet, Prefetch
 from apps.projects.models import (
     ConstructionProject, ProjectStateCode,
     ProjectTeamMember, ProjectRoleCode,
@@ -55,7 +55,9 @@ class ProjectService:
 
         return queryset.select_related(
             'ownerid', 'accountid', 'opportunityid', 'createdby', 'modifiedby'
-        ).prefetch_related('teammembers')
+        ).prefetch_related(
+            Prefetch('teammembers', queryset=ProjectTeamMember.objects.select_related('systemuserid'))
+        )
 
     @staticmethod
     def create_project(dto: CreateProjectDto, user: SystemUser) -> ConstructionProject:
@@ -144,7 +146,9 @@ class ProjectService:
         try:
             project = ConstructionProject.objects.select_related(
                 'ownerid', 'accountid', 'opportunityid', 'createdby', 'modifiedby'
-            ).prefetch_related('teammembers').get(projectid=project_id)
+            ).prefetch_related(
+            Prefetch('teammembers', queryset=ProjectTeamMember.objects.select_related('systemuserid'))
+        ).get(projectid=project_id)
         except ConstructionProject.DoesNotExist:
             raise NotFound(f"Project with ID {project_id} not found")
 
@@ -240,7 +244,9 @@ class ProjectService:
 
         return queryset.select_related(
             'ownerid', 'accountid', 'opportunityid', 'createdby', 'modifiedby'
-        ).prefetch_related('teammembers')
+        ).prefetch_related(
+            Prefetch('teammembers', queryset=ProjectTeamMember.objects.select_related('systemuserid'))
+        )
 
     @staticmethod
     def generate_project_number() -> str:
@@ -387,15 +393,33 @@ class SupplierService:
     @staticmethod
     def add_supplier(dto: CreateSupplierDto, user: SystemUser) -> ProjectSupplier:
         """Add a supplier to a project."""
-        from apps.accounts.models import Account
+        from apps.accounts.models import Account, CustomerTypeCode
 
         project = ProjectService.get_project_by_id(dto.projectid, user)
 
-        # Validate account exists
-        try:
-            account = Account.objects.get(accountid=dto.accountid)
-        except Account.DoesNotExist:
-            raise ValidationError(f"Account with ID {dto.accountid} not found")
+        # Resolve account
+        if dto.create_account and dto.accountid is None:
+            # Create a new Account marked as Supplier
+            account = Account(
+                name=dto.businessname,
+                customertypecode=CustomerTypeCode.SUPPLIER,
+                ownerid=user,
+                createdby=user,
+                modifiedby=user,
+            )
+            account.save()
+        elif dto.accountid is not None:
+            # Use existing account
+            try:
+                account = Account.objects.get(accountid=dto.accountid)
+            except Account.DoesNotExist:
+                raise ValidationError(f"Account with ID {dto.accountid} not found")
+            # If account was Customer, upgrade to Both
+            if account.customertypecode == CustomerTypeCode.CUSTOMER:
+                account.customertypecode = CustomerTypeCode.BOTH
+                account.save()
+        else:
+            raise ValidationError("Either accountid or create_account must be provided")
 
         # Check unique RFC within project
         if ProjectSupplier.objects.filter(projectid=project, rfc=dto.rfc).exists():
@@ -460,7 +484,9 @@ class TeamMemberService:
     def list_team_members(project_id: UUID, user: SystemUser) -> QuerySet[ProjectTeamMember]:
         """List all team members for a project."""
         ProjectService.get_project_by_id(project_id, user)
-        return ProjectTeamMember.objects.filter(projectid=project_id).order_by('name')
+        return ProjectTeamMember.objects.filter(
+            projectid=project_id
+        ).select_related('systemuserid').order_by('systemuserid__fullname')
 
     @staticmethod
     def add_team_member(dto: CreateTeamMemberDto, user: SystemUser) -> ProjectTeamMember:
@@ -472,12 +498,20 @@ class TeamMemberService:
         if dto.role not in valid_roles:
             raise ValidationError(f"Invalid role '{dto.role}'. Must be one of: {valid_roles}")
 
+        # Validate SystemUser exists
+        try:
+            system_user = SystemUser.objects.get(systemuserid=dto.systemuserid)
+        except SystemUser.DoesNotExist:
+            raise ValidationError(f"User with ID {dto.systemuserid} not found")
+
+        # Validate uniqueness within project
+        if ProjectTeamMember.objects.filter(projectid=project, systemuserid=system_user).exists():
+            raise ValidationError(f"User '{system_user.fullname}' is already a member of this project")
+
         member = ProjectTeamMember(
             projectid=project,
-            name=dto.name,
+            systemuserid=system_user,
             role=dto.role,
-            phone=dto.phone,
-            email=dto.email,
             createdby=user,
             modifiedby=user,
         )
@@ -489,7 +523,7 @@ class TeamMemberService:
         """Get team member by ID with project ownership check."""
         try:
             member = ProjectTeamMember.objects.select_related(
-                'projectid__ownerid'
+                'projectid__ownerid', 'systemuserid'
             ).get(teammemberid=member_id)
         except ProjectTeamMember.DoesNotExist:
             raise NotFound(f"Team member with ID {member_id} not found")
@@ -506,17 +540,11 @@ class TeamMemberService:
         """Update a team member."""
         member = TeamMemberService.get_team_member_by_id(member_id, user)
 
-        if dto.name is not None:
-            member.name = dto.name
         if dto.role is not None:
             valid_roles = [choice.value for choice in ProjectRoleCode]
             if dto.role not in valid_roles:
                 raise ValidationError(f"Invalid role '{dto.role}'. Must be one of: {valid_roles}")
             member.role = dto.role
-        if dto.phone is not None:
-            member.phone = dto.phone
-        if dto.email is not None:
-            member.email = dto.email
 
         member.modifiedby = user
         member.save()

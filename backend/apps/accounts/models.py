@@ -9,6 +9,13 @@ from django.db import models
 from core.models import AuditMixin
 
 
+class CustomerTypeCode(models.IntegerChoices):
+    """Customer type code following CDS pattern."""
+    CUSTOMER = 1, 'Customer'
+    SUPPLIER = 2, 'Supplier'
+    BOTH = 3, 'Both'
+
+
 class AccountStateCode(models.IntegerChoices):
     """Account state code."""
     ACTIVE = 0, 'Active'
@@ -132,6 +139,12 @@ class Account(AuditMixin):
         blank=True,
         null=True,
         verbose_name='Number of Employees'
+    )
+
+    customertypecode = models.IntegerField(
+        choices=CustomerTypeCode.choices,
+        default=CustomerTypeCode.CUSTOMER,
+        db_column='customertypecode'
     )
 
     # State Management

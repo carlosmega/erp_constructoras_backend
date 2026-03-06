@@ -3,7 +3,7 @@
 from typing import Optional
 from uuid import UUID
 from django.db.models import Q, QuerySet
-from apps.accounts.models import Account, AccountStateCode
+from apps.accounts.models import Account, AccountStateCode, CustomerTypeCode
 from apps.accounts.schemas import CreateAccountDto, UpdateAccountDto
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
@@ -63,6 +63,7 @@ class AccountService:
             description=dto.description,
             revenue=dto.revenue,
             numberofemployees=dto.numberofemployees,
+            customertypecode=dto.customertypecode if dto.customertypecode is not None else CustomerTypeCode.CUSTOMER,
             ownerid=owner,
             createdby=user,
             modifiedby=user,
@@ -92,7 +93,7 @@ class AccountService:
         update_fields = ['name', 'accountnumber', 'emailaddress1', 'telephone1', 'websiteurl',
                         'address1_line1', 'address1_city', 'address1_stateorprovince',
                         'address1_postalcode', 'address1_country', 'description',
-                        'revenue', 'numberofemployees', 'statuscode']
+                        'revenue', 'numberofemployees', 'customertypecode', 'statuscode']
 
         for field in update_fields:
             value = getattr(dto, field, None)
@@ -102,6 +103,18 @@ class AccountService:
         account.modifiedby = user
         account.save()
         return account
+
+    @staticmethod
+    def list_accounts_for_supplier_lookup(search: Optional[str] = None) -> QuerySet[Account]:
+        """List active accounts for supplier selection."""
+        queryset = Account.objects.filter(statecode=AccountStateCode.ACTIVE)
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(emailaddress1__icontains=search) |
+                Q(accountnumber__icontains=search)
+            )
+        return queryset.order_by('name')[:50]
 
     @staticmethod
     def deactivate_account(account_id: UUID, user: SystemUser) -> Account:

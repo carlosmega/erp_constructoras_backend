@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'apps.projects',  # Construction project management (Operations module)
     'apps.budgets',  # Budget & cost structure (Operations module)
     'apps.expenses',  # Expense management & classification (Operations module)
+    'apps.invoiceinbox',  # Invoice email inbox (Operations module)
     'core',  # Shared utilities
 ]
 
@@ -63,6 +64,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.DevAutoLoginMiddleware',  # Auto-login admin in DEBUG mode
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.AuditMiddleware',  # Custom audit trail middleware (will be added in Phase 2)
@@ -97,11 +99,22 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
         'ATOMIC_REQUESTS': True,  # Wrap each request in a transaction
         'OPTIONS': {
-            'timeout': 20,  # Increase timeout to 20 seconds
+            'timeout': 30,  # Wait up to 30s for lock release
             'check_same_thread': False,  # Allow multi-threaded access
         }
     }
 }
+
+# Enable WAL mode for SQLite — allows concurrent reads during writes
+from django.db.backends.signals import connection_created
+
+def _enable_wal_mode(sender, connection, **kwargs):
+    if connection.vendor == 'sqlite':
+        cursor = connection.cursor()
+        cursor.execute('PRAGMA journal_mode=WAL;')
+        cursor.execute('PRAGMA busy_timeout=30000;')
+
+connection_created.connect(_enable_wal_mode)
 
 # To use PostgreSQL, uncomment and configure .env file:
 # DATABASES = {

@@ -563,29 +563,44 @@ class TestTeamMemberService:
         assert members.count() == 2
 
     def test_add_team_member(self, db, salesperson):
+        from apps.users.tests.factories import SalespersonFactory
         project = ConstructionProjectFactory(ownerid=salesperson)
+        target_user = SalespersonFactory()
 
         dto = CreateTeamMemberDto(
             projectid=project.projectid,
-            name='John Doe',
+            systemuserid=target_user.systemuserid,
             role=ProjectRoleCode.PROJECT_MANAGER,
-            phone='555-1234',
-            email='john@example.com',
         )
         member = TeamMemberService.add_team_member(dto, salesperson)
 
         assert member.teammemberid is not None
-        assert member.name == 'John Doe'
+        assert member.systemuserid == target_user
         assert member.role == ProjectRoleCode.PROJECT_MANAGER
-        assert member.phone == '555-1234'
-        assert member.email == 'john@example.com'
 
-    def test_add_team_member_invalid_role(self, db, salesperson):
+    def test_add_team_member_duplicate(self, db, salesperson):
+        from apps.users.tests.factories import SalespersonFactory
         project = ConstructionProjectFactory(ownerid=salesperson)
+        target_user = SalespersonFactory()
 
         dto = CreateTeamMemberDto(
             projectid=project.projectid,
-            name='Test',
+            systemuserid=target_user.systemuserid,
+            role=ProjectRoleCode.PROJECT_MANAGER,
+        )
+        TeamMemberService.add_team_member(dto, salesperson)
+
+        with pytest.raises(ValidationError, match='already a member'):
+            TeamMemberService.add_team_member(dto, salesperson)
+
+    def test_add_team_member_invalid_role(self, db, salesperson):
+        from apps.users.tests.factories import SalespersonFactory
+        project = ConstructionProjectFactory(ownerid=salesperson)
+        target_user = SalespersonFactory()
+
+        dto = CreateTeamMemberDto(
+            projectid=project.projectid,
+            systemuserid=target_user.systemuserid,
             role='InvalidRole',
         )
         with pytest.raises(ValidationError, match='Invalid role'):
@@ -593,12 +608,11 @@ class TestTeamMemberService:
 
     def test_update_team_member(self, db, salesperson):
         project = ConstructionProjectFactory(ownerid=salesperson)
-        member = ProjectTeamMemberFactory(projectid=project, name='Old Name')
+        member = ProjectTeamMemberFactory(projectid=project)
 
-        dto = UpdateTeamMemberDto(name='New Name', role=ProjectRoleCode.SAFETY_OFFICER)
+        dto = UpdateTeamMemberDto(role=ProjectRoleCode.SAFETY_OFFICER)
         updated = TeamMemberService.update_team_member(member.teammemberid, dto, salesperson)
 
-        assert updated.name == 'New Name'
         assert updated.role == ProjectRoleCode.SAFETY_OFFICER
 
     def test_update_team_member_invalid_role(self, db, salesperson):

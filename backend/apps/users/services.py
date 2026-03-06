@@ -295,6 +295,22 @@ class UserService:
         return user
 
     @staticmethod
+    def list_users_for_lookup(search: Optional[str] = None) -> List[SystemUser]:
+        """
+        List active users for lookup/selector dialogs.
+        Returns lightweight list (max 50) for search-based selection.
+        """
+        queryset = SystemUser.objects.filter(isdisabled=False)
+
+        if search:
+            queryset = queryset.filter(
+                Q(fullname__icontains=search) |
+                Q(emailaddress1__icontains=search)
+            )
+
+        return queryset.order_by('fullname')[:50]
+
+    @staticmethod
     def list_security_roles() -> List[SecurityRole]:
         """
         Get all available security roles.

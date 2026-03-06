@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0'
 
 # Scopes needed for email sync
-SCOPES = ['User.Read', 'Mail.Read']
+SCOPES = ['User.Read', 'Mail.Read', 'Mail.Read.Shared']
 
 # Fields to request from Graph API /me/messages
 MESSAGE_SELECT_FIELDS = (
@@ -250,8 +250,8 @@ class MicrosoftSSOService:
     that both the browser and NextAuth server use to authenticate.
     """
 
-    # Only need User.Read for SSO (email from profile)
-    SSO_SCOPES = ['User.Read']
+    # Request full scopes at SSO login so email sync is auto-connected
+    SSO_SCOPES = SCOPES  # ['User.Read', 'Mail.Read', 'Mail.Read.Shared']
     SSO_TOKEN_TTL_SECONDS = 300  # 5 minutes
 
     @staticmethod
@@ -313,14 +313,17 @@ class MicrosoftSSOService:
 
         Validates state, exchanges code for token, fetches user profile,
         looks up SystemUser by email, creates SSOToken.
+        Also saves MicrosoftToken so Graph API email access is auto-connected.
 
         Returns SSOToken instance.
         Raises ValidationError if user not found or auth fails.
         """
         MicrosoftSSOService.validate_sso_state(state)
 
-        # Exchange code for tokens
-        app = MicrosoftAuthService._get_msal_app()
+        # Exchange code for tokens — use a serializable cache so we can
+        # persist the refresh token for Graph API email access
+        cache = msal.SerializableTokenCache()
+        app = MicrosoftAuthService._get_msal_app(cache=cache)
         result = app.acquire_token_by_authorization_code(
             code=code,
             scopes=MicrosoftSSOService.SSO_SCOPES,
@@ -367,6 +370,22 @@ class MicrosoftSSOService:
         # Check if account is locked
         if user.is_locked:
             raise ValidationError('This account is locked. Contact your administrator.')
+
+        # Auto-connect Graph API email access (saves MicrosoftToken with refresh token)
+        microsoft_user_id = profile.get('id', '')
+        try:
+            MicrosoftToken.objects.update_or_create(
+                userid=user,
+                defaults={
+                    'microsoft_user_id': microsoft_user_id,
+                    'microsoft_email': microsoft_email,
+                    'token_cache': cache.serialize(),
+                },
+            )
+            logger.info('Graph API auto-connected for user %s (%s)', user.systemuserid, microsoft_email)
+        except Exception as e:
+            # Non-fatal: SSO login should still work even if Graph token save fails
+            logger.warning('Failed to auto-connect Graph API for user %s: %s', user.systemuserid, e)
 
         # Create SSO token
         token_value = secrets.token_urlsafe(48)
@@ -425,6 +444,77 @@ class MicrosoftSSOService:
 
         logger.info('SSO token exchanged for user %s', user.systemuserid)
         return user
+
+
+class GraphProjectEmailService:
+    """Proxy fetch emails from project shared mailboxes via Graph API."""
+
+    # Fields to request for project mailbox listing
+    PROJECT_MESSAGE_FIELDS = (
+        'id,subject,from,toRecipients,receivedDateTime,'
+        'bodyPreview,hasAttachments,isRead,importance,webLink'
+    )
+
+    @staticmethod
+    def fetch_project_emails(
+        user,
+        project_email: str,
+        top: int = 50,
+        skip: int = 0,
+        search: str | None = None,
+    ) -> tuple[list[dict], int, str | None]:
+        """Fetch emails from a project's shared mailbox via Graph API.
+
+        Returns (emails_list, total_count, next_link).
+        """
+        session = MicrosoftAuthService.get_authenticated_session(user)
+        url = f'{GRAPH_BASE_URL}/users/{project_email}/messages'
+        params = {
+            '$top': str(top),
+            '$skip': str(skip),
+            '$select': GraphProjectEmailService.PROJECT_MESSAGE_FIELDS,
+            '$orderby': 'receivedDateTime desc',
+        }
+        if search:
+            params['$search'] = f'"{search}"'
+            params['$orderby'] = ''  # $search and $orderby conflict in Graph API
+
+        # Remove empty params
+        params = {k: v for k, v in params.items() if v}
+
+        response = session.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        return (
+            data.get('value', []),
+            data.get('@odata.count', 0),
+            data.get('@odata.nextLink'),
+        )
+
+    @staticmethod
+    def map_graph_email(msg: dict) -> dict:
+        """Map a Graph API message to ProjectEmailSchema format."""
+        from_data = msg.get('from', {}).get('emailAddress', {})
+        to_list = [
+            r.get('emailAddress', {}).get('address', '')
+            for r in msg.get('toRecipients', [])
+            if r.get('emailAddress', {}).get('address')
+        ]
+
+        return {
+            'messageid': msg.get('id', ''),
+            'subject': msg.get('subject', '(Sin asunto)'),
+            'sender': from_data.get('address', ''),
+            'senderName': from_data.get('name'),
+            'toRecipients': ', '.join(to_list),
+            'receivedDateTime': msg.get('receivedDateTime', ''),
+            'bodyPreview': msg.get('bodyPreview', ''),
+            'hasAttachments': msg.get('hasAttachments', False),
+            'isRead': msg.get('isRead', False),
+            'importance': msg.get('importance', 'normal'),
+            'webLink': msg.get('webLink', ''),
+        }
 
 
 class GraphEmailSyncService:

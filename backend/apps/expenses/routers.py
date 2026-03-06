@@ -1,9 +1,10 @@
 """API routers for Expense Management."""
 
-from ninja import Router
+from ninja import Router, File, Form
+from ninja.files import UploadedFile
 from typing import List, Optional
 from uuid import UUID
-from django.http import HttpRequest
+from django.http import HttpRequest, FileResponse
 
 from apps.expenses.schemas import (
     ProjectExpenseSchema,
@@ -13,7 +14,6 @@ from apps.expenses.schemas import (
     CreateExpenseLineDto,
     UpdateExpenseLineDto,
     ExpenseAttachmentSchema,
-    CreateExpenseAttachmentDto,
     ClassificationLogSchema,
     ClassifyExpenseDto,
     BulkClassifyDto,
@@ -23,6 +23,7 @@ from apps.expenses.schemas import (
     CreateClientEstimateDto,
     UpdateClientEstimateDto,
 )
+from apps.expenses.models import ProjectExpense, ExpenseStateCode
 from apps.expenses.services import (
     ExpenseService,
     ClassificationService,
@@ -76,6 +77,19 @@ def create_expense(request: HttpRequest, project_id: UUID, payload: CreateProjec
     payload.projectid = project_id
     expense = ExpenseService.create_expense(payload, request.user)
     return 201, expense
+
+
+@expenses_router.get(
+    "/expenses/check-uuid/",
+    response={200: dict},
+)
+def check_uuid_exists(request: HttpRequest, uuid: str):
+    """Check if an invoice UUID already exists (across all projects)."""
+    exists = ProjectExpense.objects.filter(
+        invoiceuuid=uuid,
+        statecode=ExpenseStateCode.ACTIVE,
+    ).exists()
+    return 200, {"exists": exists}
 
 
 @expenses_router.get(
@@ -256,12 +270,46 @@ def list_attachments(request: HttpRequest, expense_id: UUID):
     "/expenses/{expense_id}/attachments/",
     response={201: ExpenseAttachmentSchema},
 )
-def add_attachment(request: HttpRequest, expense_id: UUID, payload: CreateExpenseAttachmentDto):
-    """Add an attachment to an expense."""
+def add_attachment(
+    request: HttpRequest,
+    expense_id: UUID,
+    file: UploadedFile = File(...),
+    filename: str = Form(...),
+    suggestedfilename: str = Form(...),
+    filetype: int = Form(...),
+    filesize: int = Form(...),
+    mimetype: str = Form(...),
+):
+    """Add an attachment to an expense (multipart file upload)."""
     # TODO: add @require_permission decorator
-    payload.expenseid = expense_id
-    attachment = AttachmentService.add_attachment(payload, request.user)
+    attachment = AttachmentService.add_attachment(
+        expense_id=expense_id,
+        filename=filename,
+        suggestedfilename=suggestedfilename,
+        filetype=filetype,
+        filesize=filesize,
+        mimetype=mimetype,
+        file=file,
+        user=request.user,
+    )
     return 201, attachment
+
+
+@attachments_router.get(
+    "/attachments/{attachment_id}/download/",
+)
+def download_attachment(request: HttpRequest, attachment_id: UUID):
+    """Download an attachment file."""
+    attachment = AttachmentService.get_attachment(attachment_id)
+    if not attachment.file:
+        from core.exceptions import NotFound
+        raise NotFound("No file stored for this attachment")
+    return FileResponse(
+        attachment.file.open('rb'),
+        content_type=attachment.mimetype,
+        as_attachment=True,
+        filename=attachment.suggestedfilename or attachment.filename,
+    )
 
 
 @attachments_router.delete(

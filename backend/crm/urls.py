@@ -145,6 +145,7 @@ from apps.graph.routers import graph_router
 from apps.projects.routers import projects_router, zones_router, suppliers_router, team_members_router
 from apps.budgets.routers import categories_router, imputation_codes_router, periods_router
 from apps.expenses.routers import expenses_router, expense_lines_router, attachments_router, estimates_router
+from apps.invoiceinbox.routers import inbox_router
 
 api.add_router("/auth", auth_router)
 api.add_router("/users", users_router)
@@ -176,11 +177,17 @@ api.add_router("/expenses", expenses_router)
 api.add_router("/expense-lines", expense_lines_router)
 api.add_router("/attachments", attachments_router)
 api.add_router("/estimates", estimates_router)
+api.add_router("/invoice-inbox", inbox_router)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', api.urls),  # All API endpoints under /api/
 ]
+
+# Serve media files in development
+if settings.DEBUG:
+    from django.conf.urls.static import static
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Customize Django admin site
 admin.site.site_header = "CRM Backend Administration"

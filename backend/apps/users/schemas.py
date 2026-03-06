@@ -136,3 +136,10 @@ class UserListResponse(Schema):
     """
     count: int
     results: list[UserSchema]
+
+
+class UserLookupSchema(Schema):
+    """Lightweight user schema for lookup/selector dialogs."""
+    systemuserid: UUID
+    fullname: str
+    emailaddress1: str

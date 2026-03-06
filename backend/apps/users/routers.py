@@ -23,6 +23,7 @@ from apps.users.schemas import (
     UpdateUserDto,
     UserSchema,
     SecurityRoleSchema,
+    UserLookupSchema,
 )
 from apps.users.services import UserService
 from apps.graph.schemas import SSOInitResponse, SSOExchangeDto
@@ -195,6 +196,18 @@ def sso_exchange(request: HttpRequest, payload: SSOExchangeDto):
 # ============================================================================
 
 users_router = Router(tags=["Users"])
+
+
+@users_router.get("/lookup/", response=List[UserLookupSchema])
+@require_authenticated
+def lookup_users(request: HttpRequest, search: Optional[str] = None):
+    """
+    Lightweight user lookup for selector dialogs.
+    Returns active users filtered by search query.
+    Requires: authenticated (no specific permission needed).
+    """
+    users = UserService.list_users_for_lookup(search=search)
+    return list(users)
 
 
 @users_router.get("/", response=List[UserSchema])

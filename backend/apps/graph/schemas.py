@@ -46,3 +46,25 @@ class SSOInitResponse(Schema):
 class SSOExchangeDto(Schema):
     """Request body for SSO token exchange."""
     token: str
+
+
+class ProjectEmailSchema(Schema):
+    """Single email from a project's shared mailbox (Graph API proxy)."""
+    messageid: str
+    subject: str
+    sender: str
+    senderName: Optional[str] = None
+    toRecipients: str
+    receivedDateTime: str
+    bodyPreview: str
+    hasAttachments: bool
+    isRead: bool
+    importance: str  # "low", "normal", "high"
+    webLink: str
+
+
+class ProjectEmailListResponse(Schema):
+    """Response for project emails list endpoint."""
+    emails: list[ProjectEmailSchema]
+    totalCount: int
+    nextLink: Optional[str] = None

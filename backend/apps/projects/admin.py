@@ -68,7 +68,15 @@ class ProjectSupplierAdmin(admin.ModelAdmin):
 
 @admin.register(ProjectTeamMember)
 class ProjectTeamMemberAdmin(admin.ModelAdmin):
-    list_display = ('name', 'role', 'projectid', 'email', 'phone')
+    list_display = ('get_user_name', 'role', 'projectid', 'get_user_email')
     list_filter = ('role',)
-    search_fields = ('name', 'email')
+    search_fields = ('systemuserid__fullname', 'systemuserid__emailaddress1')
     readonly_fields = ('teammemberid', 'createdon', 'modifiedon')
+
+    @admin.display(description='Name')
+    def get_user_name(self, obj):
+        return obj.systemuserid.fullname if obj.systemuserid else '-'
+
+    @admin.display(description='Email')
+    def get_user_email(self, obj):
+        return obj.systemuserid.emailaddress1 if obj.systemuserid else '-'

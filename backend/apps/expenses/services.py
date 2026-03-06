@@ -26,7 +26,6 @@ from apps.expenses.schemas import (
     UpdateProjectExpenseDto,
     CreateExpenseLineDto,
     UpdateExpenseLineDto,
-    CreateExpenseAttachmentDto,
     ClassifyExpenseDto,
     BulkClassifyDto,
     VerifyExpenseDto,
@@ -72,6 +71,19 @@ class ExpenseService:
     @transaction.atomic
     def create_expense(dto: CreateProjectExpenseDto, user) -> ProjectExpense:
         """Create a new project expense with optional lines."""
+        # Validate invoice UUID uniqueness (global, across all projects)
+        if dto.invoiceuuid and dto.documenttype == DocumentTypeCode.INVOICE:
+            duplicate = ProjectExpense.objects.filter(
+                invoiceuuid=dto.invoiceuuid,
+                statecode=ExpenseStateCode.ACTIVE,
+            ).select_related('projectid').first()
+            if duplicate:
+                project_name = getattr(duplicate.projectid, 'name', '') or ''
+                raise ValidationError(
+                    f"Ya existe una factura con UUID {dto.invoiceuuid} "
+                    f"en el proyecto '{project_name}'. No se permiten facturas duplicadas."
+                )
+
         expense = ProjectExpense(
             projectid_id=dto.projectid,
             periodid_id=dto.periodid,
@@ -500,31 +512,60 @@ class AttachmentService:
         return ExpenseAttachment.objects.filter(expenseid=expense_id)
 
     @staticmethod
-    def add_attachment(dto: CreateExpenseAttachmentDto, user) -> ExpenseAttachment:
-        """Create attachment metadata."""
-        # Validate expense exists
+    def get_attachment(attachment_id: UUID) -> ExpenseAttachment:
+        """Get a single attachment by ID."""
         try:
-            ProjectExpense.objects.get(expenseid=dto.expenseid)
-        except ProjectExpense.DoesNotExist:
-            raise NotFound(f"Expense with ID {dto.expenseid} not found")
+            return ExpenseAttachment.objects.get(attachmentid=attachment_id)
+        except ExpenseAttachment.DoesNotExist:
+            raise NotFound(f"Attachment with ID {attachment_id} not found")
 
-        return ExpenseAttachment.objects.create(
-            expenseid_id=dto.expenseid,
-            filename=dto.filename,
-            suggestedfilename=dto.suggestedfilename,
-            filetype=dto.filetype,
-            filesize=dto.filesize,
-            mimetype=dto.mimetype,
-            storageurl=dto.storageurl,
+    @staticmethod
+    def add_attachment(
+        expense_id: UUID,
+        filename: str,
+        suggestedfilename: str,
+        filetype: int,
+        filesize: int,
+        mimetype: str,
+        file=None,
+        user=None,
+    ) -> ExpenseAttachment:
+        """Create attachment with optional real file upload."""
+        try:
+            ProjectExpense.objects.get(expenseid=expense_id)
+        except ProjectExpense.DoesNotExist:
+            raise NotFound(f"Expense with ID {expense_id} not found")
+
+        attachment = ExpenseAttachment(
+            expenseid_id=expense_id,
+            filename=filename,
+            suggestedfilename=suggestedfilename,
+            filetype=filetype,
+            filesize=filesize,
+            mimetype=mimetype,
         )
+
+        if file:
+            attachment.file = file
+            attachment.storageurl = ''
+        else:
+            attachment.storageurl = ''
+
+        attachment.save()
+        return attachment
 
     @staticmethod
     def remove_attachment(attachment_id: UUID, user) -> None:
-        """Delete an attachment."""
+        """Delete an attachment and its physical file."""
         try:
             attachment = ExpenseAttachment.objects.get(attachmentid=attachment_id)
         except ExpenseAttachment.DoesNotExist:
             raise NotFound(f"Attachment with ID {attachment_id} not found")
+
+        # Delete the physical file if it exists
+        if attachment.file:
+            attachment.file.delete(save=False)
+
         attachment.delete()
 
 

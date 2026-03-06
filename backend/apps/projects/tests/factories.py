@@ -80,10 +80,8 @@ class ProjectTeamMemberFactory(DjangoModelFactory):
         model = ProjectTeamMember
 
     projectid = factory.SubFactory(ConstructionProjectFactory)
-    name = factory.Faker('name')
+    systemuserid = factory.SubFactory(SalespersonFactory)
     role = ProjectRoleCode.SITE_ENGINEER
-    phone = factory.Faker('phone_number')
-    email = factory.Faker('email')
     createdby = factory.SelfAttribute('projectid.ownerid')
     modifiedby = factory.SelfAttribute('projectid.ownerid')
 

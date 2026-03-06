@@ -45,7 +45,17 @@ class CreateAccountDto(Schema):
     description: Optional[str] = None
     revenue: Optional[Decimal] = None
     numberofemployees: Optional[int] = None
+    customertypecode: Optional[int] = None
     ownerid: Optional[UUID] = None
+
+
+class AccountLookupSchema(Schema):
+    """Lightweight account schema for supplier lookup."""
+    accountid: UUID
+    name: str
+    customertypecode: Optional[int] = None
+    emailaddress1: Optional[str] = None
+    telephone1: Optional[str] = None
 
 
 class UpdateAccountDto(Schema):
@@ -63,4 +73,5 @@ class UpdateAccountDto(Schema):
     description: Optional[str] = None
     revenue: Optional[Decimal] = None
     numberofemployees: Optional[int] = None
+    customertypecode: Optional[int] = None
     statuscode: Optional[int] = None

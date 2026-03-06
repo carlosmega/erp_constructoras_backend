@@ -119,6 +119,12 @@ class Permission(str, Enum):
     ESTIMATE_UPDATE = "estimate_update"
     ESTIMATE_DELETE = "estimate_delete"
 
+    # Invoice Inbox permissions
+    INBOX_READ = "inbox_read"
+    INBOX_CLASSIFY = "inbox_classify"
+    INBOX_LINK = "inbox_link"
+    INBOX_SYNC = "inbox_sync"
+
 
 # ============================================================================
 # Role Permission Matrix
@@ -143,6 +149,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE, Permission.BUDGET_DELETE,
         Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_DELETE, Permission.EXPENSE_CLASSIFY, Permission.EXPENSE_VERIFY,
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
+        # Invoice Inbox - full access
+        Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
     ],
 
     "Sales Manager": [
@@ -164,6 +172,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE, Permission.BUDGET_DELETE,
         Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_DELETE, Permission.EXPENSE_CLASSIFY, Permission.EXPENSE_VERIFY,
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
+        # Invoice Inbox - full access
+        Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
     ],
 
     "Salesperson": [
@@ -184,6 +194,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE,
         Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_CLASSIFY,
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE,
+        # Invoice Inbox - classify and sync
+        Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
     ],
 
     "Marketing User": [
@@ -213,6 +225,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_READ,
         Permission.EXPENSE_READ,
         Permission.ESTIMATE_READ,
+        # Invoice Inbox - read only
+        Permission.INBOX_READ,
     ],
 }
 

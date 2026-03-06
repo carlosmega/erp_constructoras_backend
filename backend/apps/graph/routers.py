@@ -1,23 +1,32 @@
 """
 Microsoft Graph integration API endpoints.
 
-OAuth2 flow + email sync endpoints.
+OAuth2 flow + email sync endpoints + project mailbox proxy.
 """
 
 import logging
+from typing import Optional
 from urllib.parse import urlencode
+from uuid import UUID
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponseRedirect
-from ninja import Router
+from ninja import Query, Router
 
 from apps.graph.schemas import (
     ConnectUrlResponse,
     ConnectionStatusResponse,
     DisconnectResponse,
+    ProjectEmailListResponse,
     SyncResultResponse,
 )
-from apps.graph.services import GraphEmailSyncService, MicrosoftAuthService, MicrosoftSSOService
+from apps.graph.services import (
+    GraphEmailSyncService,
+    GraphProjectEmailService,
+    MicrosoftAuthService,
+    MicrosoftSSOService,
+)
+from apps.projects.models import ConstructionProject
 from core.exceptions import ValidationError
 from core.permissions import require_authenticated
 
@@ -108,3 +117,41 @@ def disconnect(request: HttpRequest):
     """Disconnect Microsoft account from CRM."""
     MicrosoftAuthService.disconnect(request.user)
     return {'success': True, 'message': 'Microsoft account disconnected successfully'}
+
+
+@graph_router.get('/projects/{project_id}/emails', response=ProjectEmailListResponse)
+@require_authenticated
+def get_project_emails(
+    request: HttpRequest,
+    project_id: UUID,
+    top: int = 50,
+    skip: int = 0,
+    search: Optional[str] = None,
+):
+    """Fetch emails from a project's shared mailbox via Graph API proxy.
+
+    Returns the most recent emails from the project's configured shared mailbox.
+    Requires the current user to have a connected Microsoft account with
+    Mail.Read.Shared permission.
+    """
+    try:
+        project = ConstructionProject.objects.get(projectid=project_id)
+    except ConstructionProject.DoesNotExist:
+        raise ValidationError('Project not found')
+
+    if not project.projectemail or not project.emailconfigured:
+        raise ValidationError('Project email not configured')
+
+    emails, count, next_link = GraphProjectEmailService.fetch_project_emails(
+        user=request.user,
+        project_email=project.projectemail,
+        top=top,
+        skip=skip,
+        search=search,
+    )
+
+    return {
+        'emails': [GraphProjectEmailService.map_graph_email(e) for e in emails],
+        'totalCount': count,
+        'nextLink': next_link,
+    }

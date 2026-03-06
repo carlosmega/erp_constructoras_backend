@@ -4,11 +4,19 @@ from ninja import Router
 from typing import List, Optional
 from uuid import UUID
 from django.http import HttpRequest
-from apps.accounts.schemas import AccountSchema, CreateAccountDto, UpdateAccountDto
+from apps.accounts.schemas import AccountSchema, AccountLookupSchema, CreateAccountDto, UpdateAccountDto
 from apps.accounts.services import AccountService
-from core.permissions import require_permission, Permission
+from core.permissions import require_permission, require_authenticated, Permission
 
 accounts_router = Router(tags=["Accounts"])
+
+
+@accounts_router.get('/supplier-lookup/', response=List[AccountLookupSchema])
+@require_authenticated
+def supplier_lookup(request, search: str = ''):
+    """List active accounts for supplier selection. Requires: authenticated user"""
+    accounts = AccountService.list_accounts_for_supplier_lookup(search or None)
+    return list(accounts)
 
 
 @accounts_router.get("/", response=List[AccountSchema])

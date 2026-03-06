@@ -11,6 +11,9 @@ psycopg[binary]==3.1.18  # PostgreSQL adapter with binary dependencies
 # Configuration & Environment
 python-decouple==3.8
 
+# Date Utilities
+python-dateutil==2.9.0.post0
+
 # Filtering & Pagination
 django-filter==23.5
 

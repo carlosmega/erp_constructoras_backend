@@ -24,7 +24,7 @@ class DocumentTypeCode(models.IntegerChoices):
 
 
 class ClassificationStatusCode(models.IntegerChoices):
-    PENDING = 1, 'Pending'
+    PENDING = 1, 'Unclassified'
     CLASSIFIED = 2, 'Classified'
     PARTIAL = 3, 'Partial'
 
@@ -446,7 +446,15 @@ class ExpenseAttachment(models.Model):
     )
     storageurl = models.CharField(
         max_length=500,
-        db_column='storageurl'
+        db_column='storageurl',
+        blank=True,
+        default=''
+    )
+    file = models.FileField(
+        upload_to='expenses/attachments/%Y/%m/',
+        blank=True,
+        null=True,
+        db_column='file'
     )
     createdon = models.DateTimeField(
         auto_now_add=True,

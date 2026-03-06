@@ -69,6 +69,39 @@ class ApiTrailingSlashMiddleware:
         return self.get_response(request)
 
 
+class DevAutoLoginMiddleware:
+    """
+    Auto-authenticate requests with the first SystemUser (admin) in DEBUG mode.
+
+    This enables frontend development without a real login flow.
+    Only active when settings.DEBUG is True and the request is not already
+    authenticated.
+
+    Must be placed AFTER AuthenticationMiddleware in MIDDLEWARE.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self._admin_user = None
+
+    def __call__(self, request):
+        from django.conf import settings
+
+        if settings.DEBUG and hasattr(request, 'user') and not request.user.is_authenticated:
+            if self._admin_user is None:
+                from apps.users.models import SystemUser
+                self._admin_user = (
+                    SystemUser.objects
+                    .select_related('securityroleid')
+                    .filter(isdisabled=False)
+                    .first()
+                )
+            if self._admin_user:
+                request.user = self._admin_user
+
+        return self.get_response(request)
+
+
 class AuditMiddleware:
     """
     Middleware to capture the current authenticated user for audit trail.

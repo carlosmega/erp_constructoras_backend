@@ -161,12 +161,13 @@ class TestProjectTeamMembers:
         assert response.status_code == 200
 
     def test_add_member(self, auth_client, salesperson):
+        from apps.users.tests.factories import SalespersonFactory
         project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        target_user = SalespersonFactory()
         payload = {
             'projectid': str(project.projectid),
-            'name': 'John Engineer',
+            'systemuserid': str(target_user.systemuserid),
             'role': 'SiteEngineer',
-            'email': 'john@construction.com',
         }
         response = auth_client.post(
             f'/api/projects/{project.projectid}/team-members/',

@@ -37,31 +37,41 @@ class ProjectBondDto(Schema):
 class ProjectTeamMemberSchema(ModelSchema):
     """Full team member response schema."""
     id: Optional[UUID] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    systemuserid: Optional[UUID] = None
 
     class Meta:
         model = ProjectTeamMember
-        fields = ['teammemberid', 'name', 'role', 'phone', 'email']
+        fields = ['teammemberid', 'role']
 
     @staticmethod
     def resolve_id(obj):
         return obj.teammemberid
 
+    @staticmethod
+    def resolve_name(obj):
+        return obj.systemuserid.fullname if obj.systemuserid else None
+
+    @staticmethod
+    def resolve_email(obj):
+        return obj.systemuserid.emailaddress1 if obj.systemuserid else None
+
+    @staticmethod
+    def resolve_systemuserid(obj):
+        return obj.systemuserid_id
+
 
 class CreateTeamMemberDto(Schema):
     """DTO for adding a team member."""
     projectid: UUID
-    name: str
+    systemuserid: UUID
     role: str
-    phone: Optional[str] = None
-    email: Optional[str] = None
 
 
 class UpdateTeamMemberDto(Schema):
     """DTO for updating a team member."""
-    name: Optional[str] = None
     role: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
 
 
 # ============================================================================
@@ -111,10 +121,11 @@ class ProjectSupplierSchema(ModelSchema):
 class CreateSupplierDto(Schema):
     """DTO for adding a supplier to a project."""
     projectid: UUID
-    accountid: UUID
+    accountid: Optional[UUID] = None
     rfc: str
     businessname: str
     notes: Optional[str] = None
+    create_account: bool = False
 
 
 # ============================================================================

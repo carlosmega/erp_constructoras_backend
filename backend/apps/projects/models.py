@@ -356,9 +356,11 @@ class ProjectTeamMember(AuditMixin):
         related_name='teammembers'
     )
 
-    name = models.CharField(
-        max_length=200,
-        db_column='name'
+    systemuserid = models.ForeignKey(
+        'users.SystemUser',
+        on_delete=models.PROTECT,
+        db_column='systemuserid',
+        related_name='team_memberships'
     )
 
     role = models.CharField(
@@ -367,28 +369,20 @@ class ProjectTeamMember(AuditMixin):
         db_column='role'
     )
 
-    phone = models.CharField(
-        max_length=50,
-        db_column='phone',
-        blank=True,
-        null=True
-    )
-
-    email = models.EmailField(
-        max_length=200,
-        db_column='email',
-        blank=True,
-        null=True
-    )
-
     class Meta:
         db_table = 'projectteammember'
         verbose_name = 'Project Team Member'
         verbose_name_plural = 'Project Team Members'
-        ordering = ['name']
+        ordering = ['systemuserid__fullname']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['projectid', 'systemuserid'],
+                name='unique_team_member_per_project'
+            ),
+        ]
 
     def __str__(self):
-        return f"{self.name} ({self.get_role_display()})"
+        return f"{self.systemuserid.fullname} ({self.get_role_display()})"
 
 
 # ============================================================================

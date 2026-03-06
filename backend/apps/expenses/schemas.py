@@ -29,10 +29,17 @@ class ExpenseLineSchema(ModelSchema):
 
 class ExpenseAttachmentSchema(ModelSchema):
     """Full ExpenseAttachment response schema."""
+    download_url: Optional[str] = None
 
     class Meta:
         model = ExpenseAttachment
         fields = '__all__'
+
+    @staticmethod
+    def resolve_download_url(obj):
+        if obj.file:
+            return f"/api/attachments/attachments/{obj.attachmentid}/download/"
+        return obj.storageurl or None
 
 
 class ClassificationLogSchema(ModelSchema):

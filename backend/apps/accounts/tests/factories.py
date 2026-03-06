@@ -6,7 +6,7 @@ Provides test data generation for B2B company accounts.
 
 import factory
 from factory.django import DjangoModelFactory
-from apps.accounts.models import Account, AccountStateCode, AccountStatusCode
+from apps.accounts.models import Account, AccountStateCode, AccountStatusCode, CustomerTypeCode
 from apps.users.tests.factories import SalespersonFactory
 
 
@@ -32,6 +32,7 @@ class AccountFactory(DjangoModelFactory):
     # State/Status
     statecode = AccountStateCode.ACTIVE
     statuscode = AccountStatusCode.ACTIVE
+    customertypecode = CustomerTypeCode.CUSTOMER
 
     # Ownership
     ownerid = factory.SubFactory(SalespersonFactory)

@@ -201,13 +201,14 @@ class TestProjectTeamMemberModel:
     def test_create_team_member(self, db):
         member = ProjectTeamMemberFactory()
         assert member.teammemberid is not None
-        assert member.name is not None
+        assert member.systemuserid is not None
         assert member.role == ProjectRoleCode.SITE_ENGINEER
         assert member.projectid is not None
 
     def test_team_member_str_representation(self, db):
-        member = ProjectTeamMemberFactory(name='John Doe', role=ProjectRoleCode.PROJECT_MANAGER)
-        assert str(member) == 'John Doe (Project Manager)'
+        member = ProjectTeamMemberFactory(role=ProjectRoleCode.PROJECT_MANAGER)
+        expected = f'{member.systemuserid.fullname} (Project Manager)'
+        assert str(member) == expected
 
     def test_team_member_uuid_auto_generated(self, db):
         member = ProjectTeamMemberFactory()
