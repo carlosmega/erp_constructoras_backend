@@ -4,6 +4,7 @@ Custom middleware for CRM Backend Foundation.
 Provides audit trail support and API URL normalization.
 """
 
+import logging
 import threading
 from typing import Optional
 from django.urls import resolve, Resolver404
@@ -100,6 +101,25 @@ class DevAutoLoginMiddleware:
                 request.user = self._admin_user
 
         return self.get_response(request)
+
+
+class DebugResponseMiddleware:
+    """Temporary middleware to log 400 response bodies for debugging."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self._logger = logging.getLogger('debug.response')
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if response.status_code == 400 and request.path.startswith('/api/'):
+            body = request.body.decode('utf-8', errors='replace') if request.body else '<empty>'
+            resp_body = response.content.decode('utf-8', errors='replace')[:500]
+            self._logger.warning(
+                "400 on %s %s\n  Request body: %s\n  Response body: %s",
+                request.method, request.path, body, resp_body,
+            )
+        return response
 
 
 class AuditMiddleware:

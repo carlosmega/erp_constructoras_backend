@@ -410,7 +410,9 @@ class ExpenseLineService:
     @staticmethod
     def list_lines(expense_id: UUID) -> QuerySet[ExpenseLine]:
         """Get all lines for an expense."""
-        return ExpenseLine.objects.filter(expenseid=expense_id).order_by('linenumber')
+        return ExpenseLine.objects.filter(
+            expenseid=expense_id
+        ).select_related('imputationcodeid').order_by('linenumber')
 
     @staticmethod
     @transaction.atomic
@@ -447,7 +449,7 @@ class ExpenseLineService:
     def update_line(line_id: UUID, dto: UpdateExpenseLineDto, user) -> ExpenseLine:
         """Update an expense line and recalculate totals."""
         try:
-            line = ExpenseLine.objects.select_related('expenseid').get(expenselineid=line_id)
+            line = ExpenseLine.objects.select_related('expenseid', 'imputationcodeid').get(expenselineid=line_id)
         except ExpenseLine.DoesNotExist:
             raise NotFound(f"Expense line with ID {line_id} not found")
 
@@ -456,6 +458,15 @@ class ExpenseLineService:
             value = getattr(dto, field, None)
             if value is not None:
                 setattr(line, field, value)
+
+        # Handle imputation code assignment / removal
+        if dto.imputationcodeid is not None:
+            from apps.budgets.models import ImputationCode
+            if not ImputationCode.objects.filter(imputationcodeid=dto.imputationcodeid).exists():
+                raise NotFound(f'Imputation code {dto.imputationcodeid} not found')
+            line.imputationcodeid_id = dto.imputationcodeid
+        elif dto.clear_imputationcodeid:
+            line.imputationcodeid = None
 
         # Recalculate line subtotal and netamount
         line.subtotal = line.quantity * line.unitprice
@@ -470,7 +481,7 @@ class ExpenseLineService:
     def remove_line(line_id: UUID, user) -> None:
         """Remove an expense line and recalculate totals."""
         try:
-            line = ExpenseLine.objects.select_related('expenseid').get(expenselineid=line_id)
+            line = ExpenseLine.objects.select_related('expenseid', 'imputationcodeid').get(expenselineid=line_id)
         except ExpenseLine.DoesNotExist:
             raise NotFound(f"Expense line with ID {line_id} not found")
 

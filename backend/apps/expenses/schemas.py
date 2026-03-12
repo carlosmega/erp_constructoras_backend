@@ -21,10 +21,20 @@ from apps.expenses.models import (
 
 class ExpenseLineSchema(ModelSchema):
     """Full ExpenseLine response schema."""
+    imputationcode: Optional[str] = None
+    imputationcodename: Optional[str] = None
 
     class Meta:
         model = ExpenseLine
         fields = '__all__'
+
+    @staticmethod
+    def resolve_imputationcode(obj):
+        return obj.imputationcodeid.code if obj.imputationcodeid else None
+
+    @staticmethod
+    def resolve_imputationcodename(obj):
+        return obj.imputationcodeid.name if obj.imputationcodeid else None
 
 
 class ExpenseAttachmentSchema(ModelSchema):
@@ -102,6 +112,8 @@ class UpdateExpenseLineDto(Schema):
     taxamount: Optional[Decimal] = None
     retentionamount: Optional[Decimal] = None
     discountamount: Optional[Decimal] = None
+    imputationcodeid: Optional[UUID] = None
+    clear_imputationcodeid: bool = False
 
 
 class CreateProjectExpenseDto(Schema):

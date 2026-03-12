@@ -169,9 +169,10 @@ class InvoiceService:
     def get_invoice_by_id(invoice_id: UUID, user: SystemUser) -> Invoice:
         """Get invoice by ID with permission check."""
         try:
-            invoice = Invoice.objects.prefetch_related('invoice_details').get(
-                invoiceid=invoice_id
-            )
+            invoice = Invoice.objects.prefetch_related(
+                'invoice_details',
+                'invoice_details__imputationcodeid'
+            ).get(invoiceid=invoice_id)
         except Invoice.DoesNotExist:
             raise NotFound(f"Invoice with ID {invoice_id} not found")
 
@@ -220,6 +221,12 @@ class InvoiceService:
         if invoice.statecode in [InvoiceStateCode.PAID, InvoiceStateCode.CANCELED]:
             raise ValidationError('Cannot modify paid or canceled invoices')
 
+        # Validate imputation code if provided
+        if dto.imputationcodeid:
+            from apps.budgets.models import ImputationCode
+            if not ImputationCode.objects.filter(imputationcodeid=dto.imputationcodeid).exists():
+                raise ValidationError(f'Imputation code {dto.imputationcodeid} not found')
+
         # Create detail
         detail = InvoiceDetail.objects.create(
             invoiceid=invoice,
@@ -229,7 +236,8 @@ class InvoiceService:
             priceperunit=dto.priceperunit,
             manualdiscountamount=dto.manualdiscountamount,
             tax=dto.tax,
-            sequencenumber=dto.sequencenumber
+            sequencenumber=dto.sequencenumber,
+            imputationcodeid_id=dto.imputationcodeid
         )
 
         # Recalculate invoice totals

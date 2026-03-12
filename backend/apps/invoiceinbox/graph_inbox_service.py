@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from django.core.files.base import ContentFile
+from django.db import transaction
 from django.utils import timezone as dj_timezone
 
 from apps.graph.services import MicrosoftAuthService, GRAPH_BASE_URL
@@ -115,10 +116,13 @@ class GraphInboxService:
                 continue
 
             try:
-                xml_count = GraphInboxService._process_message(
-                    session, msg, project, user
-                )
-                sync_log.newxmlattachments += xml_count
+                # Each message gets its own savepoint so a DB error
+                # in one message doesn't break the entire sync transaction
+                with transaction.atomic():
+                    xml_count = GraphInboxService._process_message(
+                        session, msg, project, user
+                    )
+                    sync_log.newxmlattachments += xml_count
             except Exception as e:
                 error_msg = (
                     f'Error processing email '

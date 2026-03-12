@@ -237,9 +237,11 @@ class IncomingInvoiceService:
 
             # Copy attachments
             if incoming.xmlfile:
+                xml_name = incoming.xmlfilename or 'factura.xml'
                 AttachmentService.add_attachment(
                     expense_id=expense.expenseid,
-                    filename=incoming.xmlfilename or 'factura.xml',
+                    filename=xml_name,
+                    suggestedfilename=xml_name,
                     filetype=1,  # XML
                     filesize=incoming.xmlfilesize,
                     mimetype='text/xml',
@@ -247,9 +249,11 @@ class IncomingInvoiceService:
                     user=user,
                 )
             if incoming.pdffile:
+                pdf_name = incoming.pdffilename or 'factura.pdf'
                 AttachmentService.add_attachment(
                     expense_id=expense.expenseid,
-                    filename=incoming.pdffilename or 'factura.pdf',
+                    filename=pdf_name,
+                    suggestedfilename=pdf_name,
                     filetype=0,  # PDF
                     filesize=incoming.pdffilesize,
                     mimetype='application/pdf',
@@ -278,11 +282,16 @@ class IncomingInvoiceService:
         incoming_id: UUID,
         user: SystemUser,
     ) -> IncomingInvoice:
-        """Undo linking: set back to Classified, clear linkedexpenseid."""
+        """Undo linking: set back to Classified, delete auto-created expense."""
         incoming = IncomingInvoiceService.get_by_id(incoming_id, user)
 
         if incoming.statecode != IncomingInvoiceStateCode.LINKED:
             raise ValidationError('Invoice is not linked.')
+
+        # Delete the auto-created expense to avoid duplicates on re-link
+        linked_expense = incoming.linkedexpenseid
+        if linked_expense and incoming.matchtype == 'manual':
+            linked_expense.delete()
 
         incoming.linkedexpenseid = None
         incoming.statecode = IncomingInvoiceStateCode.CLASSIFIED

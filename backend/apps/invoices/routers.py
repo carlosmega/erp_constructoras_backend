@@ -12,8 +12,9 @@ from ninja import Router
 from apps.invoices.models import Invoice, InvoiceStateCode
 from apps.invoices.schemas import (
     InvoiceSchema, InvoiceListItemSchema, CreateInvoiceDto, UpdateInvoiceDto,
-    CreateInvoiceDetailDto, InvoiceDetailSchema, RecordPaymentDto,
-    CancelInvoiceDto, InvoiceStatsSchema
+    CreateInvoiceDetailDto, UpdateInvoiceDetailDto, InvoiceDetailSchema,
+    InvoiceDetailListItemSchema,
+    RecordPaymentDto, CancelInvoiceDto, InvoiceStatsSchema
 )
 from apps.invoices.services import InvoiceService
 from core.permissions import Permission, require_permission, filter_by_ownership
@@ -72,6 +73,50 @@ def list_invoices(
     queryset = queryset.order_by('-createdon')
 
     return list(queryset)
+
+
+@invoices_router.get('/all-details', response=List[InvoiceDetailListItemSchema])
+@require_permission(Permission.INVOICE_READ)
+def list_all_invoice_details(
+    request: HttpRequest,
+    invoicestatecode: int = None,
+    imputationcodeid: str = None,
+    unclassified: bool = None,
+    search: str = None,
+):
+    """List all invoice line items across all invoices.
+
+    Returns details enriched with parent invoice info (number, name, state).
+    Supports filtering by invoice state, imputation code, and unclassified items.
+    """
+    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
+    qs = InvoiceDetailModel.objects.select_related(
+        'invoiceid', 'imputationcodeid'
+    ).order_by('-createdon')
+
+    # Ownership filter via parent invoice
+    qs = qs.filter(
+        invoiceid__in=filter_by_ownership(Invoice.objects.all(), request.user)
+    )
+
+    if invoicestatecode is not None:
+        qs = qs.filter(invoiceid__statecode=invoicestatecode)
+    if imputationcodeid:
+        qs = qs.filter(imputationcodeid_id=imputationcodeid)
+    if unclassified is True:
+        qs = qs.filter(imputationcodeid__isnull=True)
+    elif unclassified is False:
+        qs = qs.filter(imputationcodeid__isnull=False)
+    if search:
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(productname__icontains=search) |
+            Q(productdescription__icontains=search) |
+            Q(invoiceid__invoicenumber__icontains=search) |
+            Q(invoiceid__name__icontains=search)
+        )
+
+    return list(qs[:500])
 
 
 @invoices_router.get('/{invoice_id}', response=InvoiceSchema)
@@ -134,7 +179,9 @@ def delete_invoice(request: HttpRequest, invoice_id: UUID):
 def list_invoice_details(request: HttpRequest, invoice_id: UUID):
     """List all line items for an invoice."""
     from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
-    details = InvoiceDetailModel.objects.filter(invoiceid_id=invoice_id).order_by('sequencenumber')
+    details = InvoiceDetailModel.objects.filter(
+        invoiceid_id=invoice_id
+    ).select_related('imputationcodeid').order_by('sequencenumber')
     return list(details)
 
 
@@ -152,32 +199,51 @@ def get_invoice_detail(request: HttpRequest, detail_id: UUID):
     """Get a single invoice detail by ID."""
     from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
     from django.shortcuts import get_object_or_404
-    detail = get_object_or_404(InvoiceDetailModel, invoicedetailid=detail_id)
+    detail = get_object_or_404(
+        InvoiceDetailModel.objects.select_related('imputationcodeid'),
+        invoicedetailid=detail_id
+    )
     return detail
 
 
 @invoices_router.patch('/details/{detail_id}', response=InvoiceDetailSchema)
 @require_permission(Permission.INVOICE_UPDATE)
-def update_invoice_detail(request: HttpRequest, detail_id: UUID, payload: dict):
+def update_invoice_detail(request: HttpRequest, detail_id: UUID, payload: UpdateInvoiceDetailDto):
     """Update an invoice detail line item."""
     from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
     from django.shortcuts import get_object_or_404
-    from decimal import Decimal
 
-    detail = get_object_or_404(InvoiceDetailModel, invoicedetailid=detail_id)
+    detail = get_object_or_404(
+        InvoiceDetailModel.objects.select_related('imputationcodeid'),
+        invoicedetailid=detail_id
+    )
 
-    if 'productdescription' in payload and payload['productdescription'] is not None:
-        detail.productdescription = payload['productdescription']
-    if 'quantity' in payload and payload['quantity'] is not None:
-        detail.quantity = Decimal(str(payload['quantity']))
-    if 'priceperunit' in payload and payload['priceperunit'] is not None:
-        detail.priceperunit = Decimal(str(payload['priceperunit']))
-    if 'manualdiscountamount' in payload and payload['manualdiscountamount'] is not None:
-        detail.manualdiscountamount = Decimal(str(payload['manualdiscountamount']))
-    if 'tax' in payload and payload['tax'] is not None:
-        detail.tax = Decimal(str(payload['tax']))
+    if payload.productdescription is not None:
+        detail.productdescription = payload.productdescription
+    if payload.quantity is not None:
+        detail.quantity = payload.quantity
+    if payload.priceperunit is not None:
+        detail.priceperunit = payload.priceperunit
+    if payload.manualdiscountamount is not None:
+        detail.manualdiscountamount = payload.manualdiscountamount
+    if payload.tax is not None:
+        detail.tax = payload.tax
+    if payload.imputationcodeid is not None:
+        from apps.budgets.models import ImputationCode
+        if not ImputationCode.objects.filter(imputationcodeid=payload.imputationcodeid).exists():
+            from core.exceptions import ValidationError
+            raise ValidationError(f'Imputation code {payload.imputationcodeid} not found')
+        detail.imputationcodeid_id = payload.imputationcodeid
+    elif payload.clear_imputationcodeid:
+        detail.imputationcodeid = None
 
     detail.save()
+
+    # Recalculate invoice totals
+    invoice = detail.invoiceid
+    invoice.calculate_totals()
+    invoice.save()
+
     return detail
 
 

@@ -5,8 +5,11 @@ Provides endpoints for listing, classifying, linking, and syncing
 incoming invoices from project shared mailboxes.
 """
 
+import logging
 from typing import List, Optional
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from django.http import HttpRequest, FileResponse
 from ninja import Router
@@ -160,6 +163,8 @@ def link_to_expense(
     payload: LinkToExpenseDto,
 ):
     """Link incoming invoice to an existing or new ProjectExpense."""
+    logger.info("link_to_expense payload: periodid=%s, expenseid=%s, body=%s",
+                payload.periodid, payload.expenseid, request.body)
     return IncomingInvoiceService.link_to_expense(
         incoming_id=incoming_id,
         period_id=payload.periodid,

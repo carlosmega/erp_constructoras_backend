@@ -29,12 +29,15 @@ def list_projects(
     statecode: Optional[int] = None,
     search: Optional[str] = None,
     ownerid: Optional[str] = None,
+    accountid: Optional[str] = None,
 ):
     """List construction projects with filtering."""
     owner_uuid = UUID(ownerid) if ownerid else None
     projects = ProjectService.list_projects(
         user=request.user, statecode=statecode, search=search, ownerid=owner_uuid
     )
+    if accountid:
+        projects = projects.filter(accountid_id=accountid)
     return list(projects)
 
 

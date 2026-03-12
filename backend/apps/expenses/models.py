@@ -393,6 +393,14 @@ class ExpenseLine(models.Model):
         default=Decimal('0.00'),
         db_column='netamount'
     )
+    imputationcodeid = models.ForeignKey(
+        'budgets.ImputationCode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='imputationcodeid',
+        related_name='expense_lines'
+    )
     createdon = models.DateTimeField(
         auto_now_add=True,
         db_column='createdon'

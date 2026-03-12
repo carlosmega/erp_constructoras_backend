@@ -272,6 +272,17 @@ class InvoiceDetail(models.Model):
         related_name='invoice_details'
     )
 
+    # Imputation code (cost classification per line item)
+    imputationcodeid = models.ForeignKey(
+        'budgets.ImputationCode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='imputationcodeid',
+        related_name='invoice_details',
+        help_text='Imputation code for cost classification'
+    )
+
     # Product information (simplified - no FK to Product for now)
     productname = models.CharField(
         max_length=100,
