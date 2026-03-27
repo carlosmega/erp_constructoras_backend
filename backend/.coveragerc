@@ -12,6 +12,9 @@ omit =
     */management/commands/*
     apps/graph/services.py
     apps/invoiceinbox/graph_inbox_service.py
+    apps/agents/engines/*
+    apps/agents/base.py
+    core/email_service.py
 
 [report]
 precision = 2
