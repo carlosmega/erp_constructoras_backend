@@ -3,7 +3,10 @@
 import uuid
 from decimal import Decimal
 import pytest
-from apps.invoices.tests.factories import InvoiceFactory, InvoiceDetailFactory
+from apps.invoices.tests.factories import (
+    InvoiceFactory, InvoiceDetailFactory, OverdueInvoiceFactory,
+    PaidInvoiceFactory,
+)
 from apps.orders.tests.factories import FulfilledOrderFactory
 
 
@@ -18,6 +21,28 @@ class TestListInvoices:
     def test_filter_by_statecode(self, auth_client, salesperson):
         InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson, statecode=0)
         response = auth_client.get('/api/invoices/?statecode=0')
+        assert response.status_code == 200
+
+    def test_filter_by_overdue(self, auth_client, salesperson):
+        OverdueInvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get('/api/invoices/?overdue=true')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+    def test_filter_by_ownerid(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get(f'/api/invoices/?ownerid={salesperson.systemuserid}')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+    def test_filter_by_salesorderid(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get(f'/api/invoices/?salesorderid={inv.salesorderid_id}')
+        assert response.status_code == 200
+
+    def test_filter_by_customerid(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get(f'/api/invoices/?customerid={inv.accountid_id}')
         assert response.status_code == 200
 
     def test_unauthenticated_returns_403(self, db):
@@ -107,6 +132,85 @@ class TestInvoiceDetails:
         detail = InvoiceDetailFactory(invoiceid=inv)
         response = admin_auth_client.delete(f'/api/invoices/details/{detail.invoicedetailid}')
         assert response.status_code == 204
+
+    def test_update_detail(self, admin_auth_client, system_admin):
+        inv = InvoiceFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        detail = InvoiceDetailFactory(invoiceid=inv)
+        payload = {
+            'quantity': 5,
+            'priceperunit': '200.00',
+        }
+        response = admin_auth_client.patch(
+            f'/api/invoices/details/{detail.invoicedetailid}',
+            payload,
+            content_type='application/json',
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert Decimal(str(data['quantity'])) == Decimal('5')
+        assert Decimal(str(data['priceperunit'])) == Decimal('200.00')
+
+    def test_update_detail_not_found(self, admin_auth_client):
+        response = admin_auth_client.patch(
+            f'/api/invoices/details/{uuid.uuid4()}',
+            {'quantity': 1},
+            content_type='application/json',
+        )
+        assert response.status_code == 404
+
+    def test_remove_detail_with_invoice_id(self, admin_auth_client, system_admin):
+        inv = InvoiceFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        detail = InvoiceDetailFactory(invoiceid=inv)
+        response = admin_auth_client.delete(
+            f'/api/invoices/{inv.invoiceid}/details/{detail.invoicedetailid}'
+        )
+        assert response.status_code == 204
+
+    def test_get_detail_not_found(self, auth_client):
+        response = auth_client.get(f'/api/invoices/details/{uuid.uuid4()}')
+        assert response.status_code == 404
+
+
+@pytest.mark.contract
+class TestListAllInvoiceDetails:
+    def test_returns_200(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        InvoiceDetailFactory(invoiceid=inv)
+        response = auth_client.get('/api/invoices/all-details')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+    def test_filter_by_invoice_statecode(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson, statecode=0)
+        InvoiceDetailFactory(invoiceid=inv)
+        response = auth_client.get('/api/invoices/all-details?invoicestatecode=0')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+    def test_filter_unclassified(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        InvoiceDetailFactory(invoiceid=inv, imputationcodeid=None)
+        response = auth_client.get('/api/invoices/all-details?unclassified=true')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+    def test_search_by_productname(self, auth_client, salesperson):
+        inv = InvoiceFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        InvoiceDetailFactory(invoiceid=inv, productname='UniqueSearchTerm')
+        response = auth_client.get('/api/invoices/all-details?search=UniqueSearchTerm')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+
+@pytest.mark.contract
+class TestDeleteInvoiceValidation:
+    def test_cannot_delete_invoice_with_payments(self, admin_auth_client, system_admin):
+        inv = InvoiceFactory(
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
+            totalpaid=Decimal('500.00'),
+        )
+        response = admin_auth_client.delete(f'/api/invoices/{inv.invoiceid}')
+        assert response.status_code == 400
 
 
 @pytest.mark.contract

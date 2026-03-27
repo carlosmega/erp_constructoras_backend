@@ -11,8 +11,20 @@ from apps.proyeccion.models import (
     EstimationProject,
     ConceptFamily,
     ConceptSubfamily,
+    BudgetConcept,
+    UnitCostBreakdown,
+    IndirectCostDetail,
+    IndirectCostTemplate,
+    OfferAlternative,
+    ExternalCostItem,
+    SupplyCatalogItem,
+    EquipmentYield,
+    WorkPlanEntry,
     FamilyTemplateSet,
     FamilyTemplateItem,
+    BreakdownCategoryCode,
+    SupplyTypeCode,
+    ProjectSizeCode,
 )
 from apps.users.tests.factories import SalespersonFactory, SystemUserFactory
 
@@ -122,6 +134,183 @@ class ConceptSubfamilyFactory(DjangoModelFactory):
     code = factory.Sequence(lambda n: f'SF{n + 1:02d}')
     sortorder = factory.Sequence(lambda n: n)
     statecode = 0
+    createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+    modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+
+
+class BudgetConceptFactory(DjangoModelFactory):
+    """Factory for creating BudgetConcept instances."""
+
+    class Meta:
+        model = BudgetConcept
+
+    projectid = factory.LazyAttribute(lambda o: o.subfamilyid.projectid)
+    subfamilyid = factory.SubFactory(ConceptSubfamilyFactory)
+    code = factory.Sequence(lambda n: f'F01-SF01-{n + 1}')
+    sequencenumber = factory.Sequence(lambda n: n + 1)
+    description = factory.Sequence(lambda n: f'Test Concept {n + 1}')
+    unit = 'm2'
+    quantity = Decimal('100')
+    directunitcost = Decimal('0')
+    indirectunitcost = Decimal('0')
+    utilityunitcost = Decimal('0')
+    unitprice = Decimal('0')
+    totalamount = Decimal('0')
+    breakdownmethod = 0
+    isprintable = True
+    statecode = 0
+    createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+    modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+
+
+class UnitCostBreakdownFactory(DjangoModelFactory):
+    """Factory for creating UnitCostBreakdown instances."""
+
+    class Meta:
+        model = UnitCostBreakdown
+
+    conceptid = factory.SubFactory(BudgetConceptFactory)
+    categorycode = BreakdownCategoryCode.MATERIALS
+    linenumber = factory.Sequence(lambda n: n + 1)
+    description = factory.Sequence(lambda n: f'Breakdown item {n + 1}')
+    unit = 'kg'
+    quantity = Decimal('10')
+    unitprice = Decimal('50')
+    yieldvalue = Decimal('1')
+    amount = factory.LazyAttribute(lambda o: o.quantity * o.unitprice * o.yieldvalue)
+    statecode = 0
+
+
+class IndirectCostDetailFactory(DjangoModelFactory):
+    """Factory for creating IndirectCostDetail instances."""
+
+    class Meta:
+        model = IndirectCostDetail
+
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    categorycode = 'C1'
+    linenumber = factory.Sequence(lambda n: n + 1)
+    description = factory.Sequence(lambda n: f'Indirect cost {n + 1}')
+    monthlycost = Decimal('5000')
+    units = Decimal('1')
+    months = Decimal('6')
+    amount = factory.LazyAttribute(lambda o: o.monthlycost * o.units * o.months)
+    statecode = 0
+    createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+    modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+
+
+class IndirectCostTemplateFactory(DjangoModelFactory):
+    """Factory for creating IndirectCostTemplate instances."""
+
+    class Meta:
+        model = IndirectCostTemplate
+
+    name = factory.Sequence(lambda n: f'Template {n + 1}')
+    projectsize = ProjectSizeCode.MEDIUM
+    categorycode = 'C1'
+    description = factory.Sequence(lambda n: f'Template indirect cost {n + 1}')
+    monthlycost = Decimal('3000')
+    units = Decimal('1')
+    months = Decimal('6')
+    sortorder = factory.Sequence(lambda n: n)
+    statecode = 0
+    createdby = factory.SubFactory(SystemUserFactory)
+    modifiedby = factory.LazyAttribute(lambda o: o.createdby)
+
+
+class OfferAlternativeFactory(DjangoModelFactory):
+    """Factory for creating OfferAlternative instances."""
+
+    class Meta:
+        model = OfferAlternative
+
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    alternativenumber = factory.Sequence(lambda n: n + 1)
+    name = factory.Sequence(lambda n: f'Alternative {n + 1}')
+    description = ''
+    transversalpercent = Decimal('5')
+    profitpercent = Decimal('10')
+    coefficient = Decimal('1.15')
+    directcosttotal = Decimal('100000')
+    indirectcosttotal = Decimal('30000')
+    constructioncost = Decimal('130000')
+    salepricenet = Decimal('149500')
+    taxamount = Decimal('23920')
+    salepricetotal = Decimal('173420')
+    ischosen = False
+    statecode = 0
+    createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+    modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+
+
+class ExternalCostItemFactory(DjangoModelFactory):
+    """Factory for creating ExternalCostItem instances."""
+
+    class Meta:
+        model = ExternalCostItem
+
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    itemname = factory.Sequence(lambda n: f'External cost {n + 1}')
+    applies = 0
+    amount = Decimal('0')
+    sortorder = factory.Sequence(lambda n: n + 1)
+    statecode = 0
+
+
+class SupplyCatalogItemFactory(DjangoModelFactory):
+    """Factory for creating SupplyCatalogItem instances."""
+
+    class Meta:
+        model = SupplyCatalogItem
+
+    code = factory.Sequence(lambda n: f'SUP-{n + 1:05d}')
+    description = factory.Sequence(lambda n: f'Supply item {n + 1}')
+    unit = 'kg'
+    supplytype = SupplyTypeCode.MATERIAL
+    referenceprice = Decimal('100')
+    statecode = 0
+    createdby = factory.SubFactory(SystemUserFactory)
+    modifiedby = factory.LazyAttribute(lambda o: o.createdby)
+
+
+class EquipmentYieldFactory(DjangoModelFactory):
+    """Factory for creating EquipmentYield instances."""
+
+    class Meta:
+        model = EquipmentYield
+
+    category = 'Excavation'
+    description = factory.Sequence(lambda n: f'Equipment {n + 1}')
+    monthlycost = Decimal('50000')
+    numberofequipment = 1
+    theoreticalyield = Decimal('100')
+    effectivehours = Decimal('8')
+    realyield = Decimal('80')
+    fuelconsumption = Decimal('15')
+    dailyfuelconsumption = Decimal('120')
+    effectivedays = Decimal('22')
+    trafficfactor = Decimal('0.8')
+    monthlycubicmeters = Decimal('14080')
+    monthlydiesel = Decimal('2640')
+    costpercubicmeter = Decimal('3.5511')
+    statecode = 0
+    createdby = factory.SubFactory(SystemUserFactory)
+    modifiedby = factory.LazyAttribute(lambda o: o.createdby)
+
+
+class WorkPlanEntryFactory(DjangoModelFactory):
+    """Factory for creating WorkPlanEntry instances."""
+
+    class Meta:
+        model = WorkPlanEntry
+
+    conceptid = factory.SubFactory(BudgetConceptFactory)
+    projectid = factory.LazyAttribute(lambda o: o.conceptid.projectid)
+    periodnumber = factory.Sequence(lambda n: n + 1)
+    periodlabel = factory.Sequence(lambda n: f'S{n + 1}')
+    distributedquantity = Decimal('10')
+    distributedamount = Decimal('0')
     createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
     modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
 

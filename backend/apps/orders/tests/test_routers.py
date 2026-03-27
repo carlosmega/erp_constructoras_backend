@@ -5,6 +5,7 @@ import pytest
 from apps.orders.tests.factories import (
     SalesOrderFactory, SalesOrderDetailFactory,
     SubmittedOrderFactory, FulfilledOrderFactory,
+    CanceledOrderFactory,
 )
 from apps.quotes.tests.factories import WonQuoteFactory
 
@@ -20,6 +21,17 @@ class TestListOrders:
     def test_filter_by_statecode(self, auth_client, salesperson):
         SalesOrderFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson, statecode=0)
         response = auth_client.get('/api/orders/?statecode=0')
+        assert response.status_code == 200
+
+    def test_filter_by_owner(self, auth_client, salesperson):
+        SalesOrderFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get(f'/api/orders/?owner={salesperson.systemuserid}')
+        assert response.status_code == 200
+        assert len(response.json()) >= 1
+
+    def test_filter_by_customerid(self, auth_client, salesperson):
+        order = SalesOrderFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get(f'/api/orders/?customerid={order.accountid_id}')
         assert response.status_code == 200
 
     def test_unauthenticated_returns_403(self, db):
@@ -80,6 +92,11 @@ class TestDeleteOrder:
         response = admin_auth_client.delete(f'/api/orders/{order.salesorderid}')
         assert response.status_code == 204
 
+    def test_cannot_delete_non_active_order(self, admin_auth_client, system_admin):
+        order = FulfilledOrderFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        response = admin_auth_client.delete(f'/api/orders/{order.salesorderid}')
+        assert response.status_code == 400
+
 
 @pytest.mark.contract
 class TestOrderDetails:
@@ -89,11 +106,69 @@ class TestOrderDetails:
         response = auth_client.get(f'/api/orders/details/{detail.salesorderdetailid}')
         assert response.status_code == 200
 
+    def test_get_detail_not_found(self, auth_client):
+        response = auth_client.get(f'/api/orders/details/{uuid.uuid4()}')
+        assert response.status_code == 404
+
+    def test_add_detail_rejects_dict_payload(self, admin_auth_client, system_admin):
+        """The add_order_detail endpoint uses payload: dict which Django Ninja
+        cannot parse as a body parameter, resulting in 422."""
+        order = SalesOrderFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        payload = {
+            'productname': 'Concrete Mix',
+            'productdescription': 'High-strength concrete',
+            'quantity': 10,
+            'priceperunit': '150.00',
+        }
+        response = admin_auth_client.post(
+            f'/api/orders/{order.salesorderid}/details',
+            payload,
+            content_type='application/json',
+        )
+        assert response.status_code == 422
+
+    def test_update_detail_rejects_dict_payload(self, admin_auth_client, system_admin):
+        """The update_order_detail endpoint uses payload: dict which Django Ninja
+        cannot parse as a body parameter, resulting in 422."""
+        order = SalesOrderFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        detail = SalesOrderDetailFactory(salesorderid=order)
+        payload = {
+            'quantity': 20,
+            'priceperunit': '300.00',
+        }
+        response = admin_auth_client.patch(
+            f'/api/orders/details/{detail.salesorderdetailid}',
+            payload,
+            content_type='application/json',
+        )
+        assert response.status_code == 422
+
+    def test_update_detail_not_found_returns_422(self, admin_auth_client):
+        """Non-existent detail with dict payload returns 422 before reaching get_object_or_404."""
+        response = admin_auth_client.patch(
+            f'/api/orders/details/{uuid.uuid4()}',
+            {'quantity': 1},
+            content_type='application/json',
+        )
+        assert response.status_code == 422
+
     def test_remove_detail(self, admin_auth_client, system_admin):
         order = SalesOrderFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
         detail = SalesOrderDetailFactory(salesorderid=order)
         response = admin_auth_client.delete(f'/api/orders/details/{detail.salesorderdetailid}')
         assert response.status_code == 204
+
+
+@pytest.mark.contract
+class TestCreateOrderFromQuote:
+    def test_creates_from_quote(self, admin_auth_client, system_admin):
+        quote = WonQuoteFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        response = admin_auth_client.post(f'/api/orders/from-quote/{quote.quoteid}')
+        assert response.status_code == 201
+
+    def test_from_quote_not_found(self, admin_auth_client):
+        response = admin_auth_client.post(f'/api/orders/from-quote/{uuid.uuid4()}')
+        assert response.status_code in (404, 400)
 
 
 @pytest.mark.contract

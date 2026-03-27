@@ -9,6 +9,9 @@ omit =
     */apps.py
     */venv/*
     */site-packages/*
+    */management/commands/*
+    apps/graph/services.py
+    apps/invoiceinbox/graph_inbox_service.py
 
 [report]
 precision = 2

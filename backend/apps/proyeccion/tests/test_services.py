@@ -1,4 +1,4 @@
-"""Tests for ConceptPriceCatalogService."""
+"""Tests for proyeccion services."""
 
 import pytest
 from uuid import uuid4
@@ -8,19 +8,1240 @@ from apps.proyeccion.models import (
     ConceptPriceCatalogItem,
     ConceptPriceReference,
     CatalogSourceCode,
+    ConceptFamily,
+    ConceptSubfamily,
+    BudgetConcept,
+    UnitCostBreakdown,
+    IndirectCostDetail,
+    OfferAlternative,
+    ExternalCostItem,
+    SupplyCatalogItem,
+    EquipmentYield,
+    WorkPlanEntry,
+    BreakdownCategoryCode,
+    FamilyTemplateSet,
+    FamilyTemplateItem,
 )
-from apps.proyeccion.services import ConceptPriceCatalogService
+from apps.proyeccion.services import (
+    ConceptCatalogService,
+    UnitCostBreakdownService,
+    IndirectCostDetailService,
+    OfferAlternativeService,
+    ExternalCostService,
+    WorkPlanService,
+    SupplyCatalogService,
+    EquipmentYieldService,
+    ConceptPriceCatalogService,
+    FamilyTemplateService,
+)
 from apps.proyeccion.schemas import (
+    CreateConceptFamilyDto,
+    UpdateConceptFamilyDto,
+    CreateConceptSubfamilyDto,
+    UpdateConceptSubfamilyDto,
+    CreateBudgetConceptDto,
+    UpdateBudgetConceptDto,
+    CreateUnitCostBreakdownDto,
+    UpdateUnitCostBreakdownDto,
+    CreateIndirectCostDetailDto,
+    UpdateIndirectCostDetailDto,
+    CreateOfferAlternativeDto,
+    UpdateOfferAlternativeDto,
+    UpdateExternalCostItemDto,
+    CreateSupplyCatalogItemDto,
+    UpdateSupplyCatalogItemDto,
+    CreateEquipmentYieldDto,
+    UpdateEquipmentYieldDto,
+    CreateWorkPlanEntryDto,
+    UpdateWorkPlanEntryDto,
+    SaveProjectAsTemplateDto,
+    ApplyFamilyTemplateDto,
     CreateConceptPriceCatalogItemDto,
     UpdateConceptPriceCatalogItemDto,
     CreateConceptPriceReferenceDto,
 )
-from apps.users.tests.factories import SalespersonFactory
+from apps.users.tests.factories import SalespersonFactory, SystemUserFactory
 from .factories import (
     ConceptPriceCatalogItemFactory,
     ConceptPriceReferenceFactory,
+    EstimationProjectFactory,
+    ConceptFamilyFactory,
+    ConceptSubfamilyFactory,
+    BudgetConceptFactory,
+    UnitCostBreakdownFactory,
+    IndirectCostDetailFactory,
+    IndirectCostTemplateFactory,
+    OfferAlternativeFactory,
+    ExternalCostItemFactory,
+    SupplyCatalogItemFactory,
+    EquipmentYieldFactory,
+    WorkPlanEntryFactory,
+    FamilyTemplateSetFactory,
+    FamilyTemplateItemFactory,
 )
+from core.exceptions import ValidationError, NotFound
 
+
+# =============================================================================
+# ConceptCatalogService - Families
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestConceptCatalogServiceFamilies:
+    """Tests for ConceptCatalogService family methods."""
+
+    def test_list_families(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        ConceptFamilyFactory(projectid=project)
+        ConceptFamilyFactory(projectid=project)
+        other_project = EstimationProjectFactory()
+        ConceptFamilyFactory(projectid=other_project)
+
+        result = ConceptCatalogService.list_families(project.estimationprojectid, user)
+        assert result.count() == 2
+
+    def test_create_family(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        dto = CreateConceptFamilyDto(
+            projectid=project.estimationprojectid,
+            name='Terraceria',
+            code='T01',
+            sortorder=1,
+        )
+
+        family = ConceptCatalogService.create_family(dto, user)
+
+        assert family.familyid is not None
+        assert family.name == 'Terraceria'
+        assert family.code == 'T01'
+        assert family.sortorder == 1
+        assert family.createdby == user
+
+    def test_update_family(self):
+        family = ConceptFamilyFactory(name='Original', code='F01')
+        user = family.projectid.ownerid
+        dto = UpdateConceptFamilyDto(name='Updated Name')
+
+        updated = ConceptCatalogService.update_family(family.familyid, dto, user)
+
+        assert updated.name == 'Updated Name'
+        assert updated.code == family.code  # unchanged
+        assert updated.modifiedby == user
+
+    def test_update_family_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateConceptFamilyDto(name='Nope')
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.update_family(uuid4(), dto, user)
+
+    def test_delete_family(self):
+        family = ConceptFamilyFactory()
+        user = family.projectid.ownerid
+
+        deleted = ConceptCatalogService.delete_family(family.familyid, user)
+
+        assert deleted.statecode == 1
+        assert deleted.modifiedby == user
+
+    def test_delete_family_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.delete_family(uuid4(), user)
+
+
+# =============================================================================
+# ConceptCatalogService - Subfamilies
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestConceptCatalogServiceSubfamilies:
+    """Tests for ConceptCatalogService subfamily methods."""
+
+    def test_list_subfamilies(self):
+        family = ConceptFamilyFactory()
+        ConceptSubfamilyFactory(familyid=family, projectid=family.projectid)
+        ConceptSubfamilyFactory(familyid=family, projectid=family.projectid)
+
+        result = ConceptCatalogService.list_subfamilies(family.familyid, family.projectid.ownerid)
+        assert result.count() == 2
+
+    def test_create_subfamily(self):
+        family = ConceptFamilyFactory()
+        user = family.projectid.ownerid
+        dto = CreateConceptSubfamilyDto(
+            familyid=family.familyid,
+            projectid=family.projectid_id,
+            name='Excavation',
+            code='EX01',
+            sortorder=1,
+        )
+
+        subfamily = ConceptCatalogService.create_subfamily(dto, user)
+
+        assert subfamily.subfamilyid is not None
+        assert subfamily.name == 'Excavation'
+        assert subfamily.code == 'EX01'
+        assert subfamily.familyid == family
+
+    def test_create_subfamily_resolves_projectid_from_family(self):
+        """When projectid is falsy (empty UUID sentinel), service resolves from parent family."""
+        family = ConceptFamilyFactory()
+        user = family.projectid.ownerid
+
+        # The service checks `if not dto.projectid` -- we test it directly
+        # by calling the service with a manually constructed dto-like object
+        class FakeDto:
+            familyid = family.familyid
+            projectid = None
+            name = 'Test SF'
+            code = 'TSF1'
+            sortorder = 0
+
+        subfamily = ConceptCatalogService.create_subfamily(FakeDto(), user)
+
+        assert subfamily.projectid == family.projectid
+
+    def test_create_subfamily_family_not_found_for_projectid_resolution(self):
+        """When projectid is falsy and family doesn't exist, raises NotFound."""
+        user = SalespersonFactory()
+        fake_family_id = uuid4()
+
+        class FakeDto:
+            familyid = fake_family_id
+            projectid = None
+            name = 'Missing'
+            code = 'XX'
+            sortorder = 0
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.create_subfamily(FakeDto(), user)
+
+    def test_update_subfamily(self):
+        subfamily = ConceptSubfamilyFactory(name='Original')
+        user = subfamily.projectid.ownerid
+        dto = UpdateConceptSubfamilyDto(name='Updated')
+
+        updated = ConceptCatalogService.update_subfamily(subfamily.subfamilyid, dto, user)
+
+        assert updated.name == 'Updated'
+        assert updated.modifiedby == user
+
+    def test_update_subfamily_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateConceptSubfamilyDto(name='Nope')
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.update_subfamily(uuid4(), dto, user)
+
+
+# =============================================================================
+# ConceptCatalogService - Concepts
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestConceptCatalogServiceConcepts:
+    """Tests for ConceptCatalogService concept methods."""
+
+    def test_list_concepts(self):
+        project = EstimationProjectFactory()
+        subfamily = ConceptSubfamilyFactory(
+            familyid__projectid=project,
+            projectid=project,
+        )
+        BudgetConceptFactory(subfamilyid=subfamily, projectid=project)
+        BudgetConceptFactory(subfamilyid=subfamily, projectid=project)
+
+        result = ConceptCatalogService.list_concepts(
+            project.estimationprojectid, project.ownerid,
+        )
+        assert result.count() == 2
+
+    def test_list_concepts_filter_by_subfamily(self):
+        project = EstimationProjectFactory()
+        family = ConceptFamilyFactory(projectid=project)
+        sf1 = ConceptSubfamilyFactory(familyid=family, projectid=project)
+        sf2 = ConceptSubfamilyFactory(familyid=family, projectid=project)
+        BudgetConceptFactory(subfamilyid=sf1, projectid=project)
+        BudgetConceptFactory(subfamilyid=sf1, projectid=project)
+        BudgetConceptFactory(subfamilyid=sf2, projectid=project)
+
+        result = ConceptCatalogService.list_concepts(
+            project.estimationprojectid, project.ownerid,
+            subfamilyid=sf1.subfamilyid,
+        )
+        assert result.count() == 2
+
+    def test_get_concept(self):
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+
+        result = ConceptCatalogService.get_concept(concept.conceptid, user)
+
+        assert result.conceptid == concept.conceptid
+        assert result.description == concept.description
+
+    def test_get_concept_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.get_concept(uuid4(), user)
+
+    def test_create_concept(self):
+        subfamily = ConceptSubfamilyFactory()
+        project = subfamily.projectid
+        user = project.ownerid
+
+        dto = CreateBudgetConceptDto(
+            projectid=project.estimationprojectid,
+            subfamilyid=subfamily.subfamilyid,
+            description='Excavacion a cielo abierto',
+            unit='m3',
+            quantity=Decimal('500'),
+        )
+
+        concept = ConceptCatalogService.create_concept(dto, user)
+
+        assert concept.conceptid is not None
+        assert concept.description == 'Excavacion a cielo abierto'
+        assert concept.unit == 'm3'
+        assert concept.quantity == Decimal('500')
+        assert concept.sequencenumber == 1
+        assert concept.code.startswith('F')
+        assert concept.directunitcost == Decimal('0')
+
+    def test_create_concept_auto_increments_sequence(self):
+        subfamily = ConceptSubfamilyFactory()
+        project = subfamily.projectid
+        user = project.ownerid
+
+        dto1 = CreateBudgetConceptDto(
+            projectid=project.estimationprojectid,
+            subfamilyid=subfamily.subfamilyid,
+            description='Concept A',
+            unit='m2',
+            quantity=Decimal('10'),
+        )
+        dto2 = CreateBudgetConceptDto(
+            projectid=project.estimationprojectid,
+            subfamilyid=subfamily.subfamilyid,
+            description='Concept B',
+            unit='m2',
+            quantity=Decimal('20'),
+        )
+
+        c1 = ConceptCatalogService.create_concept(dto1, user)
+        c2 = ConceptCatalogService.create_concept(dto2, user)
+
+        assert c2.sequencenumber == c1.sequencenumber + 1
+
+    def test_create_concept_subfamily_not_found(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = CreateBudgetConceptDto(
+            projectid=project.estimationprojectid,
+            subfamilyid=uuid4(),
+            description='Bad',
+            unit='m2',
+            quantity=Decimal('1'),
+        )
+
+        with pytest.raises(ValidationError):
+            ConceptCatalogService.create_concept(dto, user)
+
+    def test_update_concept(self):
+        concept = BudgetConceptFactory(description='Original')
+        user = concept.projectid.ownerid
+
+        dto = UpdateBudgetConceptDto(description='Updated', quantity=Decimal('200'))
+        updated = ConceptCatalogService.update_concept(concept.conceptid, dto, user)
+
+        assert updated.description == 'Updated'
+        assert updated.quantity == Decimal('200')
+
+    def test_update_concept_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateBudgetConceptDto(description='Nope')
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.update_concept(uuid4(), dto, user)
+
+    def test_delete_concept(self):
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+
+        deleted = ConceptCatalogService.delete_concept(concept.conceptid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_concept_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            ConceptCatalogService.delete_concept(uuid4(), user)
+
+    def test_recalculate_concept(self):
+        concept = BudgetConceptFactory(quantity=Decimal('10'))
+        user = concept.projectid.ownerid
+
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            quantity=Decimal('2'), unitprice=Decimal('50'), yieldvalue=Decimal('1'),
+            amount=Decimal('100'),
+        )
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            quantity=Decimal('3'), unitprice=Decimal('100'), yieldvalue=Decimal('1'),
+            amount=Decimal('300'),
+        )
+
+        result = ConceptCatalogService.recalculate_concept(concept.conceptid, user)
+
+        assert result.directunitcost == Decimal('400')
+        assert result.unitprice == Decimal('400')
+        assert result.totalamount == Decimal('4000')
+
+
+# =============================================================================
+# UnitCostBreakdownService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestUnitCostBreakdownService:
+    """Tests for UnitCostBreakdownService."""
+
+    def test_list_breakdowns(self):
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+        UnitCostBreakdownFactory(conceptid=concept)
+        UnitCostBreakdownFactory(conceptid=concept)
+
+        result = UnitCostBreakdownService.list_breakdowns(concept.conceptid, user)
+        assert result.count() == 2
+
+    def test_create_breakdown(self):
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+
+        dto = CreateUnitCostBreakdownDto(
+            conceptid=concept.conceptid,
+            categorycode=BreakdownCategoryCode.MATERIALS,
+            description='Cemento Portland',
+            unit='ton',
+            quantity=Decimal('5'),
+            unitprice=Decimal('2000'),
+            yieldvalue=Decimal('1.05'),
+        )
+
+        breakdown = UnitCostBreakdownService.create_breakdown(dto, user)
+
+        assert breakdown.breakdownid is not None
+        assert breakdown.description == 'Cemento Portland'
+        assert breakdown.linenumber == 1
+        assert breakdown.amount == Decimal('5') * Decimal('2000') * Decimal('1.05')
+
+    def test_create_breakdown_auto_increments_linenumber(self):
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+
+        dto1 = CreateUnitCostBreakdownDto(
+            conceptid=concept.conceptid,
+            categorycode=BreakdownCategoryCode.MATERIALS,
+            description='Item A',
+            unit='kg',
+        )
+        dto2 = CreateUnitCostBreakdownDto(
+            conceptid=concept.conceptid,
+            categorycode=BreakdownCategoryCode.MATERIALS,
+            description='Item B',
+            unit='kg',
+        )
+
+        b1 = UnitCostBreakdownService.create_breakdown(dto1, user)
+        b2 = UnitCostBreakdownService.create_breakdown(dto2, user)
+
+        assert b1.linenumber == 1
+        assert b2.linenumber == 2
+
+    def test_create_breakdown_invalid_category(self):
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+
+        dto = CreateUnitCostBreakdownDto(
+            conceptid=concept.conceptid,
+            categorycode=999,
+            description='Invalid',
+            unit='kg',
+        )
+
+        with pytest.raises(ValidationError, match='Invalid category code'):
+            UnitCostBreakdownService.create_breakdown(dto, user)
+
+    def test_update_breakdown(self):
+        breakdown = UnitCostBreakdownFactory(
+            quantity=Decimal('10'), unitprice=Decimal('50'), yieldvalue=Decimal('1'),
+        )
+        user = breakdown.conceptid.projectid.ownerid
+
+        dto = UpdateUnitCostBreakdownDto(
+            quantity=Decimal('20'),
+            unitprice=Decimal('100'),
+        )
+
+        updated = UnitCostBreakdownService.update_breakdown(breakdown.breakdownid, dto, user)
+
+        assert updated.quantity == Decimal('20')
+        assert updated.unitprice == Decimal('100')
+        assert updated.amount == Decimal('20') * Decimal('100') * Decimal('1')
+
+    def test_update_breakdown_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateUnitCostBreakdownDto(quantity=Decimal('1'))
+
+        with pytest.raises(NotFound):
+            UnitCostBreakdownService.update_breakdown(uuid4(), dto, user)
+
+    def test_delete_breakdown(self):
+        breakdown = UnitCostBreakdownFactory()
+        user = breakdown.conceptid.projectid.ownerid
+
+        deleted = UnitCostBreakdownService.delete_breakdown(breakdown.breakdownid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_breakdown_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            UnitCostBreakdownService.delete_breakdown(uuid4(), user)
+
+    def test_auto_generate_hm_epp(self):
+        concept = BudgetConceptFactory()
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            categorycode=BreakdownCategoryCode.LABOR,
+            amount=Decimal('1000'),
+        )
+        user = concept.projectid.ownerid
+
+        created = UnitCostBreakdownService.auto_generate_hm_epp(concept.conceptid, user)
+
+        assert len(created) == 2
+        expected_amount = Decimal('1000') * Decimal('0.03')
+        assert created[0].categorycode == BreakdownCategoryCode.MINOR_TOOLS
+        assert created[0].amount == expected_amount
+        assert created[1].categorycode == BreakdownCategoryCode.PPE
+        assert created[1].amount == expected_amount
+
+    def test_auto_generate_hm_epp_no_labor(self):
+        concept = BudgetConceptFactory()
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            categorycode=BreakdownCategoryCode.MATERIALS,
+            amount=Decimal('1000'),
+        )
+        user = concept.projectid.ownerid
+
+        created = UnitCostBreakdownService.auto_generate_hm_epp(concept.conceptid, user)
+
+        assert len(created) == 0
+
+
+# =============================================================================
+# IndirectCostDetailService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestIndirectCostDetailService:
+    """Tests for IndirectCostDetailService."""
+
+    def test_list_details(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        IndirectCostDetailFactory(projectid=project, categorycode='C1')
+        IndirectCostDetailFactory(projectid=project, categorycode='C2')
+
+        result = IndirectCostDetailService.list_details(
+            project.estimationprojectid, user,
+        )
+        assert result.count() == 2
+
+    def test_list_details_filter_by_category(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        IndirectCostDetailFactory(projectid=project, categorycode='C1')
+        IndirectCostDetailFactory(projectid=project, categorycode='C1')
+        IndirectCostDetailFactory(projectid=project, categorycode='C2')
+
+        result = IndirectCostDetailService.list_details(
+            project.estimationprojectid, user, categorycode='C1',
+        )
+        assert result.count() == 2
+
+    def test_create_detail(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = CreateIndirectCostDetailDto(
+            projectid=project.estimationprojectid,
+            categorycode='C1',
+            description='Superintendente de obra',
+            monthlycost=Decimal('45000'),
+            units=Decimal('1'),
+            months=Decimal('12'),
+        )
+
+        detail = IndirectCostDetailService.create_detail(dto, user)
+
+        assert detail.indirectcostid is not None
+        assert detail.description == 'Superintendente de obra'
+        assert detail.linenumber == 1
+        assert detail.amount == Decimal('45000') * Decimal('1') * Decimal('12')
+
+    def test_create_detail_auto_increments_linenumber(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto1 = CreateIndirectCostDetailDto(
+            projectid=project.estimationprojectid,
+            categorycode='C1',
+            description='Item 1',
+            monthlycost=Decimal('1000'),
+            months=Decimal('1'),
+        )
+        dto2 = CreateIndirectCostDetailDto(
+            projectid=project.estimationprojectid,
+            categorycode='C1',
+            description='Item 2',
+            monthlycost=Decimal('2000'),
+            months=Decimal('1'),
+        )
+
+        d1 = IndirectCostDetailService.create_detail(dto1, user)
+        d2 = IndirectCostDetailService.create_detail(dto2, user)
+
+        assert d1.linenumber == 1
+        assert d2.linenumber == 2
+
+    def test_update_detail(self):
+        detail = IndirectCostDetailFactory(
+            monthlycost=Decimal('5000'), units=Decimal('1'), months=Decimal('6'),
+        )
+        user = detail.projectid.ownerid
+
+        dto = UpdateIndirectCostDetailDto(
+            monthlycost=Decimal('8000'),
+            months=Decimal('10'),
+        )
+
+        updated = IndirectCostDetailService.update_detail(detail.indirectcostid, dto, user)
+
+        assert updated.monthlycost == Decimal('8000')
+        assert updated.months == Decimal('10')
+        assert updated.amount == Decimal('8000') * Decimal('1') * Decimal('10')
+
+    def test_update_detail_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateIndirectCostDetailDto(description='Nope')
+
+        with pytest.raises(NotFound):
+            IndirectCostDetailService.update_detail(uuid4(), dto, user)
+
+    def test_delete_detail(self):
+        detail = IndirectCostDetailFactory()
+        user = detail.projectid.ownerid
+
+        deleted = IndirectCostDetailService.delete_detail(detail.indirectcostid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_detail_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            IndirectCostDetailService.delete_detail(uuid4(), user)
+
+    def test_get_total(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        IndirectCostDetailFactory(projectid=project, amount=Decimal('10000'))
+        IndirectCostDetailFactory(projectid=project, amount=Decimal('20000'))
+        IndirectCostDetailFactory(projectid=project, amount=Decimal('5000'), statecode=1)
+
+        total = IndirectCostDetailService.get_total(project.estimationprojectid, user)
+
+        assert total == Decimal('30000')
+
+    def test_get_total_empty(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        total = IndirectCostDetailService.get_total(project.estimationprojectid, user)
+
+        assert total == Decimal('0')
+
+    def test_apply_template(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        IndirectCostTemplateFactory(
+            projectsize=1, categorycode='C1',
+            description='Template item 1',
+            monthlycost=Decimal('5000'), units=Decimal('1'), months=Decimal('6'),
+        )
+        IndirectCostTemplateFactory(
+            projectsize=1, categorycode='C2',
+            description='Template item 2',
+            monthlycost=Decimal('3000'), units=Decimal('2'), months=Decimal('6'),
+        )
+
+        created = IndirectCostDetailService.apply_template(
+            project.estimationprojectid, 1, user,
+        )
+
+        assert len(created) == 2
+        assert created[0].categorycode == 'C1'
+        assert created[0].amount == Decimal('5000') * Decimal('1') * Decimal('6')
+        assert created[1].categorycode == 'C2'
+
+    def test_apply_template_invalid_size(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        with pytest.raises(ValidationError, match='Invalid project size'):
+            IndirectCostDetailService.apply_template(
+                project.estimationprojectid, 99, user,
+            )
+
+    def test_apply_template_no_templates_found(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        with pytest.raises(ValidationError, match='No templates found'):
+            IndirectCostDetailService.apply_template(
+                project.estimationprojectid, 0, user,
+            )
+
+    def test_prorate_to_concepts(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        subfamily = ConceptSubfamilyFactory(
+            familyid__projectid=project, projectid=project,
+        )
+
+        c1 = BudgetConceptFactory(
+            subfamilyid=subfamily, projectid=project,
+            directunitcost=Decimal('100'), quantity=Decimal('10'),
+        )
+        c2 = BudgetConceptFactory(
+            subfamilyid=subfamily, projectid=project,
+            directunitcost=Decimal('200'), quantity=Decimal('5'),
+        )
+
+        IndirectCostDetailFactory(projectid=project, amount=Decimal('2000'))
+
+        updated = IndirectCostDetailService.prorate_to_concepts(
+            project.estimationprojectid, user,
+        )
+
+        assert len(updated) == 2
+        # total_direct = 100*10 + 200*5 = 2000
+        # c1 proportion = 1000/2000 = 0.5, c1_indirect = 2000*0.5 = 1000, per unit = 100
+        # c2 proportion = 1000/2000 = 0.5, c2_indirect = 2000*0.5 = 1000, per unit = 200
+        c1.refresh_from_db()
+        c2.refresh_from_db()
+        assert c1.indirectunitcost == Decimal('100')
+        assert c2.indirectunitcost == Decimal('200')
+
+
+# =============================================================================
+# OfferAlternativeService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestOfferAlternativeService:
+    """Tests for OfferAlternativeService."""
+
+    def test_list_alternatives(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        OfferAlternativeFactory(projectid=project)
+        OfferAlternativeFactory(projectid=project)
+
+        result = OfferAlternativeService.list_alternatives(
+            project.estimationprojectid, user,
+        )
+        assert result.count() == 2
+
+    def test_create_alternative(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = CreateOfferAlternativeDto(
+            projectid=project.estimationprojectid,
+            name='Option A',
+            transversalpercent=Decimal('5'),
+            profitpercent=Decimal('10'),
+        )
+
+        alt = OfferAlternativeService.create_alternative(dto, user)
+
+        assert alt.alternativeid is not None
+        assert alt.name == 'Option A'
+        assert alt.alternativenumber == 1
+        expected_coeff = Decimal('1') + Decimal('5') / Decimal('100') + Decimal('10') / Decimal('100')
+        assert alt.coefficient == expected_coeff
+
+    def test_create_alternative_max_4(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        for i in range(4):
+            OfferAlternativeFactory(projectid=project, alternativenumber=i + 1)
+
+        dto = CreateOfferAlternativeDto(
+            projectid=project.estimationprojectid,
+            name='Fifth',
+        )
+
+        with pytest.raises(ValidationError, match='Maximum 4'):
+            OfferAlternativeService.create_alternative(dto, user)
+
+    def test_update_alternative(self):
+        alt = OfferAlternativeFactory(
+            transversalpercent=Decimal('5'),
+            profitpercent=Decimal('10'),
+            directcosttotal=Decimal('100000'),
+            indirectcosttotal=Decimal('30000'),
+        )
+        user = alt.projectid.ownerid
+
+        dto = UpdateOfferAlternativeDto(
+            profitpercent=Decimal('15'),
+        )
+
+        updated = OfferAlternativeService.update_alternative(alt.alternativeid, dto, user)
+
+        expected_coeff = Decimal('1') + Decimal('5') / Decimal('100') + Decimal('15') / Decimal('100')
+        assert updated.coefficient == expected_coeff
+        assert updated.constructioncost == Decimal('130000')
+
+    def test_update_alternative_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateOfferAlternativeDto(name='Nope')
+
+        with pytest.raises(NotFound):
+            OfferAlternativeService.update_alternative(uuid4(), dto, user)
+
+    def test_delete_alternative(self):
+        alt = OfferAlternativeFactory()
+        user = alt.projectid.ownerid
+
+        deleted = OfferAlternativeService.delete_alternative(alt.alternativeid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_alternative_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            OfferAlternativeService.delete_alternative(uuid4(), user)
+
+    def test_choose_alternative(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        alt1 = OfferAlternativeFactory(projectid=project, ischosen=True)
+        alt2 = OfferAlternativeFactory(projectid=project, ischosen=False)
+
+        result = OfferAlternativeService.choose_alternative(alt2.alternativeid, user)
+
+        assert result.ischosen is True
+        alt1.refresh_from_db()
+        assert alt1.ischosen is False
+
+    def test_choose_alternative_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            OfferAlternativeService.choose_alternative(uuid4(), user)
+
+
+# =============================================================================
+# ExternalCostService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestExternalCostService:
+    """Tests for ExternalCostService."""
+
+    def test_list_costs(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        ExternalCostItemFactory(projectid=project)
+        ExternalCostItemFactory(projectid=project)
+
+        result = ExternalCostService.list_costs(project.estimationprojectid, user)
+        assert result.count() == 2
+
+    def test_initialize_checklist(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        items = ExternalCostService.initialize_checklist(
+            project.estimationprojectid, user,
+        )
+
+        assert len(items) == 20
+        assert items[0].itemname == 'Fianza de sostenimiento de oferta'
+
+    def test_initialize_checklist_already_exists(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        ExternalCostItemFactory(projectid=project)
+
+        with pytest.raises(ValidationError, match='already initialized'):
+            ExternalCostService.initialize_checklist(
+                project.estimationprojectid, user,
+            )
+
+    def test_update_cost(self):
+        item = ExternalCostItemFactory(amount=Decimal('0'))
+        user = SalespersonFactory()
+
+        dto = UpdateExternalCostItemDto(
+            applies=1,
+            amount=Decimal('50000'),
+        )
+
+        updated = ExternalCostService.update_cost(item.externalcostid, dto, user)
+
+        assert updated.applies == 1
+        assert updated.amount == Decimal('50000')
+
+    def test_update_cost_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateExternalCostItemDto(applies=1)
+
+        with pytest.raises(NotFound):
+            ExternalCostService.update_cost(uuid4(), dto, user)
+
+
+# =============================================================================
+# WorkPlanService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestWorkPlanService:
+    """Tests for WorkPlanService."""
+
+    def test_list_entries(self):
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(
+            subfamilyid__familyid__projectid=project,
+            projectid=project,
+        )
+        user = project.ownerid
+        WorkPlanEntryFactory(conceptid=concept, projectid=project, periodnumber=1)
+        WorkPlanEntryFactory(conceptid=concept, projectid=project, periodnumber=2)
+
+        result = WorkPlanService.list_entries(project.estimationprojectid, user)
+        assert result.count() == 2
+
+    def test_list_entries_filter_by_concept(self):
+        project = EstimationProjectFactory()
+        subfamily = ConceptSubfamilyFactory(
+            familyid__projectid=project, projectid=project,
+        )
+        c1 = BudgetConceptFactory(subfamilyid=subfamily, projectid=project)
+        c2 = BudgetConceptFactory(subfamilyid=subfamily, projectid=project)
+        user = project.ownerid
+
+        WorkPlanEntryFactory(conceptid=c1, projectid=project, periodnumber=1)
+        WorkPlanEntryFactory(conceptid=c2, projectid=project, periodnumber=1)
+
+        result = WorkPlanService.list_entries(
+            project.estimationprojectid, user, conceptid=c1.conceptid,
+        )
+        assert result.count() == 1
+
+    def test_create_entry(self):
+        concept = BudgetConceptFactory(unitprice=Decimal('150'))
+        user = concept.projectid.ownerid
+
+        dto = CreateWorkPlanEntryDto(
+            conceptid=concept.conceptid,
+            projectid=concept.projectid_id,
+            periodnumber=1,
+            periodlabel='S1',
+            distributedquantity=Decimal('25'),
+        )
+
+        entry = WorkPlanService.create_entry(dto, user)
+
+        assert entry.workplanentryid is not None
+        assert entry.distributedquantity == Decimal('25')
+        assert entry.distributedamount == Decimal('25') * Decimal('150')
+
+    def test_create_entry_concept_not_found(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = CreateWorkPlanEntryDto(
+            conceptid=uuid4(),
+            projectid=project.estimationprojectid,
+            periodnumber=1,
+            periodlabel='S1',
+            distributedquantity=Decimal('10'),
+        )
+
+        with pytest.raises(NotFound):
+            WorkPlanService.create_entry(dto, user)
+
+    def test_update_entry(self):
+        concept = BudgetConceptFactory(unitprice=Decimal('200'))
+        entry = WorkPlanEntryFactory(
+            conceptid=concept, projectid=concept.projectid,
+            distributedquantity=Decimal('10'),
+        )
+        user = concept.projectid.ownerid
+
+        dto = UpdateWorkPlanEntryDto(distributedquantity=Decimal('50'))
+        updated = WorkPlanService.update_entry(entry.workplanentryid, dto, user)
+
+        assert updated.distributedquantity == Decimal('50')
+        assert updated.distributedamount == Decimal('50') * Decimal('200')
+
+    def test_update_entry_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateWorkPlanEntryDto(distributedquantity=Decimal('1'))
+
+        with pytest.raises(NotFound):
+            WorkPlanService.update_entry(uuid4(), dto, user)
+
+    def test_delete_entry(self):
+        entry = WorkPlanEntryFactory()
+        user = entry.projectid.ownerid
+
+        WorkPlanService.delete_entry(entry.workplanentryid, user)
+
+        assert not WorkPlanEntry.objects.filter(
+            workplanentryid=entry.workplanentryid,
+        ).exists()
+
+    def test_delete_entry_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            WorkPlanService.delete_entry(uuid4(), user)
+
+
+# =============================================================================
+# SupplyCatalogService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestSupplyCatalogService:
+    """Tests for SupplyCatalogService."""
+
+    def test_list_items(self):
+        user = SalespersonFactory()
+        SupplyCatalogItemFactory()
+        SupplyCatalogItemFactory()
+        SupplyCatalogItemFactory(statecode=1)  # inactive
+
+        result = SupplyCatalogService.list_items(user)
+        assert result.count() == 2
+
+    def test_list_items_filter_by_type(self):
+        user = SalespersonFactory()
+        SupplyCatalogItemFactory(supplytype=0)
+        SupplyCatalogItemFactory(supplytype=0)
+        SupplyCatalogItemFactory(supplytype=1)
+
+        result = SupplyCatalogService.list_items(user, supplytype=0)
+        assert result.count() == 2
+
+    def test_list_items_search(self):
+        user = SalespersonFactory()
+        SupplyCatalogItemFactory(description='Cemento Portland')
+        SupplyCatalogItemFactory(description='Arena lavada')
+        SupplyCatalogItemFactory(description='Cemento blanco')
+
+        result = SupplyCatalogService.list_items(user, search='cemento')
+        assert result.count() == 2
+
+    def test_create_item(self):
+        user = SalespersonFactory()
+
+        dto = CreateSupplyCatalogItemDto(
+            code='MAT-001',
+            description='Varilla corrugada 3/8',
+            unit='kg',
+            supplytype=0,
+            referenceprice=Decimal('18.50'),
+        )
+
+        item = SupplyCatalogService.create_item(dto, user)
+
+        assert item.supplyid is not None
+        assert item.code == 'MAT-001'
+        assert item.description == 'Varilla corrugada 3/8'
+        assert item.referenceprice == Decimal('18.50')
+        assert item.createdby == user
+
+    def test_update_item(self):
+        item = SupplyCatalogItemFactory(description='Original')
+        user = SalespersonFactory()
+
+        dto = UpdateSupplyCatalogItemDto(description='Updated')
+        updated = SupplyCatalogService.update_item(item.supplyid, dto, user)
+
+        assert updated.description == 'Updated'
+        assert updated.modifiedby == user
+
+    def test_update_item_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateSupplyCatalogItemDto(description='Nope')
+
+        with pytest.raises(NotFound):
+            SupplyCatalogService.update_item(uuid4(), dto, user)
+
+    def test_delete_item(self):
+        item = SupplyCatalogItemFactory()
+        user = SalespersonFactory()
+
+        deleted = SupplyCatalogService.delete_item(item.supplyid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_item_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            SupplyCatalogService.delete_item(uuid4(), user)
+
+
+# =============================================================================
+# EquipmentYieldService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestEquipmentYieldService:
+    """Tests for EquipmentYieldService."""
+
+    def test_list_yields(self):
+        user = SalespersonFactory()
+        EquipmentYieldFactory()
+        EquipmentYieldFactory()
+        EquipmentYieldFactory(statecode=1)  # inactive
+
+        result = EquipmentYieldService.list_yields(user)
+        assert result.count() == 2
+
+    def test_list_yields_filter_by_category(self):
+        user = SalespersonFactory()
+        EquipmentYieldFactory(category='Excavation')
+        EquipmentYieldFactory(category='Excavation')
+        EquipmentYieldFactory(category='Hauling')
+
+        result = EquipmentYieldService.list_yields(user, category='Excavation')
+        assert result.count() == 2
+
+    def test_create_yield(self):
+        user = SalespersonFactory()
+
+        dto = CreateEquipmentYieldDto(
+            category='Excavation',
+            description='CAT 320 Excavator',
+            monthlycost=Decimal('80000'),
+            numberofequipment=2,
+            theoreticalyield=Decimal('120'),
+            effectivehours=Decimal('8'),
+            fuelconsumption=Decimal('20'),
+            effectivedays=Decimal('22'),
+            trafficfactor=Decimal('0.85'),
+        )
+
+        equip = EquipmentYieldService.create_yield(dto, user)
+
+        assert equip.equipmentyieldid is not None
+        assert equip.realyield == Decimal('120') * Decimal('0.85')
+        assert equip.dailyfuelconsumption == Decimal('20') * Decimal('8')
+        expected_monthly_cubic = Decimal('120') * Decimal('0.85') * Decimal('8') * Decimal('22') * 2
+        assert equip.monthlycubicmeters == expected_monthly_cubic
+        assert equip.costpercubicmeter == Decimal('80000') / expected_monthly_cubic
+
+    def test_create_yield_zero_monthly_cubic(self):
+        user = SalespersonFactory()
+
+        dto = CreateEquipmentYieldDto(
+            category='Test',
+            description='Zero yield equipment',
+            monthlycost=Decimal('50000'),
+            theoreticalyield=Decimal('0'),
+            effectivehours=Decimal('0'),
+            effectivedays=Decimal('0'),
+        )
+
+        equip = EquipmentYieldService.create_yield(dto, user)
+
+        assert equip.monthlycubicmeters == Decimal('0')
+        assert equip.costpercubicmeter == Decimal('0')
+
+    def test_update_yield(self):
+        equip = EquipmentYieldFactory()
+        user = SalespersonFactory()
+
+        dto = UpdateEquipmentYieldDto(
+            theoreticalyield=Decimal('200'),
+            trafficfactor=Decimal('0.9'),
+        )
+
+        updated = EquipmentYieldService.update_yield(equip.equipmentyieldid, dto, user)
+
+        assert updated.theoreticalyield == Decimal('200')
+        assert updated.trafficfactor == Decimal('0.9')
+        assert updated.realyield == Decimal('200') * Decimal('0.9')
+
+    def test_update_yield_not_found(self):
+        user = SalespersonFactory()
+        dto = UpdateEquipmentYieldDto(description='Nope')
+
+        with pytest.raises(NotFound):
+            EquipmentYieldService.update_yield(uuid4(), dto, user)
+
+    def test_delete_yield(self):
+        equip = EquipmentYieldFactory()
+        user = SalespersonFactory()
+
+        deleted = EquipmentYieldService.delete_yield(equip.equipmentyieldid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_yield_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            EquipmentYieldService.delete_yield(uuid4(), user)
+
+
+# =============================================================================
+# ConceptPriceCatalogService (existing tests preserved below)
+# =============================================================================
 
 @pytest.mark.unit
 @pytest.mark.django_db
@@ -396,3 +1617,229 @@ class TestConceptPriceCatalogServiceBulkImport:
         )
         assert len(codes) == 2
         assert all(c.startswith('HIST-') for c in codes)
+
+
+# =============================================================================
+# FamilyTemplateService
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestFamilyTemplateService:
+    """Tests for FamilyTemplateService."""
+
+    def test_list_template_sets(self):
+        user = SalespersonFactory()
+        FamilyTemplateSetFactory()
+        FamilyTemplateSetFactory()
+        FamilyTemplateSetFactory(statecode=1)  # inactive
+
+        result = FamilyTemplateService.list_template_sets(user)
+        assert result.count() == 2
+
+    def test_list_template_sets_filter_by_category(self):
+        user = SalespersonFactory()
+        FamilyTemplateSetFactory(category='civil')
+        FamilyTemplateSetFactory(category='civil')
+        FamilyTemplateSetFactory(category='mining')
+
+        result = FamilyTemplateService.list_template_sets(user, category='civil')
+        assert result.count() == 2
+
+    def test_list_template_sets_search(self):
+        user = SalespersonFactory()
+        FamilyTemplateSetFactory(name='Edificacion residencial')
+        FamilyTemplateSetFactory(name='Carreteras')
+        FamilyTemplateSetFactory(name='Edificacion comercial')
+
+        result = FamilyTemplateService.list_template_sets(user, search='edificacion')
+        assert result.count() == 2
+
+    def test_get_template_set(self):
+        ts = FamilyTemplateSetFactory()
+        user = SalespersonFactory()
+
+        result = FamilyTemplateService.get_template_set(ts.templatesetid, user)
+
+        assert result.templatesetid == ts.templatesetid
+
+    def test_get_template_set_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            FamilyTemplateService.get_template_set(uuid4(), user)
+
+    def test_create_template_set(self):
+        from apps.proyeccion.schemas import CreateFamilyTemplateSetDto
+
+        user = SalespersonFactory()
+        dto = CreateFamilyTemplateSetDto(
+            name='Custom Template',
+            description='A test template',
+            category='custom',
+        )
+
+        ts = FamilyTemplateService.create_template_set(dto, user)
+
+        assert ts.templatesetid is not None
+        assert ts.name == 'Custom Template'
+        assert ts.issystem is False
+        assert ts.createdby == user
+
+    def test_delete_template_set(self):
+        ts = FamilyTemplateSetFactory(issystem=False)
+        user = SalespersonFactory()
+
+        deleted = FamilyTemplateService.delete_template_set(ts.templatesetid, user)
+
+        assert deleted.statecode == 1
+
+    def test_delete_template_set_system_not_allowed(self):
+        ts = FamilyTemplateSetFactory(issystem=True)
+        user = SalespersonFactory()
+
+        with pytest.raises(ValidationError):
+            FamilyTemplateService.delete_template_set(ts.templatesetid, user)
+
+    def test_delete_template_set_not_found(self):
+        user = SalespersonFactory()
+
+        with pytest.raises(NotFound):
+            FamilyTemplateService.delete_template_set(uuid4(), user)
+
+    def test_save_project_as_template(self):
+        project = EstimationProjectFactory()
+        family = ConceptFamilyFactory(projectid=project, code='F01', name='Terraceria')
+        ConceptSubfamilyFactory(
+            familyid=family, projectid=project, code='SF01', name='Excavacion',
+        )
+        ConceptSubfamilyFactory(
+            familyid=family, projectid=project, code='SF02', name='Relleno',
+        )
+        user = project.ownerid
+
+        dto = SaveProjectAsTemplateDto(
+            projectid=project.estimationprojectid,
+            name='From Project',
+            category='civil',
+        )
+
+        ts = FamilyTemplateService.save_project_as_template(dto, user)
+
+        assert ts.templatesetid is not None
+        assert ts.name == 'From Project'
+        items = FamilyTemplateItem.objects.filter(templatesetid=ts)
+        assert items.count() == 2
+        assert items.filter(familycode='F01').count() == 2
+
+    def test_save_project_as_template_no_families(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = SaveProjectAsTemplateDto(
+            projectid=project.estimationprojectid,
+            name='Empty',
+            category='custom',
+        )
+
+        with pytest.raises(ValidationError):
+            FamilyTemplateService.save_project_as_template(dto, user)
+
+    def test_apply_template_to_project(self):
+        ts = FamilyTemplateSetFactory()
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F01', familyname='Terraceria',
+            subfamilycode='SF01', subfamilyname='Excavacion',
+            familysortorder=1, subfamilysortorder=1,
+        )
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F01', familyname='Terraceria',
+            subfamilycode='SF02', subfamilyname='Relleno',
+            familysortorder=1, subfamilysortorder=2,
+        )
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F02', familyname='Estructura',
+            subfamilycode='SF01', subfamilyname='Cimentacion',
+            familysortorder=2, subfamilysortorder=1,
+        )
+
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = ApplyFamilyTemplateDto(
+            templatesetid=ts.templatesetid,
+            projectid=project.estimationprojectid,
+        )
+
+        created = FamilyTemplateService.apply_template_to_project(dto, user)
+
+        assert len(created) == 2  # 2 families
+        families = ConceptFamily.objects.filter(projectid=project)
+        assert families.count() == 2
+        subfamilies = ConceptSubfamily.objects.filter(projectid=project)
+        assert subfamilies.count() == 3
+
+    def test_apply_template_skips_existing_family_codes(self):
+        ts = FamilyTemplateSetFactory()
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F01', familyname='Terraceria',
+            subfamilycode='SF01', subfamilyname='Excavacion',
+        )
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F02', familyname='Estructura',
+            subfamilycode='SF01', subfamilyname='Cimentacion',
+        )
+
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        # Pre-create F01 family
+        ConceptFamilyFactory(projectid=project, code='F01')
+
+        dto = ApplyFamilyTemplateDto(
+            templatesetid=ts.templatesetid,
+            projectid=project.estimationprojectid,
+        )
+
+        created = FamilyTemplateService.apply_template_to_project(dto, user)
+
+        # Only F02 should be created (F01 was skipped)
+        assert len(created) == 1
+        assert created[0].code == 'F02'
+
+    def test_apply_template_not_found(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = ApplyFamilyTemplateDto(
+            templatesetid=uuid4(),
+            projectid=project.estimationprojectid,
+        )
+
+        with pytest.raises(NotFound):
+            FamilyTemplateService.apply_template_to_project(dto, user)
+
+    def test_apply_template_filter_by_familycodes(self):
+        ts = FamilyTemplateSetFactory()
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F01', familyname='Terraceria',
+            subfamilycode='SF01', subfamilyname='Excavacion',
+        )
+        FamilyTemplateItemFactory(
+            templatesetid=ts, familycode='F02', familyname='Estructura',
+            subfamilycode='SF01', subfamilyname='Cimentacion',
+        )
+
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        dto = ApplyFamilyTemplateDto(
+            templatesetid=ts.templatesetid,
+            projectid=project.estimationprojectid,
+            familycodes=['F01'],
+        )
+
+        created = FamilyTemplateService.apply_template_to_project(dto, user)
+
+        # Only F01 should be created
+        assert len(created) == 1
+        assert created[0].code == 'F01'
