@@ -69,6 +69,22 @@ class Account(AuditMixin):
         verbose_name='Main Phone'
     )
 
+    telephone2 = models.CharField(
+        max_length=50,
+        db_column='telephone2',
+        blank=True,
+        null=True,
+        verbose_name='Other Phone'
+    )
+
+    fax = models.CharField(
+        max_length=50,
+        db_column='fax',
+        blank=True,
+        null=True,
+        verbose_name='Fax'
+    )
+
     websiteurl = models.URLField(
         max_length=200,
         db_column='websiteurl',
@@ -84,6 +100,14 @@ class Account(AuditMixin):
         blank=True,
         null=True,
         verbose_name='Street 1'
+    )
+
+    address1_line2 = models.CharField(
+        max_length=250,
+        db_column='address1_line2',
+        blank=True,
+        null=True,
+        verbose_name='Street 2'
     )
 
     address1_city = models.CharField(
@@ -145,6 +169,58 @@ class Account(AuditMixin):
         choices=CustomerTypeCode.choices,
         default=CustomerTypeCode.CUSTOMER,
         db_column='customertypecode'
+    )
+
+    industrycode = models.IntegerField(
+        db_column='industrycode',
+        blank=True,
+        null=True,
+        verbose_name='Industry'
+    )
+
+    accountcategorycode = models.IntegerField(
+        db_column='accountcategorycode',
+        blank=True,
+        null=True,
+        verbose_name='Category'
+    )
+
+    # Hierarchy
+    parentaccountid = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        db_column='parentaccountid',
+        blank=True,
+        null=True,
+        related_name='child_accounts',
+        verbose_name='Parent Account'
+    )
+
+    # Relationships
+    primarycontactid = models.ForeignKey(
+        'contacts.Contact',
+        on_delete=models.SET_NULL,
+        db_column='primarycontactid',
+        blank=True,
+        null=True,
+        related_name='primary_account',
+        verbose_name='Primary Contact'
+    )
+
+    # Credit Information
+    creditonhold = models.BooleanField(
+        db_column='creditonhold',
+        default=False,
+        verbose_name='Credit On Hold'
+    )
+
+    creditlimit = models.DecimalField(
+        max_digits=19,
+        decimal_places=2,
+        db_column='creditlimit',
+        blank=True,
+        null=True,
+        verbose_name='Credit Limit'
     )
 
     # State Management

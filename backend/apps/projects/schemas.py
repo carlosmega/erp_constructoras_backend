@@ -162,23 +162,38 @@ class ConstructionProjectSchema(ModelSchema):
 
     @staticmethod
     def resolve_state_name(obj):
-        return obj.state_name
+        try:
+            return obj.state_name
+        except (ValueError, AttributeError):
+            return None
 
     @staticmethod
     def resolve_ownername(obj):
-        return obj.ownerid.fullname if obj.ownerid else None
+        try:
+            return obj.ownerid.fullname if obj.ownerid else None
+        except AttributeError:
+            return None
 
     @staticmethod
     def resolve_accountname(obj):
-        return obj.accountid.name if obj.accountid else None
+        try:
+            return obj.accountid.name if obj.accountid else None
+        except AttributeError:
+            return None
 
     @staticmethod
     def resolve_opportunityname(obj):
-        return obj.opportunityid.name if obj.opportunityid else None
+        try:
+            return obj.opportunityid.name if obj.opportunityid else None
+        except AttributeError:
+            return None
 
     @staticmethod
     def resolve_teammembers(obj):
-        return list(obj.teammembers.all())
+        try:
+            return list(obj.teammembers.all())
+        except (AttributeError, Exception):
+            return []
 
     @staticmethod
     def resolve_advancebond(obj):

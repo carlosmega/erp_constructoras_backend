@@ -36,8 +36,11 @@ class CreateAccountDto(Schema):
     accountnumber: Optional[str] = None
     emailaddress1: Optional[str] = None
     telephone1: Optional[str] = None
+    telephone2: Optional[str] = None
+    fax: Optional[str] = None
     websiteurl: Optional[str] = None
     address1_line1: Optional[str] = None
+    address1_line2: Optional[str] = None
     address1_city: Optional[str] = None
     address1_stateorprovince: Optional[str] = None
     address1_postalcode: Optional[str] = None
@@ -46,6 +49,12 @@ class CreateAccountDto(Schema):
     revenue: Optional[Decimal] = None
     numberofemployees: Optional[int] = None
     customertypecode: Optional[int] = None
+    industrycode: Optional[int] = None
+    accountcategorycode: Optional[int] = None
+    parentaccountid: Optional[UUID] = None
+    primarycontactid: Optional[UUID] = None
+    creditonhold: Optional[bool] = None
+    creditlimit: Optional[Decimal] = None
     ownerid: Optional[UUID] = None
 
 
@@ -64,8 +73,11 @@ class UpdateAccountDto(Schema):
     accountnumber: Optional[str] = None
     emailaddress1: Optional[str] = None
     telephone1: Optional[str] = None
+    telephone2: Optional[str] = None
+    fax: Optional[str] = None
     websiteurl: Optional[str] = None
     address1_line1: Optional[str] = None
+    address1_line2: Optional[str] = None
     address1_city: Optional[str] = None
     address1_stateorprovince: Optional[str] = None
     address1_postalcode: Optional[str] = None
@@ -74,4 +86,10 @@ class UpdateAccountDto(Schema):
     revenue: Optional[Decimal] = None
     numberofemployees: Optional[int] = None
     customertypecode: Optional[int] = None
+    industrycode: Optional[int] = None
+    accountcategorycode: Optional[int] = None
+    parentaccountid: Optional[UUID] = None
+    primarycontactid: Optional[UUID] = None
+    creditonhold: Optional[bool] = None
+    creditlimit: Optional[Decimal] = None
     statuscode: Optional[int] = None

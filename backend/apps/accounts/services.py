@@ -6,6 +6,7 @@ from django.db.models import Q, QuerySet
 from apps.accounts.models import Account, AccountStateCode, CustomerTypeCode
 from apps.accounts.schemas import CreateAccountDto, UpdateAccountDto
 from apps.users.models import SystemUser
+from apps.contacts.models import Contact
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
 from apps.audit.services import audit_action
@@ -60,13 +61,32 @@ class AccountService:
             except SystemUser.DoesNotExist:
                 raise ValidationError(f"Owner with ID {dto.ownerid} not found")
 
+        # Resolve parent account FK
+        parent_account = None
+        if dto.parentaccountid:
+            try:
+                parent_account = Account.objects.get(accountid=dto.parentaccountid)
+            except Account.DoesNotExist:
+                raise ValidationError(f"Parent account with ID {dto.parentaccountid} not found")
+
+        # Resolve primary contact FK
+        primary_contact = None
+        if dto.primarycontactid:
+            try:
+                primary_contact = Contact.objects.get(contactid=dto.primarycontactid)
+            except Contact.DoesNotExist:
+                raise ValidationError(f"Primary contact with ID {dto.primarycontactid} not found")
+
         account = Account(
             name=dto.name,
             accountnumber=dto.accountnumber,
             emailaddress1=dto.emailaddress1,
             telephone1=dto.telephone1,
+            telephone2=dto.telephone2,
+            fax=dto.fax,
             websiteurl=dto.websiteurl,
             address1_line1=dto.address1_line1,
+            address1_line2=dto.address1_line2,
             address1_city=dto.address1_city,
             address1_stateorprovince=dto.address1_stateorprovince,
             address1_postalcode=dto.address1_postalcode,
@@ -75,6 +95,12 @@ class AccountService:
             revenue=dto.revenue,
             numberofemployees=dto.numberofemployees,
             customertypecode=dto.customertypecode if dto.customertypecode is not None else CustomerTypeCode.CUSTOMER,
+            industrycode=dto.industrycode,
+            accountcategorycode=dto.accountcategorycode,
+            parentaccountid=parent_account,
+            primarycontactid=primary_contact,
+            creditonhold=dto.creditonhold if dto.creditonhold is not None else False,
+            creditlimit=dto.creditlimit,
             ownerid=owner,
             createdby=user,
             modifiedby=user,
@@ -102,15 +128,32 @@ class AccountService:
         """Update an existing account."""
         account = AccountService.get_account_by_id(account_id, user)
 
-        update_fields = ['name', 'accountnumber', 'emailaddress1', 'telephone1', 'websiteurl',
-                        'address1_line1', 'address1_city', 'address1_stateorprovince',
-                        'address1_postalcode', 'address1_country', 'description',
-                        'revenue', 'numberofemployees', 'customertypecode', 'statuscode']
+        update_fields = ['name', 'accountnumber', 'emailaddress1', 'telephone1',
+                        'telephone2', 'fax', 'websiteurl',
+                        'address1_line1', 'address1_line2', 'address1_city',
+                        'address1_stateorprovince', 'address1_postalcode',
+                        'address1_country', 'description',
+                        'revenue', 'numberofemployees', 'customertypecode',
+                        'industrycode', 'accountcategorycode',
+                        'creditonhold', 'creditlimit', 'statuscode']
 
         for field in update_fields:
             value = getattr(dto, field, None)
             if value is not None:
                 setattr(account, field, value)
+
+        # Handle FK fields separately (require resolution)
+        if dto.parentaccountid is not None:
+            try:
+                account.parentaccountid = Account.objects.get(accountid=dto.parentaccountid)
+            except Account.DoesNotExist:
+                raise ValidationError(f"Parent account with ID {dto.parentaccountid} not found")
+
+        if dto.primarycontactid is not None:
+            try:
+                account.primarycontactid = Contact.objects.get(contactid=dto.primarycontactid)
+            except Contact.DoesNotExist:
+                raise ValidationError(f"Primary contact with ID {dto.primarycontactid} not found")
 
         account.modifiedby = user
         account.save()
