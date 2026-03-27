@@ -876,6 +876,31 @@ def list_concept_price_catalog(
     return list(items)
 
 
+# --- Price References (static paths BEFORE {item_id} to avoid routing conflicts) ---
+
+@concept_price_catalog_router.post(
+    "/concept-price-catalog/references/",
+    response={201: ConceptPriceReferenceSchema},
+)
+def create_concept_price_reference(
+    request: HttpRequest, payload: CreateConceptPriceReferenceDto,
+):
+    """Create a new price reference."""
+    ref = ConceptPriceCatalogService.create_reference(payload, request.user)
+    return 201, ref
+
+
+@concept_price_catalog_router.delete(
+    "/concept-price-catalog/references/{reference_id}/",
+    response=ConceptPriceReferenceSchema,
+)
+def delete_concept_price_reference(request: HttpRequest, reference_id: UUID):
+    """Soft delete a price reference."""
+    return ConceptPriceCatalogService.delete_reference(reference_id, request.user)
+
+
+# --- Catalog Item CRUD (dynamic {item_id} paths AFTER static paths) ---
+
 @concept_price_catalog_router.get(
     "/concept-price-catalog/{item_id}/",
     response=ConceptPriceCatalogItemSchema,
@@ -917,8 +942,6 @@ def delete_concept_price_catalog_item(request: HttpRequest, item_id: UUID):
     return ConceptPriceCatalogService.delete_item(item_id, request.user)
 
 
-# --- Price References ---
-
 @concept_price_catalog_router.get(
     "/concept-price-catalog/{item_id}/references/",
     response=List[ConceptPriceReferenceSchema],
@@ -926,27 +949,6 @@ def delete_concept_price_catalog_item(request: HttpRequest, item_id: UUID):
 def list_concept_price_references(request: HttpRequest, item_id: UUID):
     """List price references for a catalog item."""
     return list(ConceptPriceCatalogService.list_references(item_id))
-
-
-@concept_price_catalog_router.post(
-    "/concept-price-catalog/references/",
-    response={201: ConceptPriceReferenceSchema},
-)
-def create_concept_price_reference(
-    request: HttpRequest, payload: CreateConceptPriceReferenceDto,
-):
-    """Create a new price reference."""
-    ref = ConceptPriceCatalogService.create_reference(payload, request.user)
-    return 201, ref
-
-
-@concept_price_catalog_router.delete(
-    "/concept-price-catalog/references/{reference_id}/",
-    response=ConceptPriceReferenceSchema,
-)
-def delete_concept_price_reference(request: HttpRequest, reference_id: UUID):
-    """Soft delete a price reference."""
-    return ConceptPriceCatalogService.delete_reference(reference_id, request.user)
 
 
 # =============================================================================
@@ -967,15 +969,7 @@ def list_family_templates(
     return list(FamilyTemplateService.list_template_sets(request.user, category=category, search=search))
 
 
-@family_templates_router.get(
-    "/family-templates/{template_set_id}/",
-    response=FamilyTemplateSetSchema,
-)
-def get_family_template(request: HttpRequest, template_set_id: UUID):
-    """Get a single template set with all its items."""
-    return FamilyTemplateService.get_template_set(template_set_id, request.user)
-
-
+# Static action paths BEFORE {template_set_id} to avoid routing conflicts
 @family_templates_router.post(
     "/family-templates/save-from-project/",
     response={201: FamilyTemplateSetSchema},
@@ -994,6 +988,16 @@ def apply_template_to_project(request: HttpRequest, payload: ApplyFamilyTemplate
     """Apply a family template to a project, creating families and subfamilies."""
     created = FamilyTemplateService.apply_template_to_project(payload, request.user)
     return 201, list(created)
+
+
+# Dynamic {template_set_id} paths AFTER static paths
+@family_templates_router.get(
+    "/family-templates/{template_set_id}/",
+    response=FamilyTemplateSetSchema,
+)
+def get_family_template(request: HttpRequest, template_set_id: UUID):
+    """Get a single template set with all its items."""
+    return FamilyTemplateService.get_template_set(template_set_id, request.user)
 
 
 @family_templates_router.delete(
