@@ -12,7 +12,8 @@ from uuid import UUID
 from apps.orders.services import OrderService
 from apps.orders.schemas import (
     SalesOrderSchema, SalesOrderListItemSchema, SalesOrderDetailSchema,
-    CreateSalesOrderDto, UpdateSalesOrderDto, FulfillOrderDto, OrderStatsSchema
+    CreateSalesOrderDto, UpdateSalesOrderDto, CreateOrderDetailDto, UpdateOrderDetailDto,
+    FulfillOrderDto, OrderStatsSchema
 )
 from core.permissions import require_permission, Permission
 
@@ -116,22 +117,21 @@ def delete_order(request: HttpRequest, order_id: UUID):
 
 @orders_router.post('/{order_id}/details', response={201: SalesOrderDetailSchema})
 @require_permission(Permission.ORDER_UPDATE)
-def add_order_detail(request: HttpRequest, order_id: UUID, payload: dict):
+def add_order_detail(request: HttpRequest, order_id: UUID, payload: CreateOrderDetailDto):
     """Add a line item to an order."""
     from apps.orders.models import SalesOrder, SalesOrderDetail
     from django.shortcuts import get_object_or_404
-    from decimal import Decimal
 
     order = get_object_or_404(SalesOrder, salesorderid=order_id)
 
     detail = SalesOrderDetail(
         salesorderid=order,
-        productname=payload.get('productdescription', payload.get('productname', 'Product')),
-        productdescription=payload.get('productdescription'),
-        quantity=Decimal(str(payload.get('quantity', 1))),
-        priceperunit=Decimal(str(payload.get('priceperunit', 0))),
-        manualdiscountamount=Decimal(str(payload.get('manualdiscountamount', 0))),
-        tax=Decimal(str(payload.get('tax', 0))),
+        productname=payload.productdescription or payload.productname or 'Product',
+        productdescription=payload.productdescription,
+        quantity=payload.quantity,
+        priceperunit=payload.priceperunit,
+        manualdiscountamount=payload.manualdiscountamount,
+        tax=payload.tax,
     )
     detail.save()
 
@@ -153,24 +153,23 @@ def get_order_detail(request: HttpRequest, detail_id: UUID):
 
 @orders_router.patch('/details/{detail_id}', response=SalesOrderDetailSchema)
 @require_permission(Permission.ORDER_UPDATE)
-def update_order_detail(request: HttpRequest, detail_id: UUID, payload: dict):
+def update_order_detail(request: HttpRequest, detail_id: UUID, payload: UpdateOrderDetailDto):
     """Update an order detail line item."""
     from apps.orders.models import SalesOrderDetail
     from django.shortcuts import get_object_or_404
-    from decimal import Decimal
 
     detail = get_object_or_404(SalesOrderDetail, salesorderdetailid=detail_id)
 
-    if 'productdescription' in payload and payload['productdescription'] is not None:
-        detail.productdescription = payload['productdescription']
-    if 'quantity' in payload and payload['quantity'] is not None:
-        detail.quantity = Decimal(str(payload['quantity']))
-    if 'priceperunit' in payload and payload['priceperunit'] is not None:
-        detail.priceperunit = Decimal(str(payload['priceperunit']))
-    if 'manualdiscountamount' in payload and payload['manualdiscountamount'] is not None:
-        detail.manualdiscountamount = Decimal(str(payload['manualdiscountamount']))
-    if 'tax' in payload and payload['tax'] is not None:
-        detail.tax = Decimal(str(payload['tax']))
+    if payload.productdescription is not None:
+        detail.productdescription = payload.productdescription
+    if payload.quantity is not None:
+        detail.quantity = payload.quantity
+    if payload.priceperunit is not None:
+        detail.priceperunit = payload.priceperunit
+    if payload.manualdiscountamount is not None:
+        detail.manualdiscountamount = payload.manualdiscountamount
+    if payload.tax is not None:
+        detail.tax = payload.tax
 
     detail.save()
 

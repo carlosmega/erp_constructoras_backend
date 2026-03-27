@@ -90,6 +90,25 @@ class UpdateSalesOrderDto(Schema):
     description: Optional[str] = None
 
 
+class CreateOrderDetailDto(Schema):
+    """DTO for adding a line item to an order."""
+    productname: Optional[str] = 'Product'
+    productdescription: Optional[str] = None
+    quantity: Decimal = Decimal('1')
+    priceperunit: Decimal = Decimal('0')
+    manualdiscountamount: Decimal = Decimal('0')
+    tax: Decimal = Decimal('0')
+
+
+class UpdateOrderDetailDto(Schema):
+    """DTO for updating an order line item."""
+    productdescription: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    priceperunit: Optional[Decimal] = None
+    manualdiscountamount: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+
+
 class FulfillOrderDto(Schema):
     """DTO for fulfilling an order."""
     datefulfilled: Optional[datetime] = None

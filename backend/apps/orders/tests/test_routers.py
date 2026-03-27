@@ -125,11 +125,10 @@ class TestOrderDetails:
             payload,
             content_type='application/json',
         )
-        assert response.status_code == 422
+        assert response.status_code == 201
 
-    def test_update_detail_rejects_dict_payload(self, admin_auth_client, system_admin):
-        """The update_order_detail endpoint uses payload: dict which Django Ninja
-        cannot parse as a body parameter, resulting in 422."""
+    def test_update_detail(self, admin_auth_client, system_admin):
+        """Test updating an order detail line item."""
         order = SalesOrderFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
         detail = SalesOrderDetailFactory(salesorderid=order)
         payload = {
@@ -141,16 +140,16 @@ class TestOrderDetails:
             payload,
             content_type='application/json',
         )
-        assert response.status_code == 422
+        assert response.status_code == 200
 
-    def test_update_detail_not_found_returns_422(self, admin_auth_client):
-        """Non-existent detail with dict payload returns 422 before reaching get_object_or_404."""
+    def test_update_detail_not_found(self, admin_auth_client):
+        """Non-existent detail returns 404."""
         response = admin_auth_client.patch(
             f'/api/orders/details/{uuid.uuid4()}',
             {'quantity': 1},
             content_type='application/json',
         )
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_remove_detail(self, admin_auth_client, system_admin):
         order = SalesOrderFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
