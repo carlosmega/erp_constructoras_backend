@@ -11,6 +11,7 @@ from django.db.models import Sum, Count
 from decimal import Decimal
 from uuid import UUID
 
+from apps.audit.services import audit_action
 from apps.orders.models import SalesOrder, SalesOrderDetail, OrderStateCode, OrderStatusCode
 from apps.orders.schemas import CreateSalesOrderDto, FulfillOrderDto
 from apps.users.models import SystemUser
@@ -40,6 +41,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='order', id_field='salesorderid')
     def create_order_from_quote(quote_id: UUID, user: SystemUser) -> SalesOrder:
         """Create an order from a won quote."""
         from apps.quotes.models import Quote, QuoteStateCode
@@ -97,6 +99,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='order', id_field='salesorderid')
     def create_order(dto: CreateSalesOrderDto, user: SystemUser) -> SalesOrder:
         """Create a new order manually."""
         ordernumber = OrderService.generate_order_number()
@@ -159,6 +162,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='update', entity='order', record_arg='order_id', id_field='salesorderid')
     def update_order(order_id: UUID, dto, user: SystemUser) -> SalesOrder:
         """Update order."""
         order = OrderService.get_order_by_id(order_id, user)
@@ -182,6 +186,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='fulfill', entity='order', record_arg='order_id', id_field='salesorderid')
     def fulfill_order(order_id: UUID, dto: FulfillOrderDto, user: SystemUser) -> SalesOrder:
         """Mark order as fulfilled."""
         order = OrderService.get_order_by_id(order_id, user)
@@ -201,6 +206,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='cancel', entity='order', record_arg='order_id', id_field='salesorderid')
     def cancel_order(order_id: UUID, user: SystemUser) -> SalesOrder:
         """Cancel an order."""
         order = OrderService.get_order_by_id(order_id, user)
@@ -218,6 +224,7 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='submit', entity='order', record_arg='order_id', id_field='salesorderid')
     def submit_order(order_id: UUID, user: SystemUser) -> SalesOrder:
         """Submit order for processing."""
         order = OrderService.get_order_by_id(order_id, user)

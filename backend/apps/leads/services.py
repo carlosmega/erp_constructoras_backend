@@ -30,6 +30,7 @@ from apps.leads.schemas import (
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
+from apps.audit.services import audit_action
 
 
 class LeadService:
@@ -101,6 +102,7 @@ class LeadService:
         return queryset
 
     @staticmethod
+    @audit_action(action='create', entity='lead')
     def create_lead(dto: CreateLeadDto, user: SystemUser) -> Lead:
         """
         Create a new lead.
@@ -193,6 +195,7 @@ class LeadService:
         return lead
 
     @staticmethod
+    @audit_action(action='update', entity='lead', record_arg='lead_id')
     def update_lead(lead_id: UUID, dto: UpdateLeadDto, user: SystemUser) -> Lead:
         """
         Update an existing lead.
@@ -272,6 +275,7 @@ class LeadService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='qualify', entity='lead', record_arg='lead_id')
     def qualify_lead(lead_id: UUID, dto: QualifyLeadDto, user: SystemUser) -> dict:
         """
         Qualify a lead (convert to Opportunity).
@@ -393,6 +397,7 @@ class LeadService:
         return response
 
     @staticmethod
+    @audit_action(action='cancel', entity='lead', record_arg='lead_id')
     def disqualify_lead(lead_id: UUID, dto: DisqualifyLeadDto, user: SystemUser) -> Lead:
         """
         Disqualify a lead.
@@ -422,6 +427,7 @@ class LeadService:
         return lead
 
     @staticmethod
+    @audit_action(action='delete', entity='lead', record_arg='lead_id')
     def delete_lead(lead_id: UUID, user: SystemUser) -> Lead:
         """
         Delete (disqualify) a lead.

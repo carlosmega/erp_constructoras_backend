@@ -14,12 +14,14 @@ from apps.products.schemas import CreateProductDto, UpdateProductDto, CreatePric
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, PermissionDenied
 from core.permissions import can_modify_record
+from apps.audit.services import audit_action
 
 
 class ProductService:
     """Business logic for Product operations."""
 
     @staticmethod
+    @audit_action(action='create', entity='product')
     def create_product(payload: CreateProductDto, user: SystemUser) -> Product:
         """Create a new product."""
         # Validate product number uniqueness
@@ -61,6 +63,7 @@ class ProductService:
         return product
 
     @staticmethod
+    @audit_action(action='update', entity='product', record_arg='product_id')
     def update_product(product_id: UUID, payload: UpdateProductDto, user: SystemUser) -> Product:
         """Update a product."""
         product = get_object_or_404(Product, productid=product_id)
@@ -85,6 +88,7 @@ class ProductService:
         return product
 
     @staticmethod
+    @audit_action(action='delete', entity='product', record_arg='product_id')
     def delete_product(product_id: UUID, user: SystemUser):
         """Delete a product (soft delete by setting to inactive)."""
         product = get_object_or_404(Product, productid=product_id)

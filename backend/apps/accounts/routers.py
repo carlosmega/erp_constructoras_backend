@@ -21,10 +21,10 @@ def supplier_lookup(request, search: str = ''):
 
 @accounts_router.get("/", response=List[AccountSchema])
 @require_permission(Permission.ACCOUNT_READ)
-def list_accounts(request: HttpRequest, statecode: Optional[int] = None, search: Optional[str] = None, ownerid: Optional[str] = None):
+def list_accounts(request: HttpRequest, statecode: Optional[int] = None, search: Optional[str] = None, ownerid: Optional[str] = None, customertypecode: Optional[int] = None):
     """List accounts with filtering. Requires: ACCOUNT_READ permission"""
     owner_uuid = UUID(ownerid) if ownerid else None
-    accounts = AccountService.list_accounts(user=request.user, statecode=statecode, search=search, ownerid=owner_uuid)
+    accounts = AccountService.list_accounts(user=request.user, statecode=statecode, search=search, ownerid=owner_uuid, customertypecode=customertypecode)
     return list(accounts)
 
 

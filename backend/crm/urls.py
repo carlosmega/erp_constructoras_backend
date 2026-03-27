@@ -146,6 +146,32 @@ from apps.projects.routers import projects_router, zones_router, suppliers_route
 from apps.budgets.routers import categories_router, imputation_codes_router, periods_router
 from apps.expenses.routers import expenses_router, expense_lines_router, attachments_router, estimates_router
 from apps.invoiceinbox.routers import inbox_router
+from apps.audit.routers import audit_router
+from apps.proyeccion.routers import (
+    estimation_projects_router,
+    concept_families_router,
+    budget_concepts_router,
+    indirect_cost_details_router,
+    offer_alternatives_router,
+    external_costs_router,
+    supply_explosion_router,
+    workplan_router,
+    analysis_router,
+    supply_catalog_router,
+    equipment_yields_router,
+    indirect_cost_templates_router,
+    concept_price_catalog_router,
+    family_templates_router,
+)
+from apps.corporate.routers import budgets_router as corporate_budgets_router, expenses_router as corporate_expenses_router
+from apps.corporate.allocation_routers import allocations_router as corporate_allocations_router, portfolio_router as corporate_portfolio_router, simulations_router as corporate_simulations_router
+from apps.hrpayroll.routers import (
+    employees_router, assignments_router,
+    deduction_types_router, addition_types_router,
+    payroll_periods_router, payroll_runs_router, payroll_entries_router,
+    attendance_router,
+)
+from apps.agents.routers import agents_config_router, agents_run_router, agents_suggestion_router
 
 api.add_router("/auth", auth_router)
 api.add_router("/users", users_router)
@@ -164,6 +190,7 @@ api.add_router("/activities", activities_router)
 api.add_router("/cases", cases_router)
 api.add_router("/notifications", notifications_router)
 api.add_router("/graph", graph_router)
+api.add_router("/audit-logs", audit_router)
 
 # Operations module routers
 api.add_router("/projects", projects_router)
@@ -178,6 +205,44 @@ api.add_router("/expense-lines", expense_lines_router)
 api.add_router("/attachments", attachments_router)
 api.add_router("/estimates", estimates_router)
 api.add_router("/invoice-inbox", inbox_router)
+
+# Proyección module routers
+api.add_router("/estimation-projects", estimation_projects_router)
+api.add_router("/proyeccion", concept_families_router)
+api.add_router("/proyeccion", budget_concepts_router)
+api.add_router("/proyeccion", indirect_cost_details_router)
+api.add_router("/proyeccion", offer_alternatives_router)
+api.add_router("/proyeccion", external_costs_router)
+api.add_router("/proyeccion", supply_explosion_router)
+api.add_router("/proyeccion", workplan_router)
+api.add_router("/proyeccion", analysis_router)
+api.add_router("/proyeccion", supply_catalog_router)
+api.add_router("/proyeccion", equipment_yields_router)
+api.add_router("/proyeccion", indirect_cost_templates_router)
+api.add_router("/proyeccion", concept_price_catalog_router)
+api.add_router("/proyeccion", family_templates_router)
+
+# Corporate module routers
+api.add_router("/corporate", corporate_budgets_router)
+api.add_router("/corporate", corporate_expenses_router)
+api.add_router("/corporate", corporate_allocations_router)
+api.add_router("/corporate", corporate_portfolio_router)
+api.add_router("/corporate", corporate_simulations_router)
+
+# HR/Payroll module routers
+api.add_router("/employees", employees_router)
+api.add_router("/employee-assignments", assignments_router)
+api.add_router("/deduction-types", deduction_types_router)
+api.add_router("/addition-types", addition_types_router)
+api.add_router("/payroll-periods", payroll_periods_router)
+api.add_router("/payroll-runs", payroll_runs_router)
+api.add_router("/payroll-entries", payroll_entries_router)
+api.add_router("/attendance", attendance_router)
+
+# Agent module routers
+api.add_router("/agents/config", agents_config_router)
+api.add_router("/agents", agents_run_router)
+api.add_router("/agents/suggestions", agents_suggestion_router)
 
 urlpatterns = [
     path('admin/', admin.site.urls),

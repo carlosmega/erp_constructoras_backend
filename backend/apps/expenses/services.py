@@ -32,6 +32,7 @@ from apps.expenses.schemas import (
     CreateClientEstimateDto,
     UpdateClientEstimateDto,
 )
+from apps.audit.services import audit_action
 from core.exceptions import ValidationError, NotFound
 
 
@@ -69,6 +70,7 @@ class ExpenseService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='expense', id_field='expenseid')
     def create_expense(dto: CreateProjectExpenseDto, user) -> ProjectExpense:
         """Create a new project expense with optional lines."""
         # Validate invoice UUID uniqueness (global, across all projects)
@@ -151,6 +153,7 @@ class ExpenseService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='update', entity='expense', record_arg='expense_id', id_field='expenseid')
     def update_expense(expense_id: UUID, dto: UpdateProjectExpenseDto, user) -> ProjectExpense:
         """Update an existing project expense."""
         expense = ExpenseService.get_expense_by_id(expense_id, user)
@@ -196,6 +199,7 @@ class ExpenseService:
         return expense
 
     @staticmethod
+    @audit_action(action='cancel', entity='expense', record_arg='expense_id', id_field='expenseid')
     def cancel_expense(expense_id: UUID, user) -> ProjectExpense:
         """Cancel a project expense."""
         expense = ExpenseService.get_expense_by_id(expense_id, user)
@@ -273,6 +277,7 @@ class ClassificationService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='classify', entity='expense', record_arg='expense_id', id_field='expenseid')
     def classify_expense(expense_id: UUID, imputation_code_id: UUID, notes: Optional[str], user) -> ProjectExpense:
         """Classify an expense with an imputation code."""
         expense = ExpenseService.get_expense_by_id(expense_id, user)
@@ -332,6 +337,7 @@ class ClassificationService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='classify', entity='expense', record_arg='expense_id', id_field='expenseid')
     def unclassify_expense(expense_id: UUID, notes: Optional[str], user) -> ProjectExpense:
         """Remove classification from an expense."""
         expense = ExpenseService.get_expense_by_id(expense_id, user)
@@ -388,6 +394,7 @@ class VerificationService:
     """Service for expense verification business logic."""
 
     @staticmethod
+    @audit_action(action='verify', entity='expense', record_arg='expense_id', id_field='expenseid')
     def update_verification(expense_id: UUID, status: int, notes: Optional[str], user) -> ProjectExpense:
         """Update verification status on an expense."""
         expense = ExpenseService.get_expense_by_id(expense_id, user)
@@ -589,6 +596,7 @@ class ProvisionService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='convert', entity='expense', record_arg='provision_id', id_field='expenseid')
     def convert_provision(provision_id: UUID, real_expense_dto: CreateProjectExpenseDto, user) -> ProjectExpense:
         """Convert a provision to a real expense."""
         provision = ExpenseService.get_expense_by_id(provision_id, user)
@@ -638,6 +646,7 @@ class EstimateService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='estimate', id_field='estimateid')
     def create_estimate(dto: CreateClientEstimateDto, user) -> ClientEstimate:
         """Create a new client estimate with auto-numbering and computed fields."""
         # Auto-assign estimate number
@@ -672,6 +681,7 @@ class EstimateService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='update', entity='estimate', record_arg='estimate_id', id_field='estimateid')
     def update_estimate(estimate_id: UUID, dto: UpdateClientEstimateDto, user) -> ClientEstimate:
         """Update a client estimate and recalculate computed fields."""
         try:
@@ -700,6 +710,7 @@ class EstimateService:
         return estimate
 
     @staticmethod
+    @audit_action(action='delete', entity='estimate', record_arg='estimate_id', id_field='estimateid')
     def delete_estimate(estimate_id: UUID, user) -> ClientEstimate:
         """Cancel a client estimate."""
         try:

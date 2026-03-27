@@ -53,6 +53,11 @@ INSTALLED_APPS = [
     'apps.budgets',  # Budget & cost structure (Operations module)
     'apps.expenses',  # Expense management & classification (Operations module)
     'apps.invoiceinbox',  # Invoice email inbox (Operations module)
+    'apps.proyeccion',  # Budget estimation / proyección (Operations module)
+    'apps.corporate',  # Corporate headquarters budget & allocation (Operations module)
+    'apps.hrpayroll',  # HR & Payroll module (employees, payroll, attendance)
+    'apps.audit',  # Audit trail (cross-entity change tracking)
+    'apps.agents',  # AI-powered agents (scoring, classification, alerts, forecasting)
     'core',  # Shared utilities
 ]
 

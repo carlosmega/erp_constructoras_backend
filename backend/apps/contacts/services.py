@@ -8,6 +8,7 @@ from apps.contacts.schemas import CreateContactDto, UpdateContactDto
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
+from apps.audit.services import audit_action
 
 
 class ContactService:
@@ -43,6 +44,7 @@ class ContactService:
         return queryset.select_related('ownerid', 'parentcustomerid', 'createdby', 'modifiedby')
 
     @staticmethod
+    @audit_action(action='create', entity='contact')
     def create_contact(dto: CreateContactDto, user: SystemUser) -> Contact:
         """Create a new contact."""
         owner = user
@@ -90,6 +92,7 @@ class ContactService:
         return contact
 
     @staticmethod
+    @audit_action(action='update', entity='contact', record_arg='contact_id')
     def update_contact(contact_id: UUID, dto: UpdateContactDto, user: SystemUser) -> Contact:
         """Update an existing contact."""
         contact = ContactService.get_contact_by_id(contact_id, user)
@@ -112,6 +115,7 @@ class ContactService:
         return contact
 
     @staticmethod
+    @audit_action(action='delete', entity='contact', record_arg='contact_id')
     def deactivate_contact(contact_id: UUID, user: SystemUser) -> Contact:
         """Deactivate a contact."""
         contact = ContactService.get_contact_by_id(contact_id, user)

@@ -18,6 +18,7 @@ from apps.projects.schemas import (
     CreateSupplierDto,
 )
 from apps.users.models import SystemUser
+from apps.audit.services import audit_action
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
 
@@ -60,6 +61,7 @@ class ProjectService:
         )
 
     @staticmethod
+    @audit_action(action='create', entity='project', id_field='projectid')
     def create_project(dto: CreateProjectDto, user: SystemUser) -> ConstructionProject:
         """Create a new construction project."""
         from apps.accounts.models import Account
@@ -159,6 +161,7 @@ class ProjectService:
         return project
 
     @staticmethod
+    @audit_action(action='update', entity='project', record_arg='project_id', id_field='projectid')
     def update_project(project_id: UUID, dto: UpdateProjectDto, user: SystemUser) -> ConstructionProject:
         """Update an existing project (partial update)."""
         project = ProjectService.get_project_by_id(project_id, user)
@@ -221,6 +224,7 @@ class ProjectService:
         return project
 
     @staticmethod
+    @audit_action(action='delete', entity='project', record_arg='project_id', id_field='projectid')
     def delete_project(project_id: UUID, user: SystemUser) -> ConstructionProject:
         """Soft delete a project (set statecode to Canceled)."""
         project = ProjectService.get_project_by_id(project_id, user)

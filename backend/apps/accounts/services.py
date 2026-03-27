@@ -8,6 +8,7 @@ from apps.accounts.schemas import CreateAccountDto, UpdateAccountDto
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
+from apps.audit.services import audit_action
 
 
 class AccountService:
@@ -19,6 +20,7 @@ class AccountService:
         statecode: Optional[int] = None,
         search: Optional[str] = None,
         ownerid: Optional[UUID] = None,
+        customertypecode: Optional[int] = None,
     ) -> QuerySet[Account]:
         """List accounts with filtering."""
         queryset = Account.objects.all()
@@ -26,6 +28,14 @@ class AccountService:
 
         if statecode is not None:
             queryset = queryset.filter(statecode=statecode)
+        if customertypecode is not None:
+            # 1=Customer, 2=Supplier, 3=Both
+            if customertypecode == 1:
+                queryset = queryset.filter(customertypecode__in=[1, 3])
+            elif customertypecode == 2:
+                queryset = queryset.filter(customertypecode__in=[2, 3])
+            else:
+                queryset = queryset.filter(customertypecode=customertypecode)
         if ownerid:
             if user.role_name not in ["System Administrator", "Sales Manager"]:
                 raise PermissionDenied("You cannot view other users' accounts")
@@ -40,6 +50,7 @@ class AccountService:
         return queryset.select_related('ownerid', 'createdby', 'modifiedby')
 
     @staticmethod
+    @audit_action(action='create', entity='account')
     def create_account(dto: CreateAccountDto, user: SystemUser) -> Account:
         """Create a new account."""
         owner = user
@@ -86,6 +97,7 @@ class AccountService:
         return account
 
     @staticmethod
+    @audit_action(action='update', entity='account', record_arg='account_id')
     def update_account(account_id: UUID, dto: UpdateAccountDto, user: SystemUser) -> Account:
         """Update an existing account."""
         account = AccountService.get_account_by_id(account_id, user)
@@ -117,6 +129,7 @@ class AccountService:
         return queryset.order_by('name')[:50]
 
     @staticmethod
+    @audit_action(action='delete', entity='account', record_arg='account_id')
     def deactivate_account(account_id: UUID, user: SystemUser) -> Account:
         """Deactivate an account."""
         account = AccountService.get_account_by_id(account_id, user)

@@ -12,6 +12,7 @@ from decimal import Decimal
 from datetime import datetime
 from uuid import UUID
 
+from apps.audit.services import audit_action
 from apps.quotes.models import Quote, QuoteDetail, QuoteStateCode, QuoteStatusCode
 from apps.quotes.schemas import (
     CreateQuoteDto, UpdateQuoteDto, CreateQuoteDetailDto,
@@ -46,6 +47,7 @@ class QuoteService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='quote')
     def create_quote(dto: CreateQuoteDto, user: SystemUser) -> Quote:
         """Create a new quote with optional line items."""
         # Generate quote number
@@ -137,6 +139,7 @@ class QuoteService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='update', entity='quote', record_arg='quote_id')
     def update_quote(quote_id: UUID, dto: UpdateQuoteDto, user: SystemUser) -> Quote:
         """Update quote."""
         quote = QuoteService.get_quote_by_id(quote_id, user)
@@ -173,6 +176,7 @@ class QuoteService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='delete', entity='quote', record_arg='quote_id')
     def delete_quote(quote_id: UUID, user: SystemUser):
         """Delete (soft delete) a quote."""
         quote = QuoteService.get_quote_by_id(quote_id, user)
@@ -240,6 +244,7 @@ class QuoteService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='activate', entity='quote', record_arg='quote_id')
     def activate_quote(quote_id: UUID, dto: ActivateQuoteDto, user: SystemUser) -> Quote:
         """Activate a quote (ready for customer review)."""
         quote = QuoteService.get_quote_by_id(quote_id, user)
@@ -275,6 +280,7 @@ class QuoteService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='close', entity='quote', record_arg='quote_id')
     def close_quote(quote_id: UUID, dto: CloseQuoteDto, user: SystemUser) -> Quote:
         """Close a quote (won/lost/canceled)."""
         quote = QuoteService.get_quote_by_id(quote_id, user)

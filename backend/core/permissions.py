@@ -125,6 +125,41 @@ class Permission(str, Enum):
     INBOX_LINK = "inbox_link"
     INBOX_SYNC = "inbox_sync"
 
+    # Corporate module permissions
+    CORPORATE_CREATE = "corporate_create"
+    CORPORATE_READ = "corporate_read"
+    CORPORATE_UPDATE = "corporate_update"
+    CORPORATE_DELETE = "corporate_delete"
+    CORPORATE_ALLOCATE = "corporate_allocate"
+    CORPORATE_SIMULATE = "corporate_simulate"
+
+    # HR/Payroll module permissions
+    EMPLOYEE_CREATE = "employee_create"
+    EMPLOYEE_READ = "employee_read"
+    EMPLOYEE_UPDATE = "employee_update"
+    EMPLOYEE_DELETE = "employee_delete"
+    EMPLOYEE_TERMINATE = "employee_terminate"
+
+    PAYROLL_CREATE = "payroll_create"
+    PAYROLL_READ = "payroll_read"
+    PAYROLL_UPDATE = "payroll_update"
+    PAYROLL_DELETE = "payroll_delete"
+    PAYROLL_CALCULATE = "payroll_calculate"
+    PAYROLL_APPROVE = "payroll_approve"
+
+    ATTENDANCE_CREATE = "attendance_create"
+    ATTENDANCE_READ = "attendance_read"
+    ATTENDANCE_UPDATE = "attendance_update"
+    ATTENDANCE_DELETE = "attendance_delete"
+
+    HR_CATALOG_MANAGE = "hr_catalog_manage"
+
+    # Agent permissions
+    AGENT_VIEW = "agent_view"
+    AGENT_RUN = "agent_run"
+    AGENT_CONFIG = "agent_config"
+    AGENT_RESOLVE = "agent_resolve"
+
 
 # ============================================================================
 # Role Permission Matrix
@@ -151,6 +186,15 @@ ROLE_PERMISSIONS = {
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
         # Invoice Inbox - full access
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
+        # Corporate module - full access
+        Permission.CORPORATE_CREATE, Permission.CORPORATE_READ, Permission.CORPORATE_UPDATE, Permission.CORPORATE_DELETE, Permission.CORPORATE_ALLOCATE, Permission.CORPORATE_SIMULATE,
+        # HR/Payroll module - full access
+        Permission.EMPLOYEE_CREATE, Permission.EMPLOYEE_READ, Permission.EMPLOYEE_UPDATE, Permission.EMPLOYEE_DELETE, Permission.EMPLOYEE_TERMINATE,
+        Permission.PAYROLL_CREATE, Permission.PAYROLL_READ, Permission.PAYROLL_UPDATE, Permission.PAYROLL_DELETE, Permission.PAYROLL_CALCULATE, Permission.PAYROLL_APPROVE,
+        Permission.ATTENDANCE_CREATE, Permission.ATTENDANCE_READ, Permission.ATTENDANCE_UPDATE, Permission.ATTENDANCE_DELETE,
+        Permission.HR_CATALOG_MANAGE,
+        # Agent module - full access
+        Permission.AGENT_VIEW, Permission.AGENT_RUN, Permission.AGENT_CONFIG, Permission.AGENT_RESOLVE,
     ],
 
     "Sales Manager": [
@@ -174,6 +218,15 @@ ROLE_PERMISSIONS = {
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
         # Invoice Inbox - full access
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
+        # Corporate module - full access
+        Permission.CORPORATE_CREATE, Permission.CORPORATE_READ, Permission.CORPORATE_UPDATE, Permission.CORPORATE_DELETE, Permission.CORPORATE_ALLOCATE, Permission.CORPORATE_SIMULATE,
+        # HR/Payroll module - full access
+        Permission.EMPLOYEE_CREATE, Permission.EMPLOYEE_READ, Permission.EMPLOYEE_UPDATE, Permission.EMPLOYEE_DELETE, Permission.EMPLOYEE_TERMINATE,
+        Permission.PAYROLL_CREATE, Permission.PAYROLL_READ, Permission.PAYROLL_UPDATE, Permission.PAYROLL_DELETE, Permission.PAYROLL_CALCULATE, Permission.PAYROLL_APPROVE,
+        Permission.ATTENDANCE_CREATE, Permission.ATTENDANCE_READ, Permission.ATTENDANCE_UPDATE, Permission.ATTENDANCE_DELETE,
+        Permission.HR_CATALOG_MANAGE,
+        # Agent module - run and resolve
+        Permission.AGENT_VIEW, Permission.AGENT_RUN, Permission.AGENT_RESOLVE,
     ],
 
     "Salesperson": [
@@ -196,6 +249,14 @@ ROLE_PERMISSIONS = {
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE,
         # Invoice Inbox - classify and sync
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
+        # Corporate module - no delete, no allocate
+        Permission.CORPORATE_CREATE, Permission.CORPORATE_READ, Permission.CORPORATE_UPDATE, Permission.CORPORATE_SIMULATE,
+        # HR/Payroll module - read only + create attendance
+        Permission.EMPLOYEE_READ,
+        Permission.PAYROLL_READ,
+        Permission.ATTENDANCE_CREATE, Permission.ATTENDANCE_READ,
+        # Agent module - view and resolve own suggestions
+        Permission.AGENT_VIEW, Permission.AGENT_RESOLVE,
     ],
 
     "Marketing User": [
@@ -205,6 +266,8 @@ ROLE_PERMISSIONS = {
         Permission.CONTACT_CREATE, Permission.CONTACT_READ, Permission.CONTACT_UPDATE,
         Permission.ACTIVITY_CREATE, Permission.ACTIVITY_READ, Permission.ACTIVITY_UPDATE,
         Permission.CASE_READ,
+        # Agent module - view only
+        Permission.AGENT_VIEW,
     ],
 
     "Read-Only User": [
@@ -227,6 +290,14 @@ ROLE_PERMISSIONS = {
         Permission.ESTIMATE_READ,
         # Invoice Inbox - read only
         Permission.INBOX_READ,
+        # Corporate module - read only
+        Permission.CORPORATE_READ,
+        # HR/Payroll module - read only
+        Permission.EMPLOYEE_READ,
+        Permission.PAYROLL_READ,
+        Permission.ATTENDANCE_READ,
+        # Agent module - view only
+        Permission.AGENT_VIEW,
     ],
 }
 

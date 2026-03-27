@@ -17,6 +17,7 @@ from apps.users.models import SystemUser, SecurityRole
 from apps.users.schemas import CreateUserDto, UpdateUserDto
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.middleware import get_current_user
+from apps.audit.services import audit_action
 
 
 class UserService:
@@ -26,6 +27,7 @@ class UserService:
     """
 
     @staticmethod
+    @audit_action(action='create', entity='systemuser', id_field='systemuserid')
     def create_user(payload: CreateUserDto) -> SystemUser:
         """
         Create a new user with audit fields (T040).
@@ -71,6 +73,7 @@ class UserService:
         return user
 
     @staticmethod
+    @audit_action(action='update', entity='systemuser', record_arg='user_id', id_field='systemuserid')
     def update_user(user_id: UUID, payload: UpdateUserDto) -> SystemUser:
         """
         Update user with modifiedby audit field (T041).
@@ -266,6 +269,7 @@ class UserService:
         return queryset.order_by('fullname')
 
     @staticmethod
+    @audit_action(action='delete', entity='systemuser', record_arg='user_id', id_field='systemuserid')
     def deactivate_user(user_id: UUID) -> SystemUser:
         """
         Soft delete user by setting isdisabled=True (T046).

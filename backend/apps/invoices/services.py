@@ -10,6 +10,7 @@ from uuid import UUID
 from django.db import transaction
 from django.db.models import Sum, Q
 
+from apps.audit.services import audit_action
 from apps.invoices.models import Invoice, InvoiceDetail, InvoiceStateCode, InvoiceStatusCode
 from apps.invoices.schemas import (
     CreateInvoiceDto, UpdateInvoiceDto, CreateInvoiceDetailDto,
@@ -45,6 +46,7 @@ class InvoiceService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='invoice')
     def create_invoice_from_order(order_id: UUID, user: SystemUser) -> Invoice:
         """
         Create an invoice from a fulfilled sales order.
@@ -122,6 +124,7 @@ class InvoiceService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='create', entity='invoice')
     def create_invoice(dto: CreateInvoiceDto, user: SystemUser) -> Invoice:
         """
         Create a new invoice manually.
@@ -184,6 +187,7 @@ class InvoiceService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='update', entity='invoice', record_arg='invoice_id')
     def update_invoice(invoice_id: UUID, dto: UpdateInvoiceDto, user: SystemUser) -> Invoice:
         """Update invoice details."""
         invoice = InvoiceService.get_invoice_by_id(invoice_id, user)
@@ -273,6 +277,7 @@ class InvoiceService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='payment', entity='invoice', record_arg='invoice_id')
     def record_payment(invoice_id: UUID, dto: RecordPaymentDto, user: SystemUser) -> Invoice:
         """
         Record a payment on an invoice.
@@ -322,6 +327,7 @@ class InvoiceService:
 
     @staticmethod
     @transaction.atomic
+    @audit_action(action='cancel', entity='invoice', record_arg='invoice_id')
     def cancel_invoice(invoice_id: UUID, dto: CancelInvoiceDto, user: SystemUser) -> Invoice:
         """Cancel an invoice."""
         invoice = InvoiceService.get_invoice_by_id(invoice_id, user)

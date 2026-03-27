@@ -15,6 +15,7 @@ from apps.opportunities.schemas import CreateOpportunityDto, UpdateOpportunityDt
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
+from apps.audit.services import audit_action
 
 
 class OpportunityService:
@@ -50,6 +51,7 @@ class OpportunityService:
         return queryset.select_related('ownerid', 'originatingleadid', 'createdby', 'modifiedby')
 
     @staticmethod
+    @audit_action(action='create', entity='opportunity')
     def create_opportunity(dto: CreateOpportunityDto, user: SystemUser) -> Opportunity:
         """Create a new opportunity."""
         owner = user
@@ -110,6 +112,7 @@ class OpportunityService:
         return opp
 
     @staticmethod
+    @audit_action(action='update', entity='opportunity', record_arg='opportunity_id')
     def update_opportunity(opportunity_id: UUID, dto: UpdateOpportunityDto, user: SystemUser) -> Opportunity:
         """Update an existing opportunity."""
         opp = OpportunityService.get_opportunity_by_id(opportunity_id, user)
@@ -165,6 +168,7 @@ class OpportunityService:
         return opp
 
     @staticmethod
+    @audit_action(action='close', entity='opportunity', record_arg='opportunity_id')
     def close_opportunity(opportunity_id: UUID, dto: CloseOpportunityDto, user: SystemUser) -> Opportunity:
         """Close opportunity as Won or Lost."""
         opp = OpportunityService.get_opportunity_by_id(opportunity_id, user)
@@ -208,6 +212,7 @@ class OpportunityService:
         return opp
 
     @staticmethod
+    @audit_action(action='delete', entity='opportunity', record_arg='opportunity_id')
     def delete_opportunity(opportunity_id: UUID, user: SystemUser) -> Opportunity:
         """Delete (cancel) an opportunity."""
         close_dto = CloseOpportunityDto(

@@ -33,5 +33,8 @@ pytest==8.0.0
 pytest-django==4.7.0
 pytest-cov==4.1.0
 
+# Data Import
+openpyxl==3.1.5
+
 # Django Extensions (useful for development)
 django-extensions==3.2.3

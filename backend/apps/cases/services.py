@@ -23,6 +23,7 @@ from apps.cases.schemas import (
     CancelCaseDto,
 )
 from apps.users.models import SystemUser
+from apps.audit.services import audit_action
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from core.permissions import filter_by_ownership
 
@@ -103,6 +104,7 @@ class CaseService:
         return queryset
 
     @staticmethod
+    @audit_action(action='create', entity='case', id_field='incidentid')
     def create_case(dto: CreateCaseDto, user: SystemUser) -> Case:
         """
         Create a new case.
@@ -203,6 +205,7 @@ class CaseService:
         return case
 
     @staticmethod
+    @audit_action(action='update', entity='case', record_arg='case_id', id_field='incidentid')
     def update_case(case_id: UUID, dto: UpdateCaseDto, user: SystemUser) -> Case:
         """
         Update an existing case.
@@ -271,6 +274,7 @@ class CaseService:
         return case
 
     @staticmethod
+    @audit_action(action='delete', entity='case', record_arg='case_id', id_field='incidentid')
     def delete_case(case_id: UUID, user: SystemUser) -> None:
         """
         Delete (cancel) a case.
@@ -289,6 +293,7 @@ class CaseService:
         CaseService.cancel_case(case_id, cancel_dto, user)
 
     @staticmethod
+    @audit_action(action='close', entity='case', record_arg='case_id', id_field='incidentid')
     def resolve_case(case_id: UUID, dto: ResolveCaseDto, user: SystemUser) -> Case:
         """
         Resolve a case.
@@ -328,6 +333,7 @@ class CaseService:
         return case
 
     @staticmethod
+    @audit_action(action='cancel', entity='case', record_arg='case_id', id_field='incidentid')
     def cancel_case(case_id: UUID, dto: CancelCaseDto, user: SystemUser) -> Case:
         """
         Cancel a case.
@@ -366,6 +372,7 @@ class CaseService:
         return case
 
     @staticmethod
+    @audit_action(action='activate', entity='case', record_arg='case_id', id_field='incidentid')
     def reopen_case(case_id: UUID, user: SystemUser) -> Case:
         """
         Reopen a resolved or cancelled case.
