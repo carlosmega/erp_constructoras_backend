@@ -33,6 +33,7 @@ from apps.expenses.services import (
     ProvisionService,
     EstimateService,
 )
+from core.permissions import require_permission, Permission
 
 
 # =============================================================================
@@ -46,6 +47,7 @@ expenses_router = Router(tags=["Expenses"])
     "/projects/{project_id}/expenses/",
     response=List[ProjectExpenseSchema],
 )
+@require_permission(Permission.EXPENSE_READ)
 def list_expenses(
     request: HttpRequest,
     project_id: UUID,
@@ -55,7 +57,6 @@ def list_expenses(
     statecode: Optional[int] = None,
 ):
     """List expenses for a project with optional filtering."""
-    # TODO: add @require_permission decorator
     expenses = ExpenseService.list_expenses(
         project_id=project_id,
         user=request.user,
@@ -71,9 +72,9 @@ def list_expenses(
     "/projects/{project_id}/expenses/",
     response={201: ProjectExpenseSchema},
 )
+@require_permission(Permission.EXPENSE_CREATE)
 def create_expense(request: HttpRequest, project_id: UUID, payload: CreateProjectExpenseDto):
     """Create a new project expense."""
-    # TODO: add @require_permission decorator
     payload.projectid = project_id
     expense = ExpenseService.create_expense(payload, request.user)
     return 201, expense
@@ -96,9 +97,9 @@ def check_uuid_exists(request: HttpRequest, uuid: str):
     "/expenses/{expense_id}/",
     response=ProjectExpenseSchema,
 )
+@require_permission(Permission.EXPENSE_READ)
 def get_expense(request: HttpRequest, expense_id: UUID):
     """Get expense by ID."""
-    # TODO: add @require_permission decorator
     return ExpenseService.get_expense_by_id(expense_id, request.user)
 
 
@@ -106,9 +107,9 @@ def get_expense(request: HttpRequest, expense_id: UUID):
     "/expenses/{expense_id}/",
     response=ProjectExpenseSchema,
 )
+@require_permission(Permission.EXPENSE_UPDATE)
 def update_expense(request: HttpRequest, expense_id: UUID, payload: UpdateProjectExpenseDto):
     """Update an existing project expense."""
-    # TODO: add @require_permission decorator
     return ExpenseService.update_expense(expense_id, payload, request.user)
 
 
@@ -116,9 +117,9 @@ def update_expense(request: HttpRequest, expense_id: UUID, payload: UpdateProjec
     "/expenses/{expense_id}/cancel/",
     response=ProjectExpenseSchema,
 )
+@require_permission(Permission.EXPENSE_DELETE)
 def cancel_expense(request: HttpRequest, expense_id: UUID):
     """Cancel a project expense."""
-    # TODO: add @require_permission decorator
     return ExpenseService.cancel_expense(expense_id, request.user)
 
 
@@ -126,9 +127,9 @@ def cancel_expense(request: HttpRequest, expense_id: UUID):
     "/expenses/{expense_id}/classify/",
     response=ProjectExpenseSchema,
 )
+@require_permission(Permission.EXPENSE_CLASSIFY)
 def classify_expense(request: HttpRequest, expense_id: UUID, payload: ClassifyExpenseDto):
     """Classify an expense with an imputation code."""
-    # TODO: add @require_permission decorator
     return ClassificationService.classify_expense(
         expense_id, payload.imputationcodeid, payload.notes, request.user
     )
@@ -138,9 +139,9 @@ def classify_expense(request: HttpRequest, expense_id: UUID, payload: ClassifyEx
     "/expenses/bulk-classify/",
     response=List[ProjectExpenseSchema],
 )
+@require_permission(Permission.EXPENSE_CLASSIFY)
 def bulk_classify(request: HttpRequest, payload: BulkClassifyDto):
     """Classify multiple expenses with the same imputation code."""
-    # TODO: add @require_permission decorator
     return ClassificationService.bulk_classify(
         payload.expenseids, payload.imputationcodeid, payload.notes, request.user
     )
@@ -150,9 +151,9 @@ def bulk_classify(request: HttpRequest, payload: BulkClassifyDto):
     "/expenses/{expense_id}/unclassify/",
     response=ProjectExpenseSchema,
 )
+@require_permission(Permission.EXPENSE_CLASSIFY)
 def unclassify_expense(request: HttpRequest, expense_id: UUID):
     """Remove classification from an expense."""
-    # TODO: add @require_permission decorator
     return ClassificationService.unclassify_expense(expense_id, None, request.user)
 
 
@@ -160,9 +161,9 @@ def unclassify_expense(request: HttpRequest, expense_id: UUID):
     "/expenses/{expense_id}/verify/",
     response=ProjectExpenseSchema,
 )
+@require_permission(Permission.EXPENSE_VERIFY)
 def verify_expense(request: HttpRequest, expense_id: UUID, payload: VerifyExpenseDto):
     """Update verification status on an expense."""
-    # TODO: add @require_permission decorator
     return VerificationService.update_verification(
         expense_id, payload.verificationstatus, payload.verificationnotes, request.user
     )
@@ -172,9 +173,9 @@ def verify_expense(request: HttpRequest, expense_id: UUID, payload: VerifyExpens
     "/expenses/{expense_id}/convert-provision/",
     response={201: ProjectExpenseSchema},
 )
+@require_permission(Permission.EXPENSE_CREATE)
 def convert_provision(request: HttpRequest, expense_id: UUID, payload: CreateProjectExpenseDto):
     """Convert a provision to a real expense."""
-    # TODO: add @require_permission decorator
     new_expense = ProvisionService.convert_provision(expense_id, payload, request.user)
     return 201, new_expense
 
@@ -183,9 +184,9 @@ def convert_provision(request: HttpRequest, expense_id: UUID, payload: CreatePro
     "/projects/{project_id}/expenses/unclassified/",
     response=List[ProjectExpenseSchema],
 )
+@require_permission(Permission.EXPENSE_READ)
 def list_unclassified_expenses(request: HttpRequest, project_id: UUID):
     """Get unclassified expenses for a project."""
-    # TODO: add @require_permission decorator
     expenses = ExpenseService.get_unclassified_expenses(project_id, request.user)
     return list(expenses)
 
@@ -194,9 +195,9 @@ def list_unclassified_expenses(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/expenses/summary/",
     response=ExpenseSummarySchema,
 )
+@require_permission(Permission.EXPENSE_READ)
 def get_expense_summary(request: HttpRequest, project_id: UUID):
     """Get aggregate expense summary for a project."""
-    # TODO: add @require_permission decorator
     return ExpenseService.get_expense_summary(project_id, request.user)
 
 
@@ -211,9 +212,9 @@ expense_lines_router = Router(tags=["Expense Lines"])
     "/expenses/{expense_id}/lines/",
     response=List[ExpenseLineSchema],
 )
+@require_permission(Permission.EXPENSE_READ)
 def list_lines(request: HttpRequest, expense_id: UUID):
     """List all lines for an expense."""
-    # TODO: add @require_permission decorator
     return list(ExpenseLineService.list_lines(expense_id))
 
 
@@ -221,9 +222,9 @@ def list_lines(request: HttpRequest, expense_id: UUID):
     "/expenses/{expense_id}/lines/",
     response={201: ExpenseLineSchema},
 )
+@require_permission(Permission.EXPENSE_UPDATE)
 def add_line(request: HttpRequest, expense_id: UUID, payload: CreateExpenseLineDto):
     """Add a line to an expense."""
-    # TODO: add @require_permission decorator
     line = ExpenseLineService.add_line(expense_id, payload, request.user)
     return 201, line
 
@@ -232,9 +233,9 @@ def add_line(request: HttpRequest, expense_id: UUID, payload: CreateExpenseLineD
     "/expense-lines/{line_id}/",
     response=ExpenseLineSchema,
 )
+@require_permission(Permission.EXPENSE_UPDATE)
 def update_line(request: HttpRequest, line_id: UUID, payload: UpdateExpenseLineDto):
     """Update an expense line."""
-    # TODO: add @require_permission decorator
     return ExpenseLineService.update_line(line_id, payload, request.user)
 
 
@@ -242,9 +243,9 @@ def update_line(request: HttpRequest, line_id: UUID, payload: UpdateExpenseLineD
     "/expense-lines/{line_id}/",
     response={204: None},
 )
+@require_permission(Permission.EXPENSE_DELETE)
 def delete_line(request: HttpRequest, line_id: UUID):
     """Delete an expense line."""
-    # TODO: add @require_permission decorator
     ExpenseLineService.remove_line(line_id, request.user)
     return 204, None
 
@@ -260,9 +261,9 @@ attachments_router = Router(tags=["Expense Attachments"])
     "/expenses/{expense_id}/attachments/",
     response=List[ExpenseAttachmentSchema],
 )
+@require_permission(Permission.EXPENSE_READ)
 def list_attachments(request: HttpRequest, expense_id: UUID):
     """List all attachments for an expense."""
-    # TODO: add @require_permission decorator
     return list(AttachmentService.list_attachments(expense_id))
 
 
@@ -270,6 +271,7 @@ def list_attachments(request: HttpRequest, expense_id: UUID):
     "/expenses/{expense_id}/attachments/",
     response={201: ExpenseAttachmentSchema},
 )
+@require_permission(Permission.EXPENSE_UPDATE)
 def add_attachment(
     request: HttpRequest,
     expense_id: UUID,
@@ -281,7 +283,6 @@ def add_attachment(
     mimetype: str = Form(...),
 ):
     """Add an attachment to an expense (multipart file upload)."""
-    # TODO: add @require_permission decorator
     attachment = AttachmentService.add_attachment(
         expense_id=expense_id,
         filename=filename,
@@ -316,9 +317,9 @@ def download_attachment(request: HttpRequest, attachment_id: UUID):
     "/attachments/{attachment_id}/",
     response={204: None},
 )
+@require_permission(Permission.EXPENSE_DELETE)
 def delete_attachment(request: HttpRequest, attachment_id: UUID):
     """Delete an attachment."""
-    # TODO: add @require_permission decorator
     AttachmentService.remove_attachment(attachment_id, request.user)
     return 204, None
 
@@ -331,9 +332,9 @@ def delete_attachment(request: HttpRequest, attachment_id: UUID):
     "/expenses/{expense_id}/logs/",
     response=List[ClassificationLogSchema],
 )
+@require_permission(Permission.EXPENSE_READ)
 def list_classification_logs(request: HttpRequest, expense_id: UUID):
     """Get classification logs for an expense."""
-    # TODO: add @require_permission decorator
     return list(ClassificationService.get_classification_logs(expense_id))
 
 
@@ -348,9 +349,9 @@ estimates_router = Router(tags=["Client Estimates"])
     "/projects/{project_id}/estimates/",
     response=List[ClientEstimateSchema],
 )
+@require_permission(Permission.ESTIMATE_READ)
 def list_estimates(request: HttpRequest, project_id: UUID):
     """List all estimates for a project."""
-    # TODO: add @require_permission decorator
     return list(EstimateService.list_estimates(project_id, request.user))
 
 
@@ -358,9 +359,9 @@ def list_estimates(request: HttpRequest, project_id: UUID):
     "/estimates/{estimate_id}/",
     response=ClientEstimateSchema,
 )
+@require_permission(Permission.ESTIMATE_READ)
 def get_estimate(request: HttpRequest, estimate_id: UUID):
     """Get a single client estimate by ID."""
-    # TODO: add @require_permission decorator
     return EstimateService.get_estimate_by_id(estimate_id, request.user)
 
 
@@ -368,9 +369,9 @@ def get_estimate(request: HttpRequest, estimate_id: UUID):
     "/projects/{project_id}/estimates/",
     response={201: ClientEstimateSchema},
 )
+@require_permission(Permission.ESTIMATE_CREATE)
 def create_estimate(request: HttpRequest, project_id: UUID, payload: CreateClientEstimateDto):
     """Create a new client estimate."""
-    # TODO: add @require_permission decorator
     payload.projectid = project_id
     estimate = EstimateService.create_estimate(payload, request.user)
     return 201, estimate
@@ -380,9 +381,9 @@ def create_estimate(request: HttpRequest, project_id: UUID, payload: CreateClien
     "/estimates/{estimate_id}/",
     response=ClientEstimateSchema,
 )
+@require_permission(Permission.ESTIMATE_UPDATE)
 def update_estimate(request: HttpRequest, estimate_id: UUID, payload: UpdateClientEstimateDto):
     """Update a client estimate."""
-    # TODO: add @require_permission decorator
     return EstimateService.update_estimate(estimate_id, payload, request.user)
 
 
@@ -390,8 +391,8 @@ def update_estimate(request: HttpRequest, estimate_id: UUID, payload: UpdateClie
     "/estimates/{estimate_id}/",
     response={204: None},
 )
+@require_permission(Permission.ESTIMATE_DELETE)
 def delete_estimate(request: HttpRequest, estimate_id: UUID):
     """Cancel a client estimate."""
-    # TODO: add @require_permission decorator
     EstimateService.delete_estimate(estimate_id, request.user)
     return 204, None

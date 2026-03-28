@@ -13,6 +13,7 @@ from apps.projects.schemas import (
 from apps.projects.services import (
     ProjectService, ZoneService, SupplierService, TeamMemberService,
 )
+from core.permissions import require_permission, Permission
 
 
 # ============================================================================
@@ -23,7 +24,7 @@ projects_router = Router(tags=["Projects"])
 
 
 @projects_router.get("/", response=List[ConstructionProjectSchema])
-# TODO: Add @require_permission(Permission.PROJECT_READ) when permissions are registered
+@require_permission(Permission.PROJECT_READ)
 def list_projects(
     request: HttpRequest,
     statecode: Optional[int] = None,
@@ -42,7 +43,7 @@ def list_projects(
 
 
 @projects_router.post("/", response={201: ConstructionProjectSchema})
-# TODO: Add @require_permission(Permission.PROJECT_CREATE) when permissions are registered
+@require_permission(Permission.PROJECT_CREATE)
 def create_project(request: HttpRequest, payload: CreateProjectDto):
     """Create a new construction project."""
     project = ProjectService.create_project(payload, request.user)
@@ -50,7 +51,7 @@ def create_project(request: HttpRequest, payload: CreateProjectDto):
 
 
 @projects_router.get("/search/", response=List[ConstructionProjectSchema])
-# TODO: Add @require_permission(Permission.PROJECT_READ) when permissions are registered
+@require_permission(Permission.PROJECT_READ)
 def search_projects(request: HttpRequest, q: Optional[str] = None):
     """Search projects by name, number, or account name."""
     projects = ProjectService.search_projects(q or '', request.user)
@@ -58,7 +59,7 @@ def search_projects(request: HttpRequest, q: Optional[str] = None):
 
 
 @projects_router.get("/{project_id}", response=ConstructionProjectSchema)
-# TODO: Add @require_permission(Permission.PROJECT_READ) when permissions are registered
+@require_permission(Permission.PROJECT_READ)
 def get_project(request: HttpRequest, project_id: UUID):
     """Get a construction project by ID."""
     project = ProjectService.get_project_by_id(project_id, request.user)
@@ -66,7 +67,7 @@ def get_project(request: HttpRequest, project_id: UUID):
 
 
 @projects_router.patch("/{project_id}", response=ConstructionProjectSchema)
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def update_project(request: HttpRequest, project_id: UUID, payload: UpdateProjectDto):
     """Update a construction project."""
     project = ProjectService.update_project(project_id, payload, request.user)
@@ -74,7 +75,7 @@ def update_project(request: HttpRequest, project_id: UUID, payload: UpdateProjec
 
 
 @projects_router.delete("/{project_id}", response={204: None})
-# TODO: Add @require_permission(Permission.PROJECT_DELETE) when permissions are registered
+@require_permission(Permission.PROJECT_DELETE)
 def delete_project(request: HttpRequest, project_id: UUID):
     """Soft delete a construction project (set to Canceled)."""
     ProjectService.delete_project(project_id, request.user)
@@ -89,7 +90,7 @@ zones_router = Router(tags=["Project Zones"])
 
 
 @projects_router.get("/{project_id}/zones/", response=List[ProjectZoneSchema])
-# TODO: Add @require_permission(Permission.PROJECT_READ) when permissions are registered
+@require_permission(Permission.PROJECT_READ)
 def list_zones(request: HttpRequest, project_id: UUID):
     """List all zones for a project."""
     zones = ZoneService.list_zones(project_id, request.user)
@@ -97,7 +98,7 @@ def list_zones(request: HttpRequest, project_id: UUID):
 
 
 @projects_router.post("/{project_id}/zones/", response={201: ProjectZoneSchema})
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def create_zone(request: HttpRequest, project_id: UUID, payload: CreateZoneDto):
     """Create a new zone within a project."""
     payload.projectid = project_id
@@ -106,7 +107,7 @@ def create_zone(request: HttpRequest, project_id: UUID, payload: CreateZoneDto):
 
 
 @zones_router.patch("/{zone_id}", response=ProjectZoneSchema)
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def update_zone(request: HttpRequest, zone_id: UUID, payload: UpdateZoneDto):
     """Update a zone."""
     zone = ZoneService.update_zone(zone_id, payload, request.user)
@@ -114,7 +115,7 @@ def update_zone(request: HttpRequest, zone_id: UUID, payload: UpdateZoneDto):
 
 
 @zones_router.delete("/{zone_id}", response={204: None})
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def delete_zone(request: HttpRequest, zone_id: UUID):
     """Soft delete a zone."""
     ZoneService.delete_zone(zone_id, request.user)
@@ -129,7 +130,7 @@ suppliers_router = Router(tags=["Project Suppliers"])
 
 
 @projects_router.get("/{project_id}/suppliers/", response=List[ProjectSupplierSchema])
-# TODO: Add @require_permission(Permission.PROJECT_READ) when permissions are registered
+@require_permission(Permission.PROJECT_READ)
 def list_suppliers(request: HttpRequest, project_id: UUID):
     """List all suppliers for a project."""
     suppliers = SupplierService.list_suppliers(project_id, request.user)
@@ -137,7 +138,7 @@ def list_suppliers(request: HttpRequest, project_id: UUID):
 
 
 @projects_router.post("/{project_id}/suppliers/", response={201: ProjectSupplierSchema})
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def add_supplier(request: HttpRequest, project_id: UUID, payload: CreateSupplierDto):
     """Add a supplier to a project."""
     payload.projectid = project_id
@@ -146,7 +147,7 @@ def add_supplier(request: HttpRequest, project_id: UUID, payload: CreateSupplier
 
 
 @suppliers_router.delete("/{supplier_id}", response={204: None})
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def remove_supplier(request: HttpRequest, supplier_id: UUID):
     """Soft delete a supplier."""
     SupplierService.remove_supplier(supplier_id, request.user)
@@ -161,7 +162,7 @@ team_members_router = Router(tags=["Project Team Members"])
 
 
 @projects_router.get("/{project_id}/team-members/", response=List[ProjectTeamMemberSchema])
-# TODO: Add @require_permission(Permission.PROJECT_READ) when permissions are registered
+@require_permission(Permission.PROJECT_READ)
 def list_team_members(request: HttpRequest, project_id: UUID):
     """List all team members for a project."""
     members = TeamMemberService.list_team_members(project_id, request.user)
@@ -169,7 +170,7 @@ def list_team_members(request: HttpRequest, project_id: UUID):
 
 
 @projects_router.post("/{project_id}/team-members/", response={201: ProjectTeamMemberSchema})
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def add_team_member(request: HttpRequest, project_id: UUID, payload: CreateTeamMemberDto):
     """Add a team member to a project."""
     payload.projectid = project_id
@@ -178,7 +179,7 @@ def add_team_member(request: HttpRequest, project_id: UUID, payload: CreateTeamM
 
 
 @team_members_router.patch("/{member_id}", response=ProjectTeamMemberSchema)
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def update_team_member(request: HttpRequest, member_id: UUID, payload: UpdateTeamMemberDto):
     """Update a team member."""
     member = TeamMemberService.update_team_member(member_id, payload, request.user)
@@ -186,7 +187,7 @@ def update_team_member(request: HttpRequest, member_id: UUID, payload: UpdateTea
 
 
 @team_members_router.delete("/{member_id}", response={204: None})
-# TODO: Add @require_permission(Permission.PROJECT_UPDATE) when permissions are registered
+@require_permission(Permission.PROJECT_UPDATE)
 def remove_team_member(request: HttpRequest, member_id: UUID):
     """Hard delete a team member."""
     TeamMemberService.remove_team_member(member_id, request.user)

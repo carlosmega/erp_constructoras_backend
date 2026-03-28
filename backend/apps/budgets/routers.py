@@ -20,6 +20,7 @@ from apps.budgets.services import (
     ImputationCodeService,
     PeriodService,
 )
+from core.permissions import require_permission, Permission
 
 
 # =============================================================================
@@ -30,7 +31,7 @@ categories_router = Router(tags=["Cost Categories"])
 
 
 @categories_router.get("/projects/{project_id}/categories/", response=List[CostCategorySchema])
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_READ)
 def list_categories(request: HttpRequest, project_id: UUID):
     """List all cost categories for a project."""
     categories = CostCategoryService.list_categories(project_id, request.user)
@@ -38,7 +39,7 @@ def list_categories(request: HttpRequest, project_id: UUID):
 
 
 @categories_router.post("/projects/{project_id}/categories/", response={201: List[CostCategorySchema]})
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_CREATE)
 def create_or_seed_categories(request: HttpRequest, project_id: UUID, payload: Optional[CreateCostCategoryDto] = None):
     """Create a single category or seed all defaults (if no payload)."""
     if payload:
@@ -57,7 +58,7 @@ imputation_codes_router = Router(tags=["Imputation Codes"])
 
 
 @imputation_codes_router.get("/projects/{project_id}/codes/", response=List[ImputationCodeSchema])
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_READ)
 def list_codes(
     request: HttpRequest,
     project_id: UUID,
@@ -73,7 +74,7 @@ def list_codes(
 
 
 @imputation_codes_router.post("/projects/{project_id}/codes/", response={201: ImputationCodeSchema})
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_CREATE)
 def create_code(request: HttpRequest, project_id: UUID, payload: CreateImputationCodeDto):
     """Create a new imputation code."""
     code = ImputationCodeService.create_code(payload, request.user)
@@ -81,7 +82,7 @@ def create_code(request: HttpRequest, project_id: UUID, payload: CreateImputatio
 
 
 @imputation_codes_router.get("/codes/{code_id}/", response=ImputationCodeSchema)
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_READ)
 def get_code(request: HttpRequest, code_id: UUID):
     """Get an imputation code by ID."""
     code = ImputationCodeService.get_code_by_id(code_id, request.user)
@@ -89,7 +90,7 @@ def get_code(request: HttpRequest, code_id: UUID):
 
 
 @imputation_codes_router.patch("/codes/{code_id}/", response=ImputationCodeSchema)
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_UPDATE)
 def update_code(request: HttpRequest, code_id: UUID, payload: UpdateImputationCodeDto):
     """Update an imputation code."""
     code = ImputationCodeService.update_code(code_id, payload, request.user)
@@ -104,7 +105,7 @@ periods_router = Router(tags=["Imputation Periods"])
 
 
 @periods_router.get("/projects/{project_id}/periods/", response=List[ImputationPeriodSchema])
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_READ)
 def list_periods(request: HttpRequest, project_id: UUID):
     """List all periods for a project."""
     periods = PeriodService.list_periods(project_id, request.user)
@@ -112,7 +113,7 @@ def list_periods(request: HttpRequest, project_id: UUID):
 
 
 @periods_router.post("/projects/{project_id}/periods/init/", response={201: List[ImputationPeriodSchema]})
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_CREATE)
 def initialize_periods(request: HttpRequest, project_id: UUID):
     """Initialize periods for a project based on start/end dates."""
     periods = PeriodService.initialize_periods(project_id, request.user)
@@ -120,7 +121,7 @@ def initialize_periods(request: HttpRequest, project_id: UUID):
 
 
 @periods_router.post("/projects/{project_id}/periods/extend/", response={201: List[ImputationPeriodSchema]})
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_CREATE)
 def extend_periods(request: HttpRequest, project_id: UUID, payload: ExtendPeriodsDto):
     """Extend periods by N months."""
     periods = PeriodService.extend_periods(project_id, payload.months, request.user)
@@ -128,7 +129,7 @@ def extend_periods(request: HttpRequest, project_id: UUID, payload: ExtendPeriod
 
 
 @periods_router.patch("/periods/{period_id}/close/", response=ImputationPeriodSchema)
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_UPDATE)
 def close_period(request: HttpRequest, period_id: UUID):
     """Close a period."""
     period = PeriodService.close_period(period_id, request.user)
@@ -136,7 +137,7 @@ def close_period(request: HttpRequest, period_id: UUID):
 
 
 @periods_router.patch("/periods/{period_id}/reopen/", response=ImputationPeriodSchema)
-# TODO: Add @require_permission decorator during integration
+@require_permission(Permission.BUDGET_UPDATE)
 def reopen_period(request: HttpRequest, period_id: UUID):
     """Reopen a closed period."""
     period = PeriodService.reopen_period(period_id, request.user)
