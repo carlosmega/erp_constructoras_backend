@@ -418,15 +418,15 @@ class TestAttachmentDownloadEndpoint:
 class TestAttachmentDeleteEndpoint:
     """Tests for attachment deletion endpoint with file cleanup."""
 
-    def test_delete_attachment_with_file(self, auth_client, salesperson):
+    def test_delete_attachment_with_file(self, admin_auth_client, system_admin):
         """DELETE removes attachment record and physical file."""
         project = ConstructionProjectFactory(
-            ownerid=salesperson, createdby=salesperson, modifiedby=salesperson
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin
         )
-        period = ImputationPeriodFactory(projectid=project, createdby=salesperson)
+        period = ImputationPeriodFactory(projectid=project, createdby=system_admin)
         expense = ProjectExpenseFactory(
             projectid=project, periodid=period,
-            ownerid=salesperson, createdby=salesperson, modifiedby=salesperson,
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
         )
 
         xml_content = b'<?xml version="1.0"?><cfdi>delete-via-api</cfdi>'
@@ -440,13 +440,13 @@ class TestAttachmentDeleteEndpoint:
             filesize=len(xml_content),
             mimetype='application/xml',
             file=uploaded,
-            user=salesperson,
+            user=system_admin,
         )
 
         file_path = attachment.file.path
         assert os.path.exists(file_path)
 
-        response = auth_client.delete(
+        response = admin_auth_client.delete(
             f'/api/attachments/attachments/{attachment.attachmentid}/'
         )
 

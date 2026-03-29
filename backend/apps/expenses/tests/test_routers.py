@@ -76,14 +76,14 @@ class TestUpdateExpense:
 
 @pytest.mark.contract
 class TestCancelExpense:
-    def test_cancels_expense(self, auth_client, salesperson):
-        project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
-        period = ImputationPeriodFactory(projectid=project, createdby=salesperson)
+    def test_cancels_expense(self, admin_auth_client, system_admin):
+        project = ConstructionProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        period = ImputationPeriodFactory(projectid=project, createdby=system_admin)
         expense = ProjectExpenseFactory(
             projectid=project, periodid=period,
-            ownerid=salesperson, createdby=salesperson, modifiedby=salesperson,
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
         )
-        response = auth_client.patch(f'/api/expenses/expenses/{expense.expenseid}/cancel/')
+        response = admin_auth_client.patch(f'/api/expenses/expenses/{expense.expenseid}/cancel/')
         assert response.status_code == 200
 
 
@@ -183,15 +183,15 @@ class TestExpenseLines:
         )
         assert response.status_code == 201
 
-    def test_delete_line(self, auth_client, salesperson):
-        project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
-        period = ImputationPeriodFactory(projectid=project, createdby=salesperson)
+    def test_delete_line(self, admin_auth_client, system_admin):
+        project = ConstructionProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        period = ImputationPeriodFactory(projectid=project, createdby=system_admin)
         expense = ProjectExpenseFactory(
             projectid=project, periodid=period,
-            ownerid=salesperson, createdby=salesperson, modifiedby=salesperson,
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
         )
         line = ExpenseLineFactory(expenseid=expense)
-        response = auth_client.delete(f'/api/expense-lines/expense-lines/{line.expenselineid}/')
+        response = admin_auth_client.delete(f'/api/expense-lines/expense-lines/{line.expenselineid}/')
         assert response.status_code == 204
 
 
