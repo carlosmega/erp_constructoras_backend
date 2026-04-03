@@ -14,11 +14,14 @@ from apps.budgets.schemas import (
     UpdateImputationCodeDto,
     ImputationPeriodSchema,
     ExtendPeriodsDto,
+    ImputationCodeBudgetSchema,
+    BulkSaveBudgetLinesDto,
 )
 from apps.budgets.services import (
     CostCategoryService,
     ImputationCodeService,
     PeriodService,
+    BudgetLineService,
 )
 from core.permissions import require_permission, Permission
 
@@ -142,3 +145,59 @@ def reopen_period(request: HttpRequest, period_id: UUID):
     """Reopen a closed period."""
     period = PeriodService.reopen_period(period_id, request.user)
     return period
+
+
+# =============================================================================
+# Budget Lines Router (Forecast vs Actual)
+# =============================================================================
+
+budget_lines_router = Router(tags=["Budget Lines (Forecast)"])
+
+
+@budget_lines_router.get(
+    "/codes/{code_id}/budget-lines/",
+    response=List[ImputationCodeBudgetSchema]
+)
+@require_permission(Permission.BUDGET_READ)
+def list_budget_lines(request: HttpRequest, code_id: UUID):
+    """List budget lines for a specific imputation code."""
+    return list(BudgetLineService.list_by_code(code_id, request.user))
+
+
+@budget_lines_router.get(
+    "/projects/{project_id}/budget-lines/",
+    response=List[ImputationCodeBudgetSchema]
+)
+@require_permission(Permission.BUDGET_READ)
+def list_project_budget_lines(
+    request: HttpRequest,
+    project_id: UUID,
+    zone_id: Optional[UUID] = None,
+):
+    """List budget lines for a project, optionally filtered by zone."""
+    return list(BudgetLineService.list_by_project_and_zone(
+        project_id, zone_id, request.user
+    ))
+
+
+@budget_lines_router.post(
+    "/codes/{code_id}/budget-lines/",
+    response={201: List[ImputationCodeBudgetSchema]}
+)
+@require_permission(Permission.BUDGET_UPDATE)
+def save_budget_lines(request: HttpRequest, code_id: UUID, payload: BulkSaveBudgetLinesDto):
+    """Bulk save budget lines for a specific imputation code."""
+    payload.imputationcodeid = code_id
+    lines = BudgetLineService.bulk_save(payload, request.user)
+    return 201, lines
+
+
+@budget_lines_router.post(
+    "/projects/{project_id}/budget-lines/compute-actuals/",
+    response=dict
+)
+@require_permission(Permission.BUDGET_UPDATE)
+def compute_actuals(request: HttpRequest, project_id: UUID, zone_id: Optional[UUID] = None):
+    """Compute actual amounts from classified expenses."""
+    updated = BudgetLineService.compute_actuals(project_id, zone_id)
+    return {"updated": updated}

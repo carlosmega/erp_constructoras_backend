@@ -143,7 +143,7 @@ from apps.cases.routers import cases_router
 from apps.notifications.routers import notifications_router
 from apps.graph.routers import graph_router
 from apps.projects.routers import projects_router, zones_router, suppliers_router, team_members_router
-from apps.budgets.routers import categories_router, imputation_codes_router, periods_router
+from apps.budgets.routers import categories_router, imputation_codes_router, periods_router, budget_lines_router
 from apps.expenses.routers import expenses_router, expense_lines_router, attachments_router, estimates_router
 from apps.invoiceinbox.routers import inbox_router
 from apps.audit.routers import audit_router
@@ -211,6 +211,7 @@ api.add_router("/team-members", team_members_router)
 api.add_router("/categories", categories_router)
 api.add_router("/codes", imputation_codes_router)
 api.add_router("/periods", periods_router)
+api.add_router("/budget-lines", budget_lines_router)
 api.add_router("/expenses", expenses_router)
 api.add_router("/expense-lines", expense_lines_router)
 api.add_router("/attachments", attachments_router)
