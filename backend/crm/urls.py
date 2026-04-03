@@ -171,6 +171,17 @@ from apps.hrpayroll.routers import (
     payroll_periods_router, payroll_runs_router, payroll_entries_router,
     attendance_router,
 )
+from apps.machinery.routers import (
+    categories_router as machinery_categories_router,
+    brands_router as machinery_brands_router,
+    models_router as machinery_models_router,
+    equipment_router as machinery_equipment_router,
+    insurance_router as machinery_insurance_router,
+    reasons_router as machinery_reasons_router,
+    contracts_router as machinery_contracts_router,
+    daily_logs_router as machinery_daily_logs_router,
+    estimations_router as machinery_estimations_router,
+)
 from apps.agents.routers import agents_config_router, agents_run_router, agents_suggestion_router
 
 api.add_router("/auth", auth_router)
@@ -228,6 +239,17 @@ api.add_router("/corporate", corporate_expenses_router)
 api.add_router("/corporate", corporate_allocations_router)
 api.add_router("/corporate", corporate_portfolio_router)
 api.add_router("/corporate", corporate_simulations_router)
+
+# Machinery module routers
+api.add_router("/machinery", machinery_categories_router)
+api.add_router("/machinery", machinery_brands_router)
+api.add_router("/machinery", machinery_models_router)
+api.add_router("/machinery", machinery_equipment_router)
+api.add_router("/machinery", machinery_insurance_router)
+api.add_router("/machinery", machinery_reasons_router)
+api.add_router("/machinery", machinery_contracts_router)
+api.add_router("/machinery", machinery_daily_logs_router)
+api.add_router("/machinery", machinery_estimations_router)
 
 # HR/Payroll module routers
 api.add_router("/employees", employees_router)
