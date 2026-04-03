@@ -6,7 +6,7 @@ from uuid import UUID
 from decimal import Decimal
 from datetime import date
 
-from apps.budgets.models import CostCategory, ImputationCode, ImputationPeriod
+from apps.budgets.models import CostCategory, ImputationCode, ImputationPeriod, ImputationCodeBudget
 
 
 # =============================================================================
@@ -132,3 +132,36 @@ class CreateImputationPeriodDto(Schema):
 class ExtendPeriodsDto(Schema):
     """DTO for extending periods by N months."""
     months: int
+
+
+# =============================================================================
+# ImputationCodeBudget Schemas
+# =============================================================================
+
+class ImputationCodeBudgetSchema(ModelSchema):
+    """Per-period planned/actual budget line."""
+    code: Optional[str] = None
+
+    class Meta:
+        model = ImputationCodeBudget
+        fields = [
+            'budgetlineid', 'imputationcodeid', 'periodid',
+            'periodlabel', 'plannedamount', 'actualamount',
+            'createdon', 'modifiedon',
+        ]
+
+    @staticmethod
+    def resolve_code(obj):
+        return obj.imputationcodeid.code if obj.imputationcodeid else None
+
+
+class SaveBudgetLineDto(Schema):
+    """DTO for saving a single budget line (create or update)."""
+    periodlabel: str
+    plannedamount: Decimal = Decimal('0')
+
+
+class BulkSaveBudgetLinesDto(Schema):
+    """DTO for bulk saving forecast percentages for an imputation code."""
+    imputationcodeid: UUID
+    lines: list[SaveBudgetLineDto]
