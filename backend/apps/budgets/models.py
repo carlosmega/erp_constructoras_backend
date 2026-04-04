@@ -142,6 +142,41 @@ class ImputationCode(AuditMixin):
         null=True
     )
 
+    unit = models.CharField(
+        max_length=20,
+        db_column='unit',
+        blank=True,
+        null=True,
+        help_text='Unit of measurement (PZA, m3, ml, etc.)'
+    )
+
+    contractcode = models.CharField(
+        max_length=20,
+        db_column='contractcode',
+        blank=True,
+        null=True,
+        help_text='Original concept code from estimation (A1, A2, B1, etc.)'
+    )
+
+    contractunitprice = models.DecimalField(
+        max_digits=19,
+        decimal_places=4,
+        db_column='contractunitprice',
+        blank=True,
+        null=True,
+        help_text='Client unit price from contract/estimation'
+    )
+
+    sourceconceptid = models.ForeignKey(
+        'proyeccion.BudgetConcept',
+        on_delete=models.SET_NULL,
+        db_column='sourceconceptid',
+        related_name='generated_codes',
+        blank=True,
+        null=True,
+        help_text='Original BudgetConcept from estimation'
+    )
+
     estimatedsupplier = models.CharField(
         max_length=200,
         db_column='estimatedsupplier',
@@ -325,3 +360,73 @@ class ImputationPeriod(AuditMixin):
 
     def __str__(self):
         return self.label
+
+
+class ImputationCodeBudget(models.Model):
+    """Per-period planned and actual budget for an imputation code."""
+
+    budgetlineid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='budgetlineid'
+    )
+    imputationcodeid = models.ForeignKey(
+        ImputationCode,
+        on_delete=models.CASCADE,
+        db_column='imputationcodeid',
+        related_name='budget_lines'
+    )
+    # FK to period when it falls within project range; null for out-of-range periods
+    periodid = models.ForeignKey(
+        ImputationPeriod,
+        on_delete=models.SET_NULL,
+        db_column='periodid',
+        null=True,
+        blank=True,
+        related_name='code_budgets'
+    )
+    periodlabel = models.CharField(
+        max_length=30,
+        db_column='periodlabel'
+    )
+    plannedamount = models.DecimalField(
+        max_digits=19,
+        decimal_places=2,
+        default=0,
+        db_column='plannedamount'
+    )
+    actualamount = models.DecimalField(
+        max_digits=19,
+        decimal_places=2,
+        default=0,
+        db_column='actualamount'
+    )
+    plannedvolume = models.DecimalField(
+        max_digits=19,
+        decimal_places=4,
+        default=0,
+        db_column='plannedvolume',
+        help_text='Planned production volume in units for this period'
+    )
+    actualvolume = models.DecimalField(
+        max_digits=19,
+        decimal_places=4,
+        default=0,
+        db_column='actualvolume',
+        help_text='Actual production volume in units for this period'
+    )
+    createdon = models.DateTimeField(auto_now_add=True, db_column='createdon')
+    modifiedon = models.DateTimeField(auto_now=True, db_column='modifiedon')
+
+    class Meta:
+        db_table = 'imputationcodebudget'
+        ordering = ['imputationcodeid', 'periodlabel']
+        unique_together = [('imputationcodeid', 'periodlabel')]
+        indexes = [
+            models.Index(fields=['imputationcodeid', 'periodlabel']),
+            models.Index(fields=['periodid']),
+        ]
+
+    def __str__(self):
+        return f"{self.imputationcodeid.code} | {self.periodlabel}"
