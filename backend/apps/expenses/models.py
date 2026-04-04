@@ -90,6 +90,11 @@ class EstimateTypeCode(models.IntegerChoices):
     OTHER = 1, 'Other'
 
 
+class ExpenseScopeCode(models.IntegerChoices):
+    PROJECT = 0, 'Project'
+    CORPORATE = 1, 'Corporate'
+
+
 class EstimateStateCode(models.IntegerChoices):
     ACTIVE = 0, 'Active'
     PAID = 1, 'Paid'
@@ -110,18 +115,46 @@ class ProjectExpense(AuditMixin):
         db_column='expenseid'
     )
 
-    # Project and period
+    # Scope: project or corporate
+    expensescope = models.IntegerField(
+        choices=ExpenseScopeCode.choices,
+        default=ExpenseScopeCode.PROJECT,
+        db_column='expensescope'
+    )
+
+    # Project and period (required for project expenses, null for corporate)
     projectid = models.ForeignKey(
         'projects.ConstructionProject',
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         db_column='projectid',
         related_name='expenses'
     )
     periodid = models.ForeignKey(
         'budgets.ImputationPeriod',
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         db_column='periodid',
         related_name='expenses'
+    )
+
+    # Corporate fields (required for corporate expenses, null for project)
+    corporatebudgetid = models.ForeignKey(
+        'corporate.CorporateBudget',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='corporatebudgetid',
+        related_name='corporate_expenses'
+    )
+    corporatecategory = models.CharField(
+        max_length=5,
+        db_column='corporatecategory',
+        null=True,
+        blank=True,
+        help_text='Corporate expense category (4.1-4.9)'
     )
 
     # Classification
@@ -291,6 +324,22 @@ class ProjectExpense(AuditMixin):
         null=True
     )
 
+    # Accounting classification (from SAT/ERP accounting catalog)
+    accountingaccount = models.CharField(
+        max_length=100,
+        db_column='accountingaccount',
+        blank=True,
+        null=True,
+        help_text='Cuenta contable (e.g. VIATICOS, COMBUSTIBLES)'
+    )
+    subaccount = models.CharField(
+        max_length=100,
+        db_column='subaccount',
+        blank=True,
+        null=True,
+        help_text='Subcuenta contable (e.g. TRASLADO, ALIMENTOS)'
+    )
+
     # State
     statecode = models.IntegerField(
         choices=ExpenseStateCode.choices,
@@ -318,12 +367,28 @@ class ProjectExpense(AuditMixin):
             models.Index(fields=['projectid', 'statecode']),
             models.Index(fields=['projectid', 'classificationstatus']),
             models.Index(fields=['projectid', 'periodid']),
+            models.Index(
+                fields=['expensescope', 'corporatebudgetid', 'corporatecategory'],
+                name='idx_corporate_expense_scope',
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
                 fields=['projectid', 'invoiceuuid'],
                 name='unique_invoice_per_project',
                 condition=models.Q(invoiceuuid__isnull=False),
+            ),
+            models.UniqueConstraint(
+                fields=['corporatebudgetid', 'invoiceuuid'],
+                name='unique_invoice_per_budget',
+                condition=models.Q(invoiceuuid__isnull=False, expensescope=1),
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(expensescope=0, projectid__isnull=False) |
+                    models.Q(expensescope=1, corporatebudgetid__isnull=False, corporatecategory__isnull=False)
+                ),
+                name='expense_scope_integrity',
             ),
         ]
 
