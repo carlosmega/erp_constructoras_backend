@@ -209,6 +209,8 @@ class EstimationProjectService:
         concepts = BudgetConcept.objects.filter(
             projectid=estimation.estimationprojectid,
             statecode=0,
+        ).select_related(
+            'subfamilyid', 'subfamilyid__familyid'
         ).order_by('subfamilyid__familyid__sortorder', 'subfamilyid__sortorder', 'sequencenumber')
 
         seq_counters = {}  # Track sequence per category
@@ -233,6 +235,12 @@ class EstimationProjectService:
                 code=code_str,
                 sequencenumber=seq,
                 name=concept.description,
+                unit=concept.unit,
+                contractcode=concept.code,
+                contractunitprice=concept.clientunitprice or concept.unitprice,
+                quantity=concept.quantity,
+                unitcost=concept.clientunitprice or concept.unitprice,
+                sourceconceptid=concept,
                 totalbudget=concept.totalamount,
                 createdby=user,
                 modifiedby=user,

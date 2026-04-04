@@ -48,6 +48,9 @@ class ImputationCodeSchema(ModelSchema):
     categorycode: Optional[str] = None
     categoryname: Optional[str] = None
     zonename: Optional[str] = None
+    familycode: Optional[str] = None
+    familyname: Optional[str] = None
+    subfamilyname: Optional[str] = None
 
     class Meta:
         model = ImputationCode
@@ -64,6 +67,26 @@ class ImputationCodeSchema(ModelSchema):
     @staticmethod
     def resolve_zonename(obj):
         return obj.zoneid.name if obj.zoneid else None
+
+    @staticmethod
+    def resolve_familycode(obj):
+        if obj.sourceconceptid and hasattr(obj.sourceconceptid, 'subfamilyid') and obj.sourceconceptid.subfamilyid:
+            fam = obj.sourceconceptid.subfamilyid.familyid
+            return fam.code if fam else None
+        return None
+
+    @staticmethod
+    def resolve_familyname(obj):
+        if obj.sourceconceptid and hasattr(obj.sourceconceptid, 'subfamilyid') and obj.sourceconceptid.subfamilyid:
+            fam = obj.sourceconceptid.subfamilyid.familyid
+            return fam.name if fam else None
+        return None
+
+    @staticmethod
+    def resolve_subfamilyname(obj):
+        if obj.sourceconceptid and hasattr(obj.sourceconceptid, 'subfamilyid') and obj.sourceconceptid.subfamilyid:
+            return obj.sourceconceptid.subfamilyid.name
+        return None
 
 
 class CreateImputationCodeDto(Schema):
@@ -147,6 +170,7 @@ class ImputationCodeBudgetSchema(ModelSchema):
         fields = [
             'budgetlineid', 'imputationcodeid', 'periodid',
             'periodlabel', 'plannedamount', 'actualamount',
+            'plannedvolume', 'actualvolume',
             'createdon', 'modifiedon',
         ]
 
@@ -159,6 +183,7 @@ class SaveBudgetLineDto(Schema):
     """DTO for saving a single budget line (create or update)."""
     periodlabel: str
     plannedamount: Decimal = Decimal('0')
+    plannedvolume: Optional[Decimal] = None
 
 
 class BulkSaveBudgetLinesDto(Schema):

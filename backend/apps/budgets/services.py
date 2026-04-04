@@ -7,12 +7,14 @@ from decimal import Decimal
 from datetime import date
 from dateutil.relativedelta import relativedelta
 from django.db import transaction
-from django.db.models import QuerySet, Max
+from django.db.models import QuerySet, Max, Sum, Q, DecimalField
+from django.db.models.functions import Coalesce
 
 from apps.budgets.models import (
     CostCategory,
     CostTypeCode,
     ImputationCode,
+    ImputationCodeBudget,
     ImputationPeriod,
     PeriodTypeCode,
 )
@@ -21,7 +23,10 @@ from apps.budgets.schemas import (
     UpdateCostCategoryDto,
     CreateImputationCodeDto,
     UpdateImputationCodeDto,
+    SaveBudgetLineDto,
+    BulkSaveBudgetLinesDto,
 )
+from apps.expenses.models import ProjectExpense
 from core.exceptions import ValidationError, NotFound
 
 # Spanish month abbreviations
@@ -133,7 +138,9 @@ class ImputationCodeService:
             queryset = queryset.filter(zoneid=zoneid)
 
         return queryset.select_related(
-            'categoryid', 'zoneid', 'createdby', 'modifiedby'
+            'categoryid', 'zoneid', 'createdby', 'modifiedby',
+            'sourceconceptid', 'sourceconceptid__subfamilyid',
+            'sourceconceptid__subfamilyid__familyid',
         )
 
     @staticmethod
@@ -495,3 +502,82 @@ class PeriodService:
             current = current + relativedelta(months=1)
 
         return periods
+
+
+class BudgetLineService:
+    """Manage per-period budget lines (forecast + actual)."""
+
+    @staticmethod
+    def list_by_code(imputation_code_id, user):
+        """List all budget lines for an imputation code."""
+        return ImputationCodeBudget.objects.filter(
+            imputationcodeid=imputation_code_id
+        ).select_related('imputationcodeid', 'periodid').order_by('periodlabel')
+
+    @staticmethod
+    def list_by_project_and_zone(project_id, zone_id, user):
+        """List budget lines for a project, optionally filtered by zone."""
+        qs = ImputationCodeBudget.objects.filter(
+            imputationcodeid__projectid=project_id,
+            imputationcodeid__statecode=0,
+        ).select_related('imputationcodeid')
+        if zone_id:
+            qs = qs.filter(imputationcodeid__zoneid=zone_id)
+        return qs.order_by('imputationcodeid__code', 'periodlabel')
+
+    @staticmethod
+    @transaction.atomic
+    def bulk_save(dto, user):
+        """Create or update budget lines for an imputation code."""
+        code = ImputationCode.objects.get(
+            imputationcodeid=dto.imputationcodeid, statecode=0
+        )
+        results = []
+        for line in dto.lines:
+            obj, _ = ImputationCodeBudget.objects.update_or_create(
+                imputationcodeid=code,
+                periodlabel=line.periodlabel,
+                defaults={'plannedamount': line.plannedamount},
+            )
+            results.append(obj)
+        return results
+
+    @staticmethod
+    def compute_actuals(project_id, zone_id=None):
+        """Recompute actual amounts from expenses for all budget lines."""
+        code_filter = Q(
+            imputationcodeid__projectid=project_id,
+            imputationcodeid__statecode=0,
+        )
+        if zone_id:
+            code_filter &= Q(imputationcodeid__zoneid=zone_id)
+
+        budget_lines = ImputationCodeBudget.objects.filter(code_filter)
+
+        # Aggregate actual expenses by (imputationcodeid, period label)
+        expense_totals = ProjectExpense.objects.filter(
+            projectid=project_id,
+            statecode=0,
+            imputationcodeid__isnull=False,
+            periodid__isnull=False,
+        ).values(
+            'imputationcodeid', 'periodid__label'
+        ).annotate(
+            total=Coalesce(Sum('netamount'), 0, output_field=DecimalField())
+        )
+
+        actual_map = {}
+        for row in expense_totals:
+            key = (str(row['imputationcodeid']), row['periodid__label'])
+            actual_map[key] = row['total']
+
+        updated = 0
+        for bl in budget_lines:
+            key = (str(bl.imputationcodeid_id), bl.periodlabel)
+            new_actual = actual_map.get(key, 0)
+            if bl.actualamount != new_actual:
+                bl.actualamount = new_actual
+                bl.save(update_fields=['actualamount', 'modifiedon'])
+                updated += 1
+
+        return updated
