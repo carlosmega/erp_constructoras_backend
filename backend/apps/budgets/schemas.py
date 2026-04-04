@@ -69,24 +69,37 @@ class ImputationCodeSchema(ModelSchema):
         return obj.zoneid.name if obj.zoneid else None
 
     @staticmethod
+    def _parse_hierarchy(obj):
+        """Parse family/subfamily from sourceconceptid or description fallback.
+        Description format: 'FAMILY_CODE|FAMILY_NAME|SUBFAMILY_NAME'
+        """
+        if obj.sourceconceptid:
+            try:
+                sub = obj.sourceconceptid.subfamilyid
+                if sub and sub.familyid:
+                    return sub.familyid.code, sub.familyid.name, sub.name
+            except Exception:
+                pass
+        if obj.description and '|' in str(obj.description):
+            parts = str(obj.description).split('|', 2)
+            if len(parts) >= 2:
+                return parts[0] or None, parts[1] or None, parts[2] if len(parts) > 2 and parts[2] else None
+        return None, None, None
+
+    @staticmethod
     def resolve_familycode(obj):
-        if obj.sourceconceptid and hasattr(obj.sourceconceptid, 'subfamilyid') and obj.sourceconceptid.subfamilyid:
-            fam = obj.sourceconceptid.subfamilyid.familyid
-            return fam.code if fam else None
-        return None
+        code, _, _ = ImputationCodeSchema._parse_hierarchy(obj)
+        return code
 
     @staticmethod
     def resolve_familyname(obj):
-        if obj.sourceconceptid and hasattr(obj.sourceconceptid, 'subfamilyid') and obj.sourceconceptid.subfamilyid:
-            fam = obj.sourceconceptid.subfamilyid.familyid
-            return fam.name if fam else None
-        return None
+        _, name, _ = ImputationCodeSchema._parse_hierarchy(obj)
+        return name
 
     @staticmethod
     def resolve_subfamilyname(obj):
-        if obj.sourceconceptid and hasattr(obj.sourceconceptid, 'subfamilyid') and obj.sourceconceptid.subfamilyid:
-            return obj.sourceconceptid.subfamilyid.name
-        return None
+        _, _, sub = ImputationCodeSchema._parse_hierarchy(obj)
+        return sub
 
 
 class CreateImputationCodeDto(Schema):
