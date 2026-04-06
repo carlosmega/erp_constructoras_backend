@@ -704,6 +704,71 @@ class UnitCostBreakdownService:
 
         return created
 
+    @staticmethod
+    def duplicate_line(breakdown_id: UUID, user) -> UnitCostBreakdown:
+        """Duplicate an existing breakdown line within the same concept and category."""
+        original = UnitCostBreakdown.objects.select_related('supplyid').get(
+            breakdownid=breakdown_id, statecode=0
+        )
+        max_line = UnitCostBreakdown.objects.filter(
+            conceptid=original.conceptid,
+            categorycode=original.categorycode,
+            statecode=0,
+        ).aggregate(Max('linenumber'))['linenumber__max'] or 0
+
+        new_line = UnitCostBreakdown(
+            conceptid=original.conceptid,
+            categorycode=original.categorycode,
+            linenumber=max_line + 1,
+            description=original.description,
+            unit=original.unit,
+            quantity=original.quantity,
+            unitprice=original.unitprice,
+            yieldvalue=original.yieldvalue,
+            amount=original.amount,
+            supplyid=original.supplyid,
+        )
+        new_line.save()
+        return new_line
+
+    @staticmethod
+    @transaction.atomic
+    def copy_from_concept(target_concept_id: UUID, source_concept_id: UUID, user) -> list[UnitCostBreakdown]:
+        """Copy all active breakdown lines from source concept to target concept."""
+        source_lines = UnitCostBreakdown.objects.filter(
+            conceptid_id=source_concept_id, statecode=0
+        ).select_related('supplyid').order_by('categorycode', 'linenumber')
+
+        if not source_lines.exists():
+            raise ValidationError("El concepto origen no tiene lineas de desglose.")
+
+        existing = UnitCostBreakdown.objects.filter(
+            conceptid_id=target_concept_id, statecode=0
+        ).values('categorycode').annotate(max_line=Max('linenumber'))
+        max_lines = {row['categorycode']: row['max_line'] for row in existing}
+
+        new_lines = []
+        for line in source_lines:
+            current_max = max_lines.get(line.categorycode, 0)
+            current_max += 1
+            max_lines[line.categorycode] = current_max
+
+            new_lines.append(UnitCostBreakdown(
+                conceptid_id=target_concept_id,
+                categorycode=line.categorycode,
+                linenumber=current_max,
+                description=line.description,
+                unit=line.unit,
+                quantity=line.quantity,
+                unitprice=line.unitprice,
+                yieldvalue=line.yieldvalue,
+                amount=line.amount,
+                supplyid=line.supplyid,
+            ))
+
+        created = UnitCostBreakdown.objects.bulk_create(new_lines)
+        return created
+
 
 class IndirectCostDetailService:
     """Service class for IndirectCostDetail business logic."""

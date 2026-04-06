@@ -344,6 +344,30 @@ def auto_generate_hm_epp(request: HttpRequest, concept_id: UUID):
     return 201, lines
 
 
+@budget_concepts_router.post(
+    "/breakdowns/{breakdown_id}/duplicate/",
+    response={201: UnitCostBreakdownSchema},
+)
+def duplicate_breakdown_line(request: HttpRequest, breakdown_id: UUID):
+    """Duplicate a breakdown line within the same concept and category."""
+    service = UnitCostBreakdownService()
+    result = service.duplicate_line(breakdown_id, request.user)
+    return 201, result
+
+
+@budget_concepts_router.post(
+    "/concepts/{concept_id}/breakdowns/copy-from/{source_concept_id}/",
+    response={201: List[UnitCostBreakdownSchema]},
+)
+def copy_breakdowns_from_concept(
+    request: HttpRequest, concept_id: UUID, source_concept_id: UUID
+):
+    """Copy all breakdown lines from source concept to target concept."""
+    service = UnitCostBreakdownService()
+    result = service.copy_from_concept(concept_id, source_concept_id, request.user)
+    return 201, result
+
+
 # =============================================================================
 # 3. Indirect Cost Details Router
 # =============================================================================
