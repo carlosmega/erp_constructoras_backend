@@ -957,3 +957,50 @@ class TestEstimationProjectFilters:
         )
         response = admin_auth_client.get('/api/estimation-projects/?search=Highway')
         assert response.status_code == 200
+
+
+# =============================================================================
+# Duplicate Breakdown Line
+# =============================================================================
+
+@pytest.mark.contract
+class TestDuplicateBreakdownEndpoint:
+    def test_returns_201(self, admin_auth_client, system_admin):
+        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        family = ConceptFamilyFactory(projectid=project, createdby=system_admin, modifiedby=system_admin)
+        subfamily = ConceptSubfamilyFactory(familyid=family, projectid=project, createdby=system_admin, modifiedby=system_admin)
+        concept = BudgetConceptFactory(projectid=project, subfamilyid=subfamily, createdby=system_admin, modifiedby=system_admin)
+        line = UnitCostBreakdownFactory(conceptid=concept)
+
+        response = admin_auth_client.post(
+            f'/api/proyeccion/breakdowns/{line.breakdownid}/duplicate/'
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data['description'] == line.description
+        assert data['breakdownid'] != str(line.breakdownid)
+
+
+# =============================================================================
+# Copy From Concept
+# =============================================================================
+
+@pytest.mark.contract
+class TestCopyFromConceptEndpoint:
+    def test_returns_201(self, admin_auth_client, system_admin):
+        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
+        family = ConceptFamilyFactory(projectid=project, createdby=system_admin, modifiedby=system_admin)
+        subfamily = ConceptSubfamilyFactory(familyid=family, projectid=project, createdby=system_admin, modifiedby=system_admin)
+        source = BudgetConceptFactory(projectid=project, subfamilyid=subfamily, createdby=system_admin, modifiedby=system_admin)
+        target = BudgetConceptFactory(projectid=project, subfamilyid=subfamily, createdby=system_admin, modifiedby=system_admin)
+        UnitCostBreakdownFactory(conceptid=source)
+        UnitCostBreakdownFactory(conceptid=source)
+
+        response = admin_auth_client.post(
+            f'/api/proyeccion/concepts/{target.conceptid}/breakdowns/copy-from/{source.conceptid}/'
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data) == 2

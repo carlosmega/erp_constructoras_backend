@@ -1843,3 +1843,153 @@ class TestFamilyTemplateService:
         # Only F01 should be created
         assert len(created) == 1
         assert created[0].code == 'F01'
+
+
+# =============================================================================
+# UnitCostBreakdownService - Duplicate Line
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestDuplicateBreakdownLine:
+    """Tests for UnitCostBreakdownService.duplicate_line"""
+
+    def test_duplicates_all_fields(self):
+        """Verify all fields are copied from original."""
+        line = UnitCostBreakdownFactory(
+            description='Diesel',
+            unit='Lt',
+            quantity=Decimal('1'),
+            unitprice=Decimal('23.09'),
+            yieldvalue=Decimal('0.862'),
+            amount=Decimal('19.90'),
+            categorycode=BreakdownCategoryCode.MATERIALS,
+        )
+        user = line.conceptid.projectid.ownerid
+
+        result = UnitCostBreakdownService.duplicate_line(line.breakdownid, user)
+
+        assert result.breakdownid != line.breakdownid
+        assert result.conceptid == line.conceptid
+        assert result.categorycode == line.categorycode
+        assert result.description == 'Diesel'
+        assert result.unit == 'Lt'
+        assert result.quantity == Decimal('1')
+        assert result.unitprice == Decimal('23.09')
+        assert result.yieldvalue == Decimal('0.862')
+        assert result.amount == Decimal('19.90')
+
+    def test_assigns_next_linenumber(self):
+        """Line number should be max+1 in same category."""
+        concept = BudgetConceptFactory()
+        UnitCostBreakdownFactory(conceptid=concept, categorycode=BreakdownCategoryCode.MATERIALS, linenumber=1)
+        line2 = UnitCostBreakdownFactory(conceptid=concept, categorycode=BreakdownCategoryCode.MATERIALS, linenumber=2)
+        user = concept.projectid.ownerid
+
+        result = UnitCostBreakdownService.duplicate_line(line2.breakdownid, user)
+
+        assert result.linenumber == 3
+
+    def test_does_not_affect_other_categories(self):
+        """Duplicating in one category should not affect linenumber in another."""
+        concept = BudgetConceptFactory()
+        mat_line = UnitCostBreakdownFactory(conceptid=concept, categorycode=BreakdownCategoryCode.MATERIALS, linenumber=5)
+        UnitCostBreakdownFactory(conceptid=concept, categorycode=BreakdownCategoryCode.LABOR, linenumber=10)
+        user = concept.projectid.ownerid
+
+        result = UnitCostBreakdownService.duplicate_line(mat_line.breakdownid, user)
+
+        assert result.linenumber == 6  # max in MATERIALS is 5
+        assert result.categorycode == BreakdownCategoryCode.MATERIALS
+
+    def test_copies_supply_reference(self):
+        """Should copy supply FK if present."""
+        supply = SupplyCatalogItemFactory()
+        line = UnitCostBreakdownFactory(supplyid=supply)
+        user = line.conceptid.projectid.ownerid
+
+        result = UnitCostBreakdownService.duplicate_line(line.breakdownid, user)
+
+        assert result.supplyid == supply
+
+
+# =============================================================================
+# UnitCostBreakdownService - Copy From Concept
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestCopyFromConcept:
+    """Tests for UnitCostBreakdownService.copy_from_concept"""
+
+    def test_copies_all_lines_from_source(self):
+        """All active lines from source should appear in target."""
+        source = BudgetConceptFactory()
+        target = BudgetConceptFactory(projectid=source.projectid)
+        UnitCostBreakdownFactory(conceptid=source, categorycode=BreakdownCategoryCode.MATERIALS)
+        UnitCostBreakdownFactory(conceptid=source, categorycode=BreakdownCategoryCode.LABOR)
+        UnitCostBreakdownFactory(conceptid=source, categorycode=BreakdownCategoryCode.MACHINERY)
+        user = source.projectid.ownerid
+
+        result = UnitCostBreakdownService.copy_from_concept(
+            target.conceptid, source.conceptid, user
+        )
+
+        assert len(result) == 3
+        for line in UnitCostBreakdown.objects.filter(conceptid=target, statecode=0):
+            assert line.conceptid == target
+
+    def test_preserves_existing_lines_in_target(self):
+        """Existing lines in target should not be removed."""
+        source = BudgetConceptFactory()
+        target = BudgetConceptFactory(projectid=source.projectid)
+        existing = UnitCostBreakdownFactory(conceptid=target, categorycode=BreakdownCategoryCode.MATERIALS, linenumber=1)
+        UnitCostBreakdownFactory(conceptid=source, categorycode=BreakdownCategoryCode.MATERIALS)
+        user = source.projectid.ownerid
+
+        UnitCostBreakdownService.copy_from_concept(target.conceptid, source.conceptid, user)
+
+        all_target = UnitCostBreakdown.objects.filter(conceptid=target, statecode=0)
+        assert all_target.count() == 2
+        assert all_target.filter(breakdownid=existing.breakdownid).exists()
+
+    def test_increments_linenumber_from_existing_max(self):
+        """New lines should start from max existing linenumber + 1."""
+        source = BudgetConceptFactory()
+        target = BudgetConceptFactory(projectid=source.projectid)
+        UnitCostBreakdownFactory(conceptid=target, categorycode=BreakdownCategoryCode.MATERIALS, linenumber=5)
+        UnitCostBreakdownFactory(conceptid=source, categorycode=BreakdownCategoryCode.MATERIALS)
+        UnitCostBreakdownFactory(conceptid=source, categorycode=BreakdownCategoryCode.MATERIALS)
+        user = source.projectid.ownerid
+
+        UnitCostBreakdownService.copy_from_concept(target.conceptid, source.conceptid, user)
+
+        copied = UnitCostBreakdown.objects.filter(
+            conceptid=target, statecode=0
+        ).exclude(linenumber=5).order_by('linenumber')
+        assert list(copied.values_list('linenumber', flat=True)) == [6, 7]
+
+    def test_raises_error_if_source_empty(self):
+        """Should raise ValidationError if source has no active lines."""
+        source = BudgetConceptFactory()
+        target = BudgetConceptFactory(projectid=source.projectid)
+        user = source.projectid.ownerid
+
+        with pytest.raises(ValidationError):
+            UnitCostBreakdownService.copy_from_concept(
+                target.conceptid, source.conceptid, user
+            )
+
+    def test_ignores_inactive_source_lines(self):
+        """Should not copy lines with statecode != 0."""
+        source = BudgetConceptFactory()
+        target = BudgetConceptFactory(projectid=source.projectid)
+        UnitCostBreakdownFactory(conceptid=source, statecode=0)
+        UnitCostBreakdownFactory(conceptid=source, statecode=1)  # inactive
+        user = source.projectid.ownerid
+
+        result = UnitCostBreakdownService.copy_from_concept(
+            target.conceptid, source.conceptid, user
+        )
+
+        assert len(result) == 1
