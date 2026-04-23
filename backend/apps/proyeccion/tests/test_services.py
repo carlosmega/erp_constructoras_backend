@@ -1046,6 +1046,90 @@ class TestWorkPlanService:
         with pytest.raises(NotFound):
             WorkPlanService.delete_entry(uuid4(), user)
 
+    def test_planned_and_actual_coexist(self):
+        """PLANNED and ACTUAL entries for same (concept, period) must both be allowed."""
+        from apps.proyeccion.models import WorkPlanEntryType
+
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(
+            projectid=project, quantity=Decimal('100'), unitprice=Decimal('10')
+        )
+        WorkPlanEntryFactory(
+            conceptid=concept, projectid=project, periodnumber=1,
+            entrytype=WorkPlanEntryType.PLANNED, distributedquantity=Decimal('40'),
+        )
+        WorkPlanEntryFactory(
+            conceptid=concept, projectid=project, periodnumber=1,
+            entrytype=WorkPlanEntryType.ACTUAL, distributedquantity=Decimal('30'),
+        )
+        user = SalespersonFactory()
+        assert WorkPlanService.list_entries(
+            project.estimationprojectid, user, entrytype=WorkPlanEntryType.PLANNED
+        ).count() == 1
+        assert WorkPlanService.list_entries(
+            project.estimationprojectid, user, entrytype=WorkPlanEntryType.ACTUAL
+        ).count() == 1
+
+    def test_get_matrix_structure(self):
+        """get_matrix returns tree with family → subfamily → concept + planned/actual blocks."""
+        from apps.proyeccion.models import WorkPlanEntryType
+
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(
+            projectid=project, quantity=Decimal('100'), unitprice=Decimal('10')
+        )
+        WorkPlanEntryFactory(
+            conceptid=concept, projectid=project, periodnumber=1, periodlabel='S1',
+            entrytype=WorkPlanEntryType.PLANNED, distributedquantity=Decimal('50'),
+            distributedamount=Decimal('500'),
+        )
+        WorkPlanEntryFactory(
+            conceptid=concept, projectid=project, periodnumber=1, periodlabel='S1',
+            entrytype=WorkPlanEntryType.ACTUAL, distributedquantity=Decimal('25'),
+            distributedamount=Decimal('250'),
+        )
+        user = SalespersonFactory()
+
+        matrix = WorkPlanService.get_matrix(project.estimationprojectid, user)
+        assert len(matrix['periods']) == 1
+        assert len(matrix['families']) == 1
+        fam = matrix['families'][0]
+        row = fam['subfamilies'][0]['concepts'][0]
+        assert row['planned']['total_qty'] == Decimal('50')
+        assert row['actual']['total_qty'] == Decimal('25')
+        assert fam['totals']['planned_amount'] == Decimal('500')
+        assert fam['totals']['actual_amount'] == Decimal('250')
+        # Per-period amount = qty * unitprice (SUMPRODUCT)
+        assert fam['totals']['planned_by_period_amount']['1'] == Decimal('500')
+        assert fam['totals']['actual_by_period_amount']['1'] == Decimal('250')
+
+    def test_get_summary_percentages(self):
+        from apps.proyeccion.models import WorkPlanEntryType
+
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(
+            projectid=project,
+            quantity=Decimal('100'),
+            unitprice=Decimal('10'),
+            totalamount=Decimal('1000'),
+        )
+        WorkPlanEntryFactory(
+            conceptid=concept, projectid=project, periodnumber=1,
+            entrytype=WorkPlanEntryType.PLANNED, distributedquantity=Decimal('80'),
+            distributedamount=Decimal('800'),
+        )
+        WorkPlanEntryFactory(
+            conceptid=concept, projectid=project, periodnumber=1,
+            entrytype=WorkPlanEntryType.ACTUAL, distributedquantity=Decimal('40'),
+            distributedamount=Decimal('400'),
+        )
+        user = SalespersonFactory()
+        summary = WorkPlanService.get_summary(project.estimationprojectid, user)
+        assert len(summary['families']) == 1
+        fam = summary['families'][0]
+        assert fam['percent_planned'] == pytest.approx(0.8)
+        assert fam['percent_actual'] == pytest.approx(0.4)
+
 
 # =============================================================================
 # SupplyCatalogService

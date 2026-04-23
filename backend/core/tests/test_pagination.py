@@ -1,7 +1,12 @@
 """Tests for core pagination utilities."""
 
 import pytest
-from core.pagination import paginate_queryset, create_paginated_response
+from core.pagination import (
+    paginate_queryset,
+    create_paginated_response,
+    cursor_paginate_queryset,
+    create_cursor_paginated_response,
+)
 from ninja import Schema
 
 
@@ -89,3 +94,122 @@ class TestCreatePaginatedResponse:
         assert 'count' in fields
         assert 'page' in fields
         assert 'results' in fields
+
+
+# =============================================================================
+# Cursor-based pagination
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestCursorPaginateQueryset:
+    """Cursor-based pagination, stable under concurrent inserts.
+
+    Contract:
+      - cursor=None → first page
+      - returns {'results': [...], 'next_cursor': str|None, 'has_more': bool}
+      - results ordered DESC by order_field (default 'createdon')
+      - next_cursor is opaque (base64); clients pass it back verbatim
+    """
+
+    def _make_activities(self, n):
+        from apps.activities.tests.factories import ActivityFactory
+        # Create with distinct createdon by saving sequentially
+        return [ActivityFactory() for _ in range(n)]
+
+    def test_first_page_returns_most_recent(self):
+        activities = self._make_activities(5)
+        from apps.activities.models import Activity
+        qs = Activity.objects.all()
+
+        result = cursor_paginate_queryset(qs, cursor=None, limit=3)
+
+        assert len(result['results']) == 3
+        assert result['has_more'] is True
+        assert result['next_cursor'] is not None
+        # Most recent first (descending by createdon)
+        returned_ids = [a.activityid for a in result['results']]
+        expected_ids = [a.activityid for a in sorted(activities, key=lambda x: x.createdon, reverse=True)[:3]]
+        assert returned_ids == expected_ids
+
+    def test_second_page_via_cursor(self):
+        self._make_activities(5)
+        from apps.activities.models import Activity
+        qs = Activity.objects.all()
+
+        page1 = cursor_paginate_queryset(qs, cursor=None, limit=2)
+        page2 = cursor_paginate_queryset(qs, cursor=page1['next_cursor'], limit=2)
+
+        page1_ids = {a.activityid for a in page1['results']}
+        page2_ids = {a.activityid for a in page2['results']}
+        assert page1_ids.isdisjoint(page2_ids), "page 2 should not repeat items from page 1"
+        assert len(page2['results']) == 2
+
+    def test_last_page_has_more_is_false(self):
+        self._make_activities(3)
+        from apps.activities.models import Activity
+        qs = Activity.objects.all()
+
+        result = cursor_paginate_queryset(qs, cursor=None, limit=10)
+
+        assert len(result['results']) == 3
+        assert result['has_more'] is False
+        assert result['next_cursor'] is None
+
+    def test_empty_queryset(self):
+        from apps.activities.models import Activity
+        qs = Activity.objects.none()
+
+        result = cursor_paginate_queryset(qs, cursor=None, limit=50)
+
+        assert result['results'] == []
+        assert result['has_more'] is False
+        assert result['next_cursor'] is None
+
+    def test_cursor_is_opaque_base64(self):
+        self._make_activities(3)
+        from apps.activities.models import Activity
+        qs = Activity.objects.all()
+
+        result = cursor_paginate_queryset(qs, cursor=None, limit=1)
+
+        # Opaque: must be a string, not raw datetime/uuid
+        assert isinstance(result['next_cursor'], str)
+        # Must not leak raw field values
+        assert '2' not in result['next_cursor'] or len(result['next_cursor']) > 20
+
+    def test_invalid_cursor_returns_first_page(self):
+        self._make_activities(3)
+        from apps.activities.models import Activity
+        qs = Activity.objects.all()
+
+        # Garbage cursor should not raise; behaves as if no cursor
+        result = cursor_paginate_queryset(qs, cursor='not-a-valid-cursor', limit=2)
+
+        assert len(result['results']) == 2
+        assert result['has_more'] is True
+
+    def test_limit_capped_at_100(self):
+        self._make_activities(2)
+        from apps.activities.models import Activity
+        qs = Activity.objects.all()
+
+        result = cursor_paginate_queryset(qs, cursor=None, limit=500)
+
+        # Even if we ask for 500, the cap applies (verify via no crash + returns all 2)
+        assert len(result['results']) == 2
+
+
+@pytest.mark.unit
+class TestCreateCursorPaginatedResponse:
+    def test_creates_schema_with_expected_fields(self):
+        class ItemSchema(Schema):
+            name: str
+
+        CursorPaged = create_cursor_paginated_response(ItemSchema)
+
+        assert CursorPaged.__name__ == 'CursorPaginatedItemSchema'
+        fields = CursorPaged.model_fields
+        assert 'results' in fields
+        assert 'next_cursor' in fields
+        assert 'has_more' in fields

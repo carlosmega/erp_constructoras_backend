@@ -8,12 +8,20 @@ from apps.accounts.schemas import CreateAccountDto, UpdateAccountDto
 from apps.users.models import SystemUser
 from apps.contacts.models import Contact
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
+from core.services import BaseReadService
 from apps.audit.services import audit_action
 
 
-class AccountService:
+class AccountService(BaseReadService[Account]):
     """Service class for Account entity business logic."""
+
+    model = Account
+    pk_field = 'accountid'
+    select_related_fields = ('ownerid', 'createdby', 'modifiedby')
+    not_found_message = "Account not found"
+    access_denied_message = "You don't have access to this account"
 
     @staticmethod
     def list_accounts(
@@ -38,7 +46,7 @@ class AccountService:
             else:
                 queryset = queryset.filter(customertypecode=customertypecode)
         if ownerid:
-            if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if user.role_name not in ADMIN_ROLES:
                 raise PermissionDenied("You cannot view other users' accounts")
             queryset = queryset.filter(ownerid=ownerid)
         if search:
@@ -108,19 +116,10 @@ class AccountService:
         account.save()
         return account
 
-    @staticmethod
-    def get_account_by_id(account_id: UUID, user: SystemUser) -> Account:
-        """Get account by ID with ownership check."""
-        try:
-            account = Account.objects.select_related('ownerid', 'createdby', 'modifiedby').get(accountid=account_id)
-        except Account.DoesNotExist:
-            raise NotFound(f"Account with ID {account_id} not found")
-
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
-            if account.ownerid_id != user.systemuserid:
-                raise PermissionDenied("You don't have access to this account")
-
-        return account
+    @classmethod
+    def get_account_by_id(cls, account_id: UUID, user: SystemUser) -> Account:
+        """Get account by ID with ownership check (delegates to BaseReadService)."""
+        return cls.get_by_id(account_id, user)
 
     @staticmethod
     @audit_action(action='update', entity='account', record_arg='account_id')

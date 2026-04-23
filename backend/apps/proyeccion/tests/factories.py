@@ -3,6 +3,7 @@
 import factory
 from factory.django import DjangoModelFactory
 from decimal import Decimal
+from datetime import date, timedelta
 
 from apps.proyeccion.models import (
     ConceptPriceCatalogItem,
@@ -20,11 +21,15 @@ from apps.proyeccion.models import (
     SupplyCatalogItem,
     EquipmentYield,
     WorkPlanEntry,
+    WorkPlanEntryType,
     FamilyTemplateSet,
     FamilyTemplateItem,
     BreakdownCategoryCode,
     SupplyTypeCode,
     ProjectSizeCode,
+    ProjectionPeriod,
+    CostDistribution,
+    CostLineType,
 )
 from apps.users.tests.factories import SalespersonFactory, SystemUserFactory
 
@@ -309,6 +314,7 @@ class WorkPlanEntryFactory(DjangoModelFactory):
     projectid = factory.LazyAttribute(lambda o: o.conceptid.projectid)
     periodnumber = factory.Sequence(lambda n: n + 1)
     periodlabel = factory.Sequence(lambda n: f'S{n + 1}')
+    entrytype = WorkPlanEntryType.PLANNED
     distributedquantity = Decimal('10')
     distributedamount = Decimal('0')
     createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
@@ -344,3 +350,37 @@ class FamilyTemplateItemFactory(DjangoModelFactory):
     familysortorder = factory.Sequence(lambda n: n)
     subfamilysortorder = factory.Sequence(lambda n: n)
     statecode = 0
+
+
+class ProjectionPeriodFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = ProjectionPeriod
+
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    periodnumber = factory.Sequence(lambda n: n + 1)
+    periodlabel = factory.LazyAttribute(lambda o: f"P{o.periodnumber}")
+    startdate = factory.LazyAttribute(lambda o: date(2026, 1, 1) + timedelta(days=15 * (o.periodnumber - 1)))
+    enddate = factory.LazyAttribute(lambda o: o.startdate + timedelta(days=14))
+    periodtype = 1
+    createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+    modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+
+
+class CostDistributionFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = CostDistribution
+
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    linetype = CostLineType.BREAKDOWN
+    breakdownid = factory.SubFactory(UnitCostBreakdownFactory)
+    indirectcostid = None
+    periodnumber = 1
+    fraction = Decimal("0.1")
+    isderived = True
+
+    @factory.post_generation
+    def align_project(obj, create, extracted, **kwargs):
+        """Ensure projectid matches the FK's project when specified."""
+        if obj.breakdownid and obj.breakdownid.conceptid:
+            obj.projectid = obj.breakdownid.conceptid.projectid
+            obj.save()

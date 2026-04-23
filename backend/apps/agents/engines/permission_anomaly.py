@@ -30,9 +30,11 @@ try:
 except ImportError:
     ROLE_PERMISSIONS = {}
 
+from core.roles import Role
+
 logger = logging.getLogger(__name__)
 
-ADMIN_ROLE_NAME = 'System Administrator'
+ADMIN_ROLE_NAME = Role.SYSTEM_ADMINISTRATOR
 
 
 @register_agent

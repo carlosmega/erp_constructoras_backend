@@ -31,6 +31,41 @@ class TestListLeads:
 
 
 @pytest.mark.contract
+class TestListLeadsPaginated:
+    """Offset-based paginated listing (opt-in)."""
+
+    def _make(self, salesperson, n=3):
+        return [
+            LeadFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+            for _ in range(n)
+        ]
+
+    def test_returns_paginated_shape(self, auth_client, salesperson):
+        self._make(salesperson, 3)
+        response = auth_client.get('/api/leads/paginated/?page=1&page_size=2')
+        assert response.status_code == 200
+        body = response.json()
+        assert body['count'] == 3
+        assert body['page'] == 1
+        assert body['page_size'] == 2
+        assert len(body['results']) == 2
+        assert body['next'] is not None
+        assert body['previous'] is None
+
+    def test_second_page(self, auth_client, salesperson):
+        self._make(salesperson, 3)
+        response = auth_client.get('/api/leads/paginated/?page=2&page_size=2')
+        body = response.json()
+        assert len(body['results']) == 1
+        assert body['previous'] is not None
+
+    def test_unauthenticated_returns_403(self, db):
+        from django.test import Client
+        response = Client().get('/api/leads/paginated/')
+        assert response.status_code == 403
+
+
+@pytest.mark.contract
 class TestCreateLead:
     def test_creates_lead(self, auth_client, salesperson):
         payload = {'lastname': 'TestDoe', 'firstname': 'John', 'emailaddress1': 'jdoe@test.com'}

@@ -20,6 +20,7 @@ from apps.projects.schemas import (
 from apps.users.models import SystemUser
 from apps.audit.services import audit_action
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
 
 
@@ -44,7 +45,7 @@ class ProjectService:
         if statecode is not None:
             queryset = queryset.filter(statecode=statecode)
         if ownerid:
-            if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if user.role_name not in ADMIN_ROLES:
                 raise PermissionDenied("You cannot view other users' projects")
             queryset = queryset.filter(ownerid=ownerid)
         if search:
@@ -154,7 +155,7 @@ class ProjectService:
         except ConstructionProject.DoesNotExist:
             raise NotFound(f"Project with ID {project_id} not found")
 
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if project.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this project")
 
@@ -334,7 +335,7 @@ class ZoneService:
 
         # Check project ownership
         project = zone.projectid
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if project.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this zone")
 
@@ -461,7 +462,7 @@ class SupplierService:
             raise NotFound(f"Supplier with ID {supplier_id} not found")
 
         project = supplier.projectid
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if project.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this supplier")
 
@@ -533,7 +534,7 @@ class TeamMemberService:
             raise NotFound(f"Team member with ID {member_id} not found")
 
         project = member.projectid
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if project.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this team member")
 

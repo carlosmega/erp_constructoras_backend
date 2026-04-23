@@ -7,12 +7,20 @@ from apps.contacts.models import Contact, ContactStateCode
 from apps.contacts.schemas import CreateContactDto, UpdateContactDto
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
+from core.services import BaseReadService
 from apps.audit.services import audit_action
 
 
-class ContactService:
+class ContactService(BaseReadService[Contact]):
     """Service class for Contact entity business logic."""
+
+    model = Contact
+    pk_field = 'contactid'
+    select_related_fields = ('ownerid', 'parentcustomerid', 'createdby', 'modifiedby')
+    not_found_message = "Contact not found"
+    access_denied_message = "You don't have access to this contact"
 
     @staticmethod
     def list_contacts(
@@ -31,7 +39,7 @@ class ContactService:
         if parentcustomerid:
             queryset = queryset.filter(parentcustomerid=parentcustomerid)
         if ownerid:
-            if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if user.role_name not in ADMIN_ROLES:
                 raise PermissionDenied("You cannot view other users' contacts")
             queryset = queryset.filter(ownerid=ownerid)
         if search:
@@ -75,21 +83,10 @@ class ContactService:
         contact.save()
         return contact
 
-    @staticmethod
-    def get_contact_by_id(contact_id: UUID, user: SystemUser) -> Contact:
-        """Get contact by ID with ownership check."""
-        try:
-            contact = Contact.objects.select_related(
-                'ownerid', 'parentcustomerid', 'createdby', 'modifiedby'
-            ).get(contactid=contact_id)
-        except Contact.DoesNotExist:
-            raise NotFound(f"Contact with ID {contact_id} not found")
-
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
-            if contact.ownerid_id != user.systemuserid:
-                raise PermissionDenied("You don't have access to this contact")
-
-        return contact
+    @classmethod
+    def get_contact_by_id(cls, contact_id: UUID, user: SystemUser) -> Contact:
+        """Get contact by ID with ownership check (delegates to BaseReadService)."""
+        return cls.get_by_id(contact_id, user)
 
     @staticmethod
     @audit_action(action='update', entity='contact', record_arg='contact_id')

@@ -1,7 +1,7 @@
 """Budget estimation (proyeccion) API schemas (DTOs)."""
 
 from ninja import ModelSchema, Schema
-from typing import Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
@@ -445,11 +445,90 @@ class CreateWorkPlanEntryDto(Schema):
     periodnumber: int
     periodlabel: str
     distributedquantity: Decimal
+    entrytype: int = 0  # 0=PLANNED, 1=ACTUAL
 
 
 class UpdateWorkPlanEntryDto(Schema):
     """DTO for updating a work plan entry."""
     distributedquantity: Optional[Decimal] = None
+
+
+# ----- Matrix / Summary response schemas -----
+
+class WorkPlanPeriodSchema(Schema):
+    number: int
+    label: str
+
+
+class WorkPlanEntryValueSchema(Schema):
+    total_qty: Decimal
+    total_amount: Decimal
+    by_period: dict  # {str(period_number): quantity}
+
+
+class WorkPlanConceptRowSchema(Schema):
+    conceptid: UUID
+    code: str
+    description: str
+    unit: str
+    quantity: Decimal
+    unitprice: Decimal
+    totalamount: Decimal
+    planned: WorkPlanEntryValueSchema
+    actual: WorkPlanEntryValueSchema
+
+
+class WorkPlanSubfamilyGroupSchema(Schema):
+    subfamilyid: UUID
+    code: str
+    name: str
+    concepts: list[WorkPlanConceptRowSchema]
+
+
+class WorkPlanFamilyTotalsSchema(Schema):
+    planned_amount: Decimal
+    actual_amount: Decimal
+    planned_by_period_amount: dict
+    actual_by_period_amount: dict
+
+
+class WorkPlanFamilyGroupSchema(Schema):
+    familyid: UUID
+    code: str
+    name: str
+    contract_amount: Decimal
+    subfamilies: list[WorkPlanSubfamilyGroupSchema]
+    totals: WorkPlanFamilyTotalsSchema
+
+
+class WorkPlanGrandTotalsSchema(Schema):
+    contract_amount: Decimal
+    planned_amount: Decimal
+    actual_amount: Decimal
+    planned_by_period_amount: dict
+    actual_by_period_amount: dict
+
+
+class WorkPlanMatrixSchema(Schema):
+    periods: list[WorkPlanPeriodSchema]
+    families: list[WorkPlanFamilyGroupSchema]
+    grand_totals: WorkPlanGrandTotalsSchema
+
+
+class WorkPlanFamilySummarySchema(Schema):
+    familyid: UUID
+    code: str
+    name: str
+    contract_amount: Decimal
+    planned_amount: Decimal
+    actual_amount: Decimal
+    percent_planned: float
+    percent_actual: float
+
+
+class WorkPlanSummarySchema(Schema):
+    families: list[WorkPlanFamilySummarySchema]
+    grand_totals: WorkPlanGrandTotalsSchema
 
 
 # =============================================================================
@@ -476,6 +555,7 @@ class SupplyExplosionConsolidatedSchema(Schema):
     supplycode: str
     description: str
     unit: str
+    supplytype: int
     totalquantity: Decimal
     averageprice: Decimal
     totalamount: Decimal
@@ -520,6 +600,13 @@ class BulkWorkPlanDto(Schema):
     """DTO for bulk creating/updating work plan entries."""
     projectid: UUID
     entries: list  # list of {conceptid, periodnumber, periodlabel, distributedquantity}
+
+
+class AutoGenerateSkeletonDto(Schema):
+    """DTO for auto-generating skeleton breakdown lines."""
+    subfamilyname: str
+    unit: str
+    description: Optional[str] = ''
 
 
 class ApplyTemplateDto(Schema):
@@ -567,7 +654,8 @@ class ConceptPriceCatalogItemListSchema(ModelSchema):
         model = ConceptPriceCatalogItem
         fields = [
             'catalogitemid', 'code', 'description', 'unit', 'source',
-            'category', 'averageprice', 'minprice', 'maxprice',
+            'category', 'classificationl1', 'classificationl2',
+            'classificationl3', 'averageprice', 'minprice', 'maxprice',
             'referencecount', 'statecode',
         ]
 
@@ -690,3 +778,228 @@ class ApplyFamilyTemplateDto(Schema):
     templatesetid: UUID
     projectid: UUID
     familycodes: Optional[list[str]] = None
+
+
+# =============================================================================
+# Excel Import Schemas
+# =============================================================================
+
+class AnalyzeMatchCandidateSchema(Schema):
+    """Catalog item suggested as match."""
+    catalogitemid: UUID
+    code: str
+    description: str
+    unit: str
+    averageprice: float
+    classificationl2: str
+    classificationl3: str
+
+
+class AnalyzeConceptRowSchema(Schema):
+    """A single concept row from the Excel analysis."""
+    row: int
+    partida: str
+    code: str
+    description: str
+    unit: str
+    quantity: float
+    match_status: str  # 'exact' | 'partial' | 'none'
+    match_score: float
+    match_candidate: Optional[AnalyzeMatchCandidateSchema] = None
+
+
+class AnalyzePartidaSchema(Schema):
+    """A partida (subfamily group) from the Excel."""
+    name: str
+    subfamilyid: Optional[UUID] = None
+    is_new: bool
+
+
+class AnalyzeSummarySchema(Schema):
+    """Summary of the analysis results."""
+    total: int
+    exact: int
+    partial: int
+    none: int
+
+
+class AnalyzeExcelResponseSchema(Schema):
+    """Response from the analyze-excel endpoint."""
+    partidas: list[AnalyzePartidaSchema]
+    concepts: list[AnalyzeConceptRowSchema]
+    summary: AnalyzeSummarySchema
+
+
+class ImportExcelItemDto(Schema):
+    """A single concept to import."""
+    row: int
+    partida: str
+    code: str
+    description: str
+    unit: str
+    quantity: float
+    accepted_catalog_id: Optional[UUID] = None
+    use_catalog_price: bool = False
+
+
+class ImportExcelRequestDto(Schema):
+    """Request to import concepts from analyzed Excel."""
+    create_missing_subfamilies: bool = True
+    items: list[ImportExcelItemDto]
+
+
+class ImportExcelResponseSchema(Schema):
+    """Response from the import-excel endpoint."""
+    created: int
+    subfamilies_created: int
+    matched: int
+
+
+# =============================================================================
+# Temporal Distribution DTOs (see spec 2026-04-22)
+# =============================================================================
+
+class ProjectionPeriodDto(Schema):
+    periodid: UUID
+    periodnumber: int
+    periodlabel: str
+    startdate: date
+    enddate: date
+    periodtype: int
+
+
+class RegenerateResult(Schema):
+    created: int
+    deleted: int
+    kept: int
+    lost_manual_edits: int
+
+
+class DistributionCellDto(Schema):
+    periodnumber: int
+    fraction: Decimal
+    isderived: bool
+    version: int
+
+
+class DistributionLineDto(Schema):
+    lineid: UUID
+    linetype: Literal['BREAKDOWN', 'INDIRECT']
+    description: str
+    unit: str
+    totalamount: float
+    distribution: List[DistributionCellDto]
+    checksum: float
+
+
+class DistributionFamilyDto(Schema):
+    code: str
+    name: str
+    categorytype: Literal['DIRECT', 'INDIRECT']
+    totalamount: float
+    rollups_by_period: List[float]
+    lines: List[DistributionLineDto]
+
+
+class DistributionRollupsDto(Schema):
+    direct_by_period: List[float]
+    indirect_by_period: List[float]
+    retiro_by_period: List[float]
+    utility_by_period: List[float]
+    total_cost_by_period: List[float]
+    sale_by_period: List[float]
+    margin_by_period: List[float]
+
+
+class DistributionTotalsDto(Schema):
+    direct_total: float
+    indirect_total: float
+    retiro_total: float
+    utility_total: float
+    cost_total: float
+    sale_total: float
+    margin_total: float
+    margin_pct: float
+
+
+class ChosenAlternativeDto(Schema):
+    alternativeid: Optional[UUID] = None
+    name: Optional[str] = None
+    transversalpercent: float = 0.0
+    profitpercent: float = 0.0
+
+
+class DistributionPayloadDto(Schema):
+    periods: List[ProjectionPeriodDto]
+    families: List[DistributionFamilyDto]
+    rollups: DistributionRollupsDto
+    totals: DistributionTotalsDto
+    chosen_alternative: ChosenAlternativeDto
+
+
+class BulkEditItem(Schema):
+    lineid: UUID
+    linetype: Literal['BREAKDOWN', 'INDIRECT']
+    periodnumber: int
+    fraction: Decimal
+    expected_version: int
+
+
+class BulkEditRequest(Schema):
+    edits: List[BulkEditItem]
+
+
+class BulkEditOkResponse(Schema):
+    updated: int
+    new_versions: dict
+    rollups: DistributionRollupsDto
+    totals: DistributionTotalsDto
+
+
+class ConflictItem(Schema):
+    lineid: UUID
+    periodnumber: int
+    your_value: float
+    server_value: Optional[float]
+    server_modifiedby: Optional[str]
+    server_modifiedon: Optional[str]
+    server_version: int
+    your_version: int
+
+
+class ConflictResponse(Schema):
+    error: Literal['version_conflict']
+    conflicts: List[ConflictItem]
+
+
+class AutofillRequest(Schema):
+    strategy: Literal['proportional_workplan', 'uniform']
+    only_empty: bool = True
+    scope: str = 'all'
+
+
+class AutofillResponse(Schema):
+    lines_affected: int
+    warnings: List[str]
+    rollups: DistributionRollupsDto
+    totals: DistributionTotalsDto
+
+
+class ResetLineRequest(Schema):
+    lineid: UUID
+    linetype: Literal['BREAKDOWN', 'INDIRECT']
+
+
+class PresenceItemDto(Schema):
+    userid: UUID
+    username: str
+    mode: Literal['viewing', 'editing']
+    last_seen: datetime
+
+
+class PresenceResponse(Schema):
+    active_users: List[PresenceItemDto]
+
+
+class HeartbeatRequest(Schema):
+    mode: Literal['viewing', 'editing']

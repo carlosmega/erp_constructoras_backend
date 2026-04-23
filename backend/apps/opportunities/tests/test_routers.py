@@ -26,6 +26,34 @@ class TestListOpportunities:
 
 
 @pytest.mark.contract
+class TestListOpportunitiesPaginated:
+    """Offset-based paginated listing (opt-in)."""
+
+    def test_returns_paginated_shape(self, auth_client, salesperson):
+        for _ in range(3):
+            OpportunityFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get('/api/opportunities/paginated/?page=1&page_size=2')
+        assert response.status_code == 200
+        body = response.json()
+        assert body['count'] == 3
+        assert len(body['results']) == 2
+        assert body['next'] is not None
+
+    def test_second_page(self, auth_client, salesperson):
+        for _ in range(3):
+            OpportunityFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get('/api/opportunities/paginated/?page=2&page_size=2')
+        body = response.json()
+        assert len(body['results']) == 1
+        assert body['previous'] is not None
+
+    def test_unauthenticated_returns_403(self, db):
+        from django.test import Client
+        response = Client().get('/api/opportunities/paginated/')
+        assert response.status_code == 403
+
+
+@pytest.mark.contract
 class TestCreateOpportunity:
     def test_creates_opportunity(self, auth_client, salesperson):
         account = AccountFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)

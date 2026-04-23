@@ -294,7 +294,10 @@ class CorporateBudgetLine(AuditMixin):
 
 
 class CorporateExpense(AuditMixin):
-    """Actual monthly corporate expense tracked against budget."""
+    """DEPRECATED: Corporate expenses are now stored as ProjectExpense records
+    with expensescope=CORPORATE. This model is kept for migration compatibility
+    and will be removed in a future release. Do not write new code against it.
+    """
 
     corporateexpenseid = models.UUIDField(
         primary_key=True,

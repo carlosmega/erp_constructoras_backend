@@ -6,8 +6,17 @@ zones, suppliers, and team members.
 
 import uuid
 from django.db import models
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from core.models import AuditMixin
+
+
+# SAT RFC (Mexican fiscal ID).
+# - Persona moral (empresa): 3 letras + 6 dígitos fecha + 3 alfanum homoclave = 12 chars
+# - Persona física: 4 letras + 6 dígitos fecha + 3 alfanum homoclave = 13 chars
+RFC_VALIDATOR = RegexValidator(
+    regex=r'^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$',
+    message='RFC must match SAT format (12-13 chars: letters + YYMMDD + 3 alphanum).',
+)
 
 
 # ============================================================================
@@ -483,7 +492,8 @@ class ProjectSupplier(AuditMixin):
 
     rfc = models.CharField(
         max_length=13,
-        db_column='rfc'
+        db_column='rfc',
+        validators=[RFC_VALIDATOR],
     )
 
     businessname = models.CharField(

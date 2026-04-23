@@ -15,38 +15,29 @@ from apps.orders.schemas import (
     CreateSalesOrderDto, UpdateSalesOrderDto, CreateOrderDetailDto, UpdateOrderDetailDto,
     FulfillOrderDto, OrderStatsSchema
 )
+from core.pagination import paginate_queryset, create_paginated_response
 from core.permissions import require_permission, Permission
 
 orders_router = Router(tags=['Orders'])
 
+PaginatedSalesOrderList = create_paginated_response(SalesOrderListItemSchema)
 
-@orders_router.get('/', response=List[SalesOrderListItemSchema])
-@require_permission(Permission.ORDER_READ)
-def list_orders(
+
+def _build_orders_queryset(
     request: HttpRequest,
-    state: int = None,
-    statecode: int = None,
-    owner: UUID = None,
-    quoteid: Optional[str] = None,
-    opportunityid: Optional[str] = None,
-    customerid: Optional[str] = None,
+    state,
+    statecode,
+    owner,
+    quoteid,
+    opportunityid,
+    customerid,
 ):
-    """
-    List all orders with optional filtering.
-
-    Filters:
-    - state/statecode: Filter by statecode (0=Active, 1=Submitted, 2=Canceled, 3=Fulfilled, 4=Invoiced)
-    - owner: Filter by owner ID
-    - quoteid: Filter by quote ID
-    - opportunityid: Filter by opportunity ID
-    - customerid: Filter by customer ID (account or contact)
-    """
+    """Shared queryset builder for legacy and paginated list endpoints."""
     from apps.orders.models import SalesOrder
     from core.permissions import filter_by_ownership
     from django.db.models import Q
 
     queryset = filter_by_ownership(SalesOrder.objects.all(), request.user)
-
     effective_state = statecode if statecode is not None else state
     if effective_state is not None:
         queryset = queryset.filter(statecode=effective_state)
@@ -60,9 +51,44 @@ def list_orders(
         queryset = queryset.filter(
             Q(accountid_id=customerid) | Q(contactid_id=customerid)
         )
+    return queryset.select_related('accountid', 'contactid', 'ownerid')
 
-    queryset = queryset.select_related('accountid', 'contactid', 'ownerid')
-    return list(queryset)
+
+@orders_router.get('/', response=List[SalesOrderListItemSchema])
+@require_permission(Permission.ORDER_READ)
+def list_orders(
+    request: HttpRequest,
+    state: int = None,
+    statecode: int = None,
+    owner: UUID = None,
+    quoteid: Optional[str] = None,
+    opportunityid: Optional[str] = None,
+    customerid: Optional[str] = None,
+):
+    """List all orders with optional filtering (non-paginated)."""
+    return list(_build_orders_queryset(
+        request, state, statecode, owner, quoteid, opportunityid, customerid,
+    ))
+
+
+@orders_router.get('/paginated/', response=PaginatedSalesOrderList)
+@require_permission(Permission.ORDER_READ)
+def list_orders_paginated(
+    request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
+    state: int = None,
+    statecode: int = None,
+    owner: UUID = None,
+    quoteid: Optional[str] = None,
+    opportunityid: Optional[str] = None,
+    customerid: Optional[str] = None,
+):
+    """List orders with offset-based pagination (opt-in alternative to `/`)."""
+    queryset = _build_orders_queryset(
+        request, state, statecode, owner, quoteid, opportunityid, customerid,
+    )
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @orders_router.post('/', response={201: SalesOrderSchema})

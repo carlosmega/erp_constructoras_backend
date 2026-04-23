@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+  Version="4.0"
+  Serie="A"
+  Folio="12345"
+  Fecha="2026-03-01T10:00:00"
+  SubTotal="10000.00"
+  Total="11600.00"
+  Moneda="MXN"
+  TipoDeComprobante="I"
+  LugarExpedicion="64000">
+  <cfdi:Emisor
+    Rfc="XAXX010101000"
+    Nombre="Proveedor E2E Test SA de CV"
+    RegimenFiscal="601" />
+  <cfdi:Receptor
+    Rfc="XEXX010101000"
+    Nombre="ConstruPro E2E Test"
+    UsoCFDI="G03"
+    RegimenFiscalReceptor="601"
+    DomicilioFiscalReceptor="64000" />
+  <cfdi:Conceptos>
+    <cfdi:Concepto
+      ClaveProdServ="01010101"
+      Cantidad="1"
+      ClaveUnidad="E48"
+      Descripcion="Servicio de construcción E2E test"
+      ValorUnitario="10000.00"
+      Importe="10000.00">
+      <cfdi:Impuestos>
+        <cfdi:Traslados>
+          <cfdi:Traslado
+            Base="10000.00"
+            Impuesto="002"
+            TipoFactor="Tasa"
+            TasaOCuota="0.160000"
+            Importe="1600.00" />
+        </cfdi:Traslados>
+      </cfdi:Impuestos>
+    </cfdi:Concepto>
+  </cfdi:Conceptos>
+</cfdi:Comprobante>

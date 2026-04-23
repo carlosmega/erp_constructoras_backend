@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from functools import wraps
 from django.http import HttpRequest
 from core.exceptions import PermissionDenied
+from core.roles import Role, ADMIN_ROLES
 
 
 # ============================================================================
@@ -154,6 +155,12 @@ class Permission(str, Enum):
 
     HR_CATALOG_MANAGE = "hr_catalog_manage"
 
+    # Machinery module permissions
+    MACHINERY_CREATE = "machinery_create"
+    MACHINERY_READ = "machinery_read"
+    MACHINERY_UPDATE = "machinery_update"
+    MACHINERY_DELETE = "machinery_delete"
+
     # Agent permissions
     AGENT_VIEW = "agent_view"
     AGENT_RUN = "agent_run"
@@ -193,6 +200,8 @@ ROLE_PERMISSIONS = {
         Permission.PAYROLL_CREATE, Permission.PAYROLL_READ, Permission.PAYROLL_UPDATE, Permission.PAYROLL_DELETE, Permission.PAYROLL_CALCULATE, Permission.PAYROLL_APPROVE,
         Permission.ATTENDANCE_CREATE, Permission.ATTENDANCE_READ, Permission.ATTENDANCE_UPDATE, Permission.ATTENDANCE_DELETE,
         Permission.HR_CATALOG_MANAGE,
+        # Machinery module - full access
+        Permission.MACHINERY_CREATE, Permission.MACHINERY_READ, Permission.MACHINERY_UPDATE, Permission.MACHINERY_DELETE,
         # Agent module - full access
         Permission.AGENT_VIEW, Permission.AGENT_RUN, Permission.AGENT_CONFIG, Permission.AGENT_RESOLVE,
     ],
@@ -225,6 +234,8 @@ ROLE_PERMISSIONS = {
         Permission.PAYROLL_CREATE, Permission.PAYROLL_READ, Permission.PAYROLL_UPDATE, Permission.PAYROLL_DELETE, Permission.PAYROLL_CALCULATE, Permission.PAYROLL_APPROVE,
         Permission.ATTENDANCE_CREATE, Permission.ATTENDANCE_READ, Permission.ATTENDANCE_UPDATE, Permission.ATTENDANCE_DELETE,
         Permission.HR_CATALOG_MANAGE,
+        # Machinery module - full access
+        Permission.MACHINERY_CREATE, Permission.MACHINERY_READ, Permission.MACHINERY_UPDATE, Permission.MACHINERY_DELETE,
         # Agent module - run and resolve
         Permission.AGENT_VIEW, Permission.AGENT_RUN, Permission.AGENT_RESOLVE,
     ],
@@ -255,6 +266,8 @@ ROLE_PERMISSIONS = {
         Permission.EMPLOYEE_READ,
         Permission.PAYROLL_READ,
         Permission.ATTENDANCE_CREATE, Permission.ATTENDANCE_READ,
+        # Machinery module - no delete
+        Permission.MACHINERY_CREATE, Permission.MACHINERY_READ, Permission.MACHINERY_UPDATE,
         # Agent module - view and resolve own suggestions
         Permission.AGENT_VIEW, Permission.AGENT_RESOLVE,
     ],
@@ -296,6 +309,8 @@ ROLE_PERMISSIONS = {
         Permission.EMPLOYEE_READ,
         Permission.PAYROLL_READ,
         Permission.ATTENDANCE_READ,
+        # Machinery module - read only
+        Permission.MACHINERY_READ,
         # Agent module - view only
         Permission.AGENT_VIEW,
     ],
@@ -382,7 +397,7 @@ def check_ownership(user, record) -> bool:
         return False
 
     # System Administrators can access everything
-    if user.role_name == "System Administrator":
+    if user.role_name == Role.SYSTEM_ADMINISTRATOR:
         return True
 
     # Check if record has ownerid field
@@ -532,7 +547,7 @@ def filter_by_ownership(queryset, user, owner_field='ownerid'):
         return queryset.none()
 
     # System Administrators and Managers see everything
-    if user.role_name in ["System Administrator", "Sales Manager"]:
+    if user.role_name in ADMIN_ROLES:
         return queryset
 
     # Others see only their own records
@@ -555,7 +570,7 @@ def can_modify_record(user, record_owner):
         return False
 
     # System Administrators and Sales Managers can modify any record
-    if user.role_name in ["System Administrator", "Sales Manager"]:
+    if user.role_name in ADMIN_ROLES:
         return True
 
     # Users can modify their own records

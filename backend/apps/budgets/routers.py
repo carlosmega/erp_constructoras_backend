@@ -16,6 +16,7 @@ from apps.budgets.schemas import (
     ExtendPeriodsDto,
     ImputationCodeBudgetSchema,
     BulkSaveBudgetLinesDto,
+    UpdateActualVolumeDto,
 )
 from apps.budgets.services import (
     CostCategoryService,
@@ -201,3 +202,14 @@ def compute_actuals(request: HttpRequest, project_id: UUID, zone_id: Optional[UU
     """Compute actual amounts from classified expenses."""
     updated = BudgetLineService.compute_actuals(project_id, zone_id)
     return {"updated": updated}
+
+
+@budget_lines_router.patch(
+    "/actual-volume/",
+    response=ImputationCodeBudgetSchema,
+)
+@require_permission(Permission.BUDGET_UPDATE)
+def update_actual_volume(request: HttpRequest, payload: UpdateActualVolumeDto):
+    """Update actual production volume for a single budget line (creates if needed)."""
+    result = BudgetLineService.update_actual_volume(payload, request.user)
+    return result

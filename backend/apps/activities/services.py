@@ -4,6 +4,7 @@ Activity business logic services.
 Phase 12 Implementation: Activity Management
 """
 
+import logging
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from uuid import UUID
@@ -12,6 +13,8 @@ from apps.activities.models import Activity, Email, PhoneCall, Task, Appointment
 from apps.activities.schemas import *
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, PermissionDenied
+
+logger = logging.getLogger(__name__)
 
 
 class ActivityService:
@@ -87,19 +90,21 @@ class ActivityService:
             }
         # Meeting and Note types: base activity only, no child record needed
 
-        # Notification: activity assigned
         try:
-            from apps.notifications.services import NotificationService
             owner = SystemUser.objects.get(systemuserid=payload.ownerid)
-            NotificationService.notify_activity_assigned(
+        except SystemUser.DoesNotExist:
+            owner = None
+
+        if owner is not None:
+            from apps.notifications.signals import activity_assigned
+            activity_assigned.send(
+                sender=Activity,
                 activity_type=str(type_code_str),
-                activity_id=str(activity.activityid),
+                activity_id=activity.activityid,
                 activity_subject=payload.subject,
                 owner=owner,
                 actor=user,
             )
-        except Exception:
-            pass
 
         return result
 
@@ -142,7 +147,9 @@ class ActivityService:
                     email.matchconfidence = match_result['matchconfidence']
                     email.save()
             except Exception:
-                pass  # Don't block email creation if matching fails
+                logger.exception(
+                    "Email auto-match failed (activity_id=%s)", activity.activityid
+                )
 
         return email
 

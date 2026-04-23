@@ -24,6 +24,55 @@ class TestListNotifications:
 
 
 @pytest.mark.contract
+class TestListNotificationsPaginated:
+    """Cursor-based paginated listing (opt-in; legacy list endpoint remains)."""
+
+    def test_returns_paginated_shape(self, auth_client, salesperson):
+        for _ in range(3):
+            NotificationFactory(ownerid=salesperson)
+
+        response = auth_client.get('/api/notifications/paginated/?limit=2')
+        assert response.status_code == 200
+        body = response.json()
+        assert 'results' in body
+        assert 'next_cursor' in body
+        assert 'has_more' in body
+        assert len(body['results']) == 2
+        assert body['has_more'] is True
+
+    def test_cursor_navigates_to_next_page(self, auth_client, salesperson):
+        for _ in range(3):
+            NotificationFactory(ownerid=salesperson)
+
+        page1 = auth_client.get('/api/notifications/paginated/?limit=2').json()
+        page2 = auth_client.get(
+            f'/api/notifications/paginated/?limit=2&cursor={page1["next_cursor"]}'
+        ).json()
+
+        page1_ids = {n['notificationid'] for n in page1['results']}
+        page2_ids = {n['notificationid'] for n in page2['results']}
+        assert page1_ids.isdisjoint(page2_ids)
+        assert page2['has_more'] is False
+
+    def test_only_returns_own_notifications(self, auth_client, salesperson, readonly_user):
+        """Ownership must apply to paginated endpoint too (no cross-user leakage)."""
+        NotificationFactory(ownerid=salesperson)
+        NotificationFactory(ownerid=readonly_user)
+
+        response = auth_client.get('/api/notifications/paginated/?limit=50')
+        assert response.status_code == 200
+        body = response.json()
+        owner_ids = {n.get('ownerid') for n in body['results']}
+        # Only salesperson's notifications should appear
+        assert all(oid == str(salesperson.systemuserid) for oid in owner_ids if oid)
+
+    def test_unauthenticated_returns_403(self, db):
+        from django.test import Client
+        response = Client().get('/api/notifications/paginated/')
+        assert response.status_code == 403
+
+
+@pytest.mark.contract
 class TestUnreadCount:
     def test_returns_count(self, auth_client, salesperson):
         NotificationFactory(ownerid=salesperson, isread=False)

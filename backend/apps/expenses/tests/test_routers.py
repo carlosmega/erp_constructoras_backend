@@ -23,6 +23,55 @@ class TestListExpenses:
 
 
 @pytest.mark.contract
+class TestListExpensesPaginated:
+    """Offset-based paginated listing (opt-in; legacy endpoint unchanged)."""
+
+    def _setup(self, salesperson, count=3):
+        project = ConstructionProjectFactory(
+            ownerid=salesperson, createdby=salesperson, modifiedby=salesperson,
+        )
+        period = ImputationPeriodFactory(projectid=project, createdby=salesperson)
+        for _ in range(count):
+            ProjectExpenseFactory(
+                projectid=project, periodid=period,
+                ownerid=salesperson, createdby=salesperson, modifiedby=salesperson,
+            )
+        return project
+
+    def test_returns_paginated_shape(self, auth_client, salesperson):
+        project = self._setup(salesperson, count=3)
+
+        response = auth_client.get(
+            f'/api/expenses/projects/{project.projectid}/expenses/paginated/?page=1&page_size=2'
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body['count'] == 3
+        assert body['page'] == 1
+        assert body['page_size'] == 2
+        assert len(body['results']) == 2
+        assert body['next'] is not None
+        assert body['previous'] is None
+
+    def test_second_page(self, auth_client, salesperson):
+        project = self._setup(salesperson, count=3)
+
+        response = auth_client.get(
+            f'/api/expenses/projects/{project.projectid}/expenses/paginated/?page=2&page_size=2'
+        )
+        body = response.json()
+        assert len(body['results']) == 1
+        assert body['next'] is None
+        assert body['previous'] is not None
+
+    def test_unauthenticated_returns_403(self, db):
+        from django.test import Client
+        fake_id = uuid.uuid4()
+        response = Client().get(f'/api/expenses/projects/{fake_id}/expenses/paginated/')
+        assert response.status_code == 403
+
+
+@pytest.mark.contract
 class TestCreateExpense:
     def test_creates_expense(self, auth_client, salesperson):
         project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)

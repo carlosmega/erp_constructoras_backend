@@ -7,15 +7,21 @@ from typing import Optional
 
 from django.db import models, transaction
 from django.db.models import Sum, Prefetch
+from django.db.models.functions import ExtractMonth
 
 from apps.corporate.models import (
     CorporateBudget,
     CorporateBudgetVersion,
     CorporateBudgetLine,
-    CorporateExpense,
     BudgetStateCode,
     BudgetVersionStateCode,
     CorporateExpenseCategoryCode,
+)
+from apps.expenses.models import (
+    ProjectExpense,
+    ExpenseScopeCode,
+    ExpenseStateCode,
+    DocumentTypeCode,
 )
 from core.exceptions import ValidationError, NotFound
 from core.permissions import filter_by_ownership
@@ -160,20 +166,9 @@ class CorporateBudgetService:
         budget.modifiedby = user
         budget.save()
 
-        # Snapshot budgeted amounts to CorporateExpense rows (12 months)
-        for line in lines:
-            for month_idx, field in enumerate(MONTH_FIELDS, start=1):
-                budgeted = getattr(line, field, Decimal('0'))
-                CorporateExpense.objects.update_or_create(
-                    corporatebudgetid=budget,
-                    categorycode=line.categorycode,
-                    year=budget.fiscalyear,
-                    month=month_idx,
-                    defaults={
-                        'budgetedamount': budgeted,
-                        'modifiedby': user,
-                    }
-                )
+        # Budgeted amounts live in CorporateBudgetLine (12 monthly columns).
+        # No separate expense rows needed — budget-vs-actual is computed
+        # by aggregating ProjectExpense records with expensescope=CORPORATE.
 
         return budget
 
@@ -292,52 +287,45 @@ class CorporateBudgetService:
 
 
 class CorporateExpenseService:
-    """Service for tracking real corporate expenses vs budget."""
+    """Service for tracking real corporate expenses vs budget.
+
+    Corporate expenses are now stored as ProjectExpense records with
+    expensescope=CORPORATE. Budget-vs-actual is computed by aggregating
+    those records against CorporateBudgetLine monthly columns.
+    """
 
     @staticmethod
     def list_expenses(budget_id: UUID, user, year: Optional[int] = None, month: Optional[int] = None):
-        qs = CorporateExpense.objects.filter(corporatebudgetid=budget_id)
-        if year is not None:
-            qs = qs.filter(year=year)
-        if month is not None:
-            qs = qs.filter(month=month)
-        return qs
+        """List individual corporate expense records."""
+        from apps.expenses.services import ExpenseService
+        return ExpenseService.list_corporate_expenses(
+            budget_id=budget_id,
+            user=user,
+            year=year,
+            month=month,
+        )
 
     @staticmethod
     def record_expense(budget_id: UUID, dto, user):
-        """Upsert an actual expense amount for a category/month."""
+        """Quick-entry: create a corporate expense from aggregate amount."""
         try:
             budget = CorporateBudget.objects.get(corporatebudgetid=budget_id)
         except CorporateBudget.DoesNotExist:
             raise NotFound(f"Corporate budget {budget_id} not found")
 
-        expense, created = CorporateExpense.objects.get_or_create(
+        expense = ProjectExpense(
+            expensescope=ExpenseScopeCode.CORPORATE,
             corporatebudgetid=budget,
-            categorycode=dto.categorycode,
-            year=dto.year,
-            month=dto.month,
-            defaults={
-                'actualamount': dto.actualamount,
-                'notes': dto.notes,
-                'createdby': user,
-                'modifiedby': user,
-            }
+            corporatecategory=dto.categorycode,
+            documenttype=DocumentTypeCode.NO_INVOICE_EXPENSE,
+            invoicedate=date(dto.year, dto.month, 1),
+            subtotal=dto.actualamount,
+            netamount=dto.actualamount,
+            notes=dto.notes,
+            ownerid=user,
+            createdby=user,
+            modifiedby=user,
         )
-
-        if not created:
-            expense.actualamount = dto.actualamount
-            if dto.notes is not None:
-                expense.notes = dto.notes
-            expense.modifiedby = user
-
-        # Calculate variance
-        if expense.budgetedamount and expense.budgetedamount != 0:
-            expense.variance = expense.actualamount - expense.budgetedamount
-            expense.variancepercent = (expense.variance / expense.budgetedamount) * 100
-        else:
-            expense.variance = expense.actualamount
-            expense.variancepercent = Decimal('0')
-
         expense.save()
         return expense
 
@@ -351,18 +339,53 @@ class CorporateExpenseService:
         return results
 
     @staticmethod
-    def get_budget_vs_actual(budget_id: UUID, year: int, user):
-        """Build the full semaphore dashboard data."""
-        expenses = CorporateExpense.objects.filter(
-            corporatebudgetid=budget_id,
-            year=year,
-        ).order_by('categorycode', 'month')
+    def _get_budget_lines_by_category(budget_id: UUID):
+        """Get budget line data keyed by category code from active version."""
+        budget = CorporateBudget.objects.prefetch_related(
+            'versions__lines'
+        ).get(corporatebudgetid=budget_id)
 
-        # Group by category
+        active_version = budget.versions.filter(
+            statecode=BudgetVersionStateCode.ACTIVE
+        ).first()
+        if not active_version:
+            return {}
+
+        result = {}
+        for line in active_version.lines.all():
+            result[line.categorycode] = line
+        return result
+
+    @staticmethod
+    def get_budget_vs_actual(budget_id: UUID, year: int, user):
+        """Build the full semaphore dashboard data.
+
+        Budgeted amounts come from CorporateBudgetLine (active version).
+        Actual amounts are aggregated from ProjectExpense records with
+        expensescope=CORPORATE.
+        """
+        # Get budgeted amounts from budget lines
+        budget_lines = CorporateExpenseService._get_budget_lines_by_category(budget_id)
+
+        # Get actual amounts aggregated by category and month
+        actuals_qs = ProjectExpense.objects.filter(
+            expensescope=ExpenseScopeCode.CORPORATE,
+            corporatebudgetid=budget_id,
+            statecode=ExpenseStateCode.ACTIVE,
+            invoicedate__year=year,
+        ).values(
+            'corporatecategory',
+            month=ExtractMonth('invoicedate'),
+        ).annotate(
+            actual=Sum('netamount'),
+        )
+
+        # Build lookup: {(category, month): actual_amount}
         from collections import defaultdict
-        by_category = defaultdict(list)
-        for exp in expenses:
-            by_category[exp.categorycode].append(exp)
+        actuals_map = defaultdict(Decimal)
+        for row in actuals_qs:
+            key = (row['corporatecategory'], row['month'])
+            actuals_map[key] = row['actual'] or Decimal('0')
 
         def get_semaphore(budgeted, actual):
             if budgeted and budgeted > 0:
@@ -381,15 +404,18 @@ class CorporateExpenseService:
         current_month = date.today().month
 
         for choice in CorporateExpenseCategoryCode:
-            cat_expenses = by_category.get(choice.value, [])
+            budget_line = budget_lines.get(choice.value)
             months_data = []
             annual_budgeted = Decimal('0')
             annual_actual = Decimal('0')
 
             for m in range(1, 13):
-                exp = next((e for e in cat_expenses if e.month == m), None)
-                budgeted = exp.budgetedamount if exp else Decimal('0')
-                actual = exp.actualamount if exp else Decimal('0')
+                # Budgeted from budget line monthly column
+                budgeted = Decimal('0')
+                if budget_line:
+                    budgeted = getattr(budget_line, MONTH_FIELDS[m - 1], Decimal('0'))
+
+                actual = actuals_map.get((choice.value, m), Decimal('0'))
                 variance = actual - budgeted
                 vpct = (variance / budgeted * 100) if budgeted else Decimal('0')
 

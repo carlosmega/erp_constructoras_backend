@@ -4,6 +4,7 @@ Quote business logic services.
 Phase 8 Implementation: Quote Management
 """
 
+import logging
 from django.db import transaction
 from core.exceptions import ValidationError, NotFound, PermissionDenied
 from django.utils import timezone
@@ -21,6 +22,8 @@ from apps.quotes.schemas import (
 from apps.users.models import SystemUser
 from apps.opportunities.models import Opportunity
 from core.permissions import can_modify_record
+
+logger = logging.getLogger(__name__)
 
 
 class QuoteService:
@@ -269,12 +272,8 @@ class QuoteService:
         quote.modifiedby = user
         quote.save()
 
-        # Notification: quote activated
-        try:
-            from apps.notifications.services import NotificationService
-            NotificationService.notify_quote_activated(quote, actor=user)
-        except Exception:
-            pass
+        from apps.notifications.signals import quote_activated
+        quote_activated.send(sender=Quote, quote=quote, actor=user)
 
         return quote
 
@@ -309,13 +308,9 @@ class QuoteService:
         quote.modifiedby = user
         quote.save()
 
-        # Notification: quote won
         if dto.statuscode == QuoteStatusCode.WON:
-            try:
-                from apps.notifications.services import NotificationService
-                NotificationService.notify_quote_won(quote, actor=user)
-            except Exception:
-                pass
+            from apps.notifications.signals import quote_won
+            quote_won.send(sender=Quote, quote=quote, actor=user)
 
         return quote
 

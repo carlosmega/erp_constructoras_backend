@@ -30,6 +30,52 @@ class TestListActivities:
 
 
 @pytest.mark.contract
+class TestListActivitiesPaginated:
+    """Cursor-based paginated listing. Backwards-compatible alternative to /api/activities/."""
+
+    def test_returns_paginated_shape(self, auth_client, salesperson):
+        for _ in range(3):
+            ActivityFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+
+        response = auth_client.get('/api/activities/paginated/?limit=2')
+        assert response.status_code == 200
+        body = response.json()
+        assert 'results' in body
+        assert 'next_cursor' in body
+        assert 'has_more' in body
+        assert len(body['results']) == 2
+        assert body['has_more'] is True
+
+    def test_cursor_navigates_to_next_page(self, auth_client, salesperson):
+        for _ in range(3):
+            ActivityFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+
+        page1 = auth_client.get('/api/activities/paginated/?limit=2').json()
+        cursor = page1['next_cursor']
+        page2 = auth_client.get(f'/api/activities/paginated/?limit=2&cursor={cursor}').json()
+
+        page1_ids = {a['activityid'] for a in page1['results']}
+        page2_ids = {a['activityid'] for a in page2['results']}
+        assert page1_ids.isdisjoint(page2_ids)
+        assert page2['has_more'] is False
+
+    def test_respects_filters(self, auth_client, salesperson):
+        task = TaskActivityFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        response = auth_client.get('/api/activities/paginated/?activitytypecode=task&limit=50')
+        assert response.status_code == 200
+        body = response.json()
+        # ActivityListItemSchema serializes activitytypecode as int (3 = Task)
+        assert len(body['results']) >= 1
+        assert all(a['activitytypecode'] == 3 for a in body['results'])
+        assert str(task.activityid) in [a['activityid'] for a in body['results']]
+
+    def test_unauthenticated_returns_403(self, db):
+        from django.test import Client
+        response = Client().get('/api/activities/paginated/')
+        assert response.status_code == 403
+
+
+@pytest.mark.contract
 class TestCreateActivity:
     def test_creates_task(self, auth_client, salesperson):
         payload = {

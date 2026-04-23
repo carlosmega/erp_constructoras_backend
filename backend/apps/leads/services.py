@@ -6,6 +6,7 @@ Handles lead operations, state transitions, and qualification workflow.
 Phase 5 Implementation (User Story 3)
 """
 
+import logging
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
@@ -29,14 +30,24 @@ from apps.leads.schemas import (
 )
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
+from core.services import BaseReadService
 from apps.audit.services import audit_action
 
+logger = logging.getLogger(__name__)
 
-class LeadService:
+
+class LeadService(BaseReadService[Lead]):
     """
     Service class for Lead entity business logic.
     """
+
+    model = Lead
+    pk_field = 'leadid'
+    select_related_fields = ('ownerid', 'createdby', 'modifiedby')
+    not_found_message = "Lead not found"
+    access_denied_message = "You don't have access to this lead"
 
     @staticmethod
     def list_leads(
@@ -84,7 +95,7 @@ class LeadService:
 
         if ownerid:
             # Only System Administrator and Sales Manager can filter by other owners
-            if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if user.role_name not in ADMIN_ROLES:
                 raise PermissionDenied("You cannot view other users' leads")
             queryset = queryset.filter(ownerid=ownerid)
 
@@ -149,50 +160,22 @@ class LeadService:
 
         lead.save()
 
-        # Notification: lead assigned
-        try:
-            from apps.notifications.services import NotificationService
-            NotificationService.notify_record_assigned(
-                entity_type='lead',
-                entity_id=str(lead.leadid),
-                entity_name=lead.fullname or lead.lastname,
-                new_owner=lead.ownerid,
-                actor=user,
-            )
-        except Exception:
-            pass  # Never fail the main operation
+        from apps.notifications.signals import record_assigned
+        record_assigned.send(
+            sender=Lead,
+            entity_type='lead',
+            entity_id=lead.leadid,
+            entity_name=lead.fullname or lead.lastname,
+            new_owner=lead.ownerid,
+            actor=user,
+        )
 
         return lead
 
-    @staticmethod
-    def get_lead_by_id(lead_id: UUID, user: SystemUser) -> Lead:
-        """
-        Get lead by ID with ownership check.
-
-        Args:
-            lead_id: Lead UUID
-            user: Current user
-
-        Returns:
-            Lead instance
-
-        Raises:
-            NotFound: If lead doesn't exist
-            PermissionDenied: If user doesn't have access
-        """
-        try:
-            lead = Lead.objects.select_related(
-                'ownerid', 'createdby', 'modifiedby'
-            ).get(leadid=lead_id)
-        except Lead.DoesNotExist:
-            raise NotFound(f"Lead with ID {lead_id} not found")
-
-        # Check ownership (System Administrator and Sales Manager can see all)
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
-            if lead.ownerid_id != user.systemuserid:
-                raise PermissionDenied("You don't have access to this lead")
-
-        return lead
+    @classmethod
+    def get_lead_by_id(cls, lead_id: UUID, user: SystemUser) -> Lead:
+        """Get lead by ID with ownership check (delegates to BaseReadService)."""
+        return cls.get_by_id(lead_id, user)
 
     @staticmethod
     @audit_action(action='update', entity='lead', record_arg='lead_id')
@@ -257,19 +240,16 @@ class LeadService:
         lead.modifiedby = user
         lead.save()
 
-        # Notification: lead re-assigned
         if dto.ownerid and lead.ownerid_id != old_owner_id:
-            try:
-                from apps.notifications.services import NotificationService
-                NotificationService.notify_record_assigned(
-                    entity_type='lead',
-                    entity_id=str(lead.leadid),
-                    entity_name=lead.fullname or lead.lastname,
-                    new_owner=lead.ownerid,
-                    actor=user,
-                )
-            except Exception:
-                pass
+            from apps.notifications.signals import record_assigned
+            record_assigned.send(
+                sender=Lead,
+                entity_type='lead',
+                entity_id=lead.leadid,
+                entity_name=lead.fullname or lead.lastname,
+                new_owner=lead.ownerid,
+                actor=user,
+            )
 
         return lead
 
@@ -363,12 +343,10 @@ class LeadService:
         lead.modifiedby = user
         lead.save()
 
-        # Notification: lead qualified
-        try:
-            from apps.notifications.services import NotificationService
-            NotificationService.notify_lead_qualified(lead, opportunity, actor=user)
-        except Exception:
-            pass
+        from apps.notifications.signals import lead_qualified as lead_qualified_signal
+        lead_qualified_signal.send(
+            sender=Lead, lead=lead, opportunity=opportunity, actor=user,
+        )
 
         # Build response matching QualifyLeadResponse schema
         response = {

@@ -117,9 +117,12 @@ class UpdateExpenseLineDto(Schema):
 
 
 class CreateProjectExpenseDto(Schema):
-    """DTO for creating a project expense."""
-    projectid: UUID
-    periodid: UUID
+    """DTO for creating a project expense or corporate expense."""
+    expensescope: int = 0  # 0=Project, 1=Corporate
+    projectid: Optional[UUID] = None
+    periodid: Optional[UUID] = None
+    corporatebudgetid: Optional[UUID] = None
+    corporatecategory: Optional[str] = None
     documenttype: int
     imputationcodeid: Optional[UUID] = None
     supplierrfc: Optional[str] = None
@@ -147,6 +150,7 @@ class CreateProjectExpenseDto(Schema):
 class UpdateProjectExpenseDto(Schema):
     """DTO for updating a project expense."""
     periodid: Optional[UUID] = None
+    corporatecategory: Optional[str] = None
     documenttype: Optional[int] = None
     supplierrfc: Optional[str] = None
     suppliername: Optional[str] = None
@@ -262,6 +266,7 @@ class CreateClientEstimateDto(Schema):
     estimationperiod: Optional[str] = None
     estimatetype: int = 0
     estimatedamount: Decimal = Decimal('0.00')
+    advancepayment: Decimal = Decimal('0.00')
     advanceamortization: Decimal = Decimal('0.00')
     otherdeductions: Decimal = Decimal('0.00')
     materialdeductions: Decimal = Decimal('0.00')
@@ -280,6 +285,7 @@ class UpdateClientEstimateDto(Schema):
     estimationperiod: Optional[str] = None
     estimatetype: Optional[int] = None
     estimatedamount: Optional[Decimal] = None
+    advancepayment: Optional[Decimal] = None
     advanceamortization: Optional[Decimal] = None
     otherdeductions: Optional[Decimal] = None
     materialdeductions: Optional[Decimal] = None

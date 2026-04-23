@@ -1,19 +1,26 @@
 """
 Pagination utilities for CRM Backend Foundation.
 
-These utilities are available for future use when the frontend adopts
-server-side pagination. Currently, all list endpoints return plain arrays
-to match frontend expectations (client-side filtering/sorting).
+Two strategies are supported:
 
-To re-enable pagination on an endpoint:
-    1. Import: from core.pagination import paginate_queryset, create_paginated_response
-    2. Create schema: PaginatedLeadList = create_paginated_response(LeadListSchema)
-    3. Set response: @router.get("/", response=PaginatedLeadList)
-    4. Add params: page: int = 1, page_size: int = 50
-    5. Return: paginate_queryset(queryset, page, page_size, request.path)
+1. **Offset-based** (`paginate_queryset` + `create_paginated_response`)
+   Classic page/page_size pagination. Best for admin tables where users expect
+   page numbers ("page 3 of 12"). Downside: unstable under concurrent inserts.
+
+2. **Cursor-based** (`cursor_paginate_queryset` + `create_cursor_paginated_response`)
+   Opaque-cursor pagination ordered DESC by a datetime field (default
+   `createdon`). Stable under concurrent inserts. Best for feeds, timelines,
+   activities, notifications — anywhere `useInfiniteQuery` is natural.
+
+Both helpers are opt-in — the rest of the codebase continues to return plain
+arrays until a specific endpoint adopts pagination.
 """
 
+import base64
+import binascii
+from datetime import datetime
 from typing import Generic, TypeVar, List, Optional, Type
+from django.db.models import Q
 from ninja import Schema
 
 
@@ -88,3 +95,107 @@ def paginate_queryset(queryset, page: int = 1, page_size: int = 50, request_url:
         "previous": previous_url,
         "results": results,
     }
+
+
+# =============================================================================
+# Cursor-based pagination (for timelines, feeds, notifications)
+# =============================================================================
+
+_CURSOR_SEP = '|'
+
+
+def _encode_cursor(order_value, pk_value) -> str:
+    raw = f"{order_value.isoformat()}{_CURSOR_SEP}{pk_value}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def _decode_cursor(cursor: str):
+    """Return (datetime, pk_str) or None if cursor is malformed."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        dt_str, pk_str = raw.split(_CURSOR_SEP, 1)
+        return datetime.fromisoformat(dt_str), pk_str
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error):
+        return None
+
+
+def cursor_paginate_queryset(
+    queryset,
+    cursor: Optional[str] = None,
+    limit: int = 50,
+    order_field: str = 'createdon',
+):
+    """
+    Paginate `queryset` using an opaque cursor ordered DESC by `order_field`.
+
+    Tie-breaking uses the model's primary key, so ordering is stable even when
+    multiple rows share the same datetime. Invalid cursors are treated as
+    "no cursor" (first page).
+
+    Args:
+        queryset: Django QuerySet to paginate.
+        cursor: Opaque cursor from a previous call's `next_cursor`, or None.
+        limit: Page size (clamped to 1..100).
+        order_field: Datetime field to order DESC by (default 'createdon').
+
+    Returns:
+        dict with keys:
+            results (List): up to `limit` model instances
+            next_cursor (Optional[str]): cursor for next page, None on last page
+            has_more (bool): True if more pages exist
+    """
+    limit = min(max(1, limit), 100)
+    pk_name = queryset.model._meta.pk.attname
+
+    if cursor:
+        decoded = _decode_cursor(cursor)
+        if decoded is not None:
+            cursor_dt, cursor_pk = decoded
+            queryset = queryset.filter(
+                Q(**{f'{order_field}__lt': cursor_dt})
+                | Q(**{order_field: cursor_dt, f'{pk_name}__lt': cursor_pk})
+            )
+
+    queryset = queryset.order_by(f'-{order_field}', f'-{pk_name}')
+    # Fetch limit+1 to know whether there's another page
+    items = list(queryset[:limit + 1])
+
+    has_more = len(items) > limit
+    if has_more:
+        items = items[:limit]
+
+    next_cursor = None
+    if has_more and items:
+        last = items[-1]
+        next_cursor = _encode_cursor(
+            getattr(last, order_field),
+            getattr(last, pk_name),
+        )
+
+    return {
+        'results': items,
+        'next_cursor': next_cursor,
+        'has_more': has_more,
+    }
+
+
+def create_cursor_paginated_response(item_schema: Type):
+    """
+    Factory for cursor-paginated response schemas.
+
+    Usage:
+        CursorActivityList = create_cursor_paginated_response(ActivityListItemSchema)
+
+        @router.get("/", response=CursorActivityList)
+        def list_items(request, cursor: Optional[str] = None, limit: int = 50):
+            qs = ...
+            return cursor_paginate_queryset(qs, cursor, limit)
+    """
+    class CursorPaginatedResponse(Schema):
+        results: List[item_schema]
+        next_cursor: Optional[str] = None
+        has_more: bool = False
+
+    CursorPaginatedResponse.__qualname__ = f'CursorPaginated{item_schema.__name__}'
+    CursorPaginatedResponse.__name__ = f'CursorPaginated{item_schema.__name__}'
+    return CursorPaginatedResponse

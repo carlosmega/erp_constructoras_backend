@@ -154,6 +154,12 @@ class Command(BaseCommand):
             # 6c. Create/update ImputationCodeBudget records
             for label, amounts in period_data.items():
                 period = periods.get(label)
+                if not period:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"Period '{label}' not found in DB for code {code_str}, creating without period link"
+                        )
+                    )
                 obj, was_created = ImputationCodeBudget.objects.update_or_create(
                     imputationcodeid=imp_code,
                     periodlabel=label,

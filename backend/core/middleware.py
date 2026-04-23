@@ -5,9 +5,12 @@ Provides audit trail support and API URL normalization.
 """
 
 import logging
+import os
 import threading
 from typing import Optional
 from django.urls import resolve, Resolver404
+
+logger = logging.getLogger(__name__)
 
 # Thread-local storage for current user
 _thread_locals = threading.local()
@@ -72,33 +75,62 @@ class ApiTrailingSlashMiddleware:
 
 class DevAutoLoginMiddleware:
     """
-    Auto-authenticate requests with the first SystemUser (admin) in DEBUG mode.
+    Auto-authenticate requests with a SystemUser in DEBUG mode.
 
-    This enables frontend development without a real login flow.
-    Only active when settings.DEBUG is True and the request is not already
-    authenticated.
+    Enables frontend development without a real login flow. Only active when
+    settings.DEBUG is True and the request is not already authenticated.
+
+    Resolution order for the dev user:
+      1. DEBUG_USER_EMAIL env var (if set) → lookup by emailaddress1
+      2. First enabled SystemUser (fallback, preserves previous behavior)
+
+    Emits a WARNING log on activation and refuses to run if DEBUG is False —
+    belt-and-suspenders against misconfiguration reaching production.
 
     Must be placed AFTER AuthenticationMiddleware in MIDDLEWARE.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
-        self._admin_user = None
+        self._dev_user = None
+        self._dev_user_resolved = False
+        self._warned = False
+
+    def _resolve_dev_user(self):
+        from apps.users.models import SystemUser
+
+        email = os.getenv('DEBUG_USER_EMAIL')
+        qs = SystemUser.objects.select_related('securityroleid').filter(isdisabled=False)
+        if email:
+            user = qs.filter(emailaddress1__iexact=email).first()
+            if user:
+                return user
+            logger.warning(
+                "DEBUG_USER_EMAIL=%s not found or disabled; falling back to first active user",
+                email,
+            )
+        return qs.first()
 
     def __call__(self, request):
         from django.conf import settings
 
-        if settings.DEBUG and hasattr(request, 'user') and not request.user.is_authenticated:
-            if self._admin_user is None:
-                from apps.users.models import SystemUser
-                self._admin_user = (
-                    SystemUser.objects
-                    .select_related('securityroleid')
-                    .filter(isdisabled=False)
-                    .first()
-                )
-            if self._admin_user:
-                request.user = self._admin_user
+        if not settings.DEBUG:
+            return self.get_response(request)
+
+        if hasattr(request, 'user') and not request.user.is_authenticated:
+            if not self._dev_user_resolved:
+                self._dev_user = self._resolve_dev_user()
+                self._dev_user_resolved = True
+
+            if self._dev_user:
+                if not self._warned:
+                    logger.warning(
+                        "DevAutoLoginMiddleware ACTIVE — auto-authenticating as %s "
+                        "(DEBUG=True). This MUST be disabled in production.",
+                        self._dev_user.emailaddress1,
+                    )
+                    self._warned = True
+                request.user = self._dev_user
 
         return self.get_response(request)
 

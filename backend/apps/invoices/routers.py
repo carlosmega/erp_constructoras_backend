@@ -17,34 +17,25 @@ from apps.invoices.schemas import (
     RecordPaymentDto, CancelInvoiceDto, InvoiceStatsSchema
 )
 from apps.invoices.services import InvoiceService
+from core.pagination import paginate_queryset, create_paginated_response
 from core.permissions import Permission, require_permission, filter_by_ownership
 
 # Initialize router
 invoices_router = Router(tags=["Invoices"])
 
+PaginatedInvoiceList = create_paginated_response(InvoiceListItemSchema)
 
-# ============================================================================
-# Invoice CRUD Operations
-# ============================================================================
 
-@invoices_router.get('/', response=List[InvoiceListItemSchema])
-@require_permission(Permission.INVOICE_READ)
-def list_invoices(
+def _build_invoices_queryset(
     request: HttpRequest,
-    statecode: int = None,
-    overdue: bool = None,
-    salesorderid: str = None,
-    opportunityid: str = None,
-    customerid: str = None,
-    ownerid: str = None,
+    statecode,
+    overdue,
+    salesorderid,
+    opportunityid,
+    customerid,
+    ownerid,
 ):
-    """
-    List invoices with filtering.
-
-    Query Parameters:
-    - statecode: Filter by state (0=Active, 1=Paid, 2=Canceled)
-    - overdue: Filter overdue invoices (true/false)
-    """
+    """Shared queryset builder for legacy and paginated list endpoints."""
     queryset = filter_by_ownership(Invoice.objects.all(), request.user)
 
     if statecode is not None:
@@ -70,9 +61,49 @@ def list_invoices(
     if ownerid:
         queryset = queryset.filter(ownerid_id=ownerid)
 
-    queryset = queryset.order_by('-createdon')
+    return queryset.order_by('-createdon')
 
+
+# ============================================================================
+# Invoice CRUD Operations
+# ============================================================================
+
+@invoices_router.get('/', response=List[InvoiceListItemSchema])
+@require_permission(Permission.INVOICE_READ)
+def list_invoices(
+    request: HttpRequest,
+    statecode: int = None,
+    overdue: bool = None,
+    salesorderid: str = None,
+    opportunityid: str = None,
+    customerid: str = None,
+    ownerid: str = None,
+):
+    """List invoices with filtering (non-paginated)."""
+    queryset = _build_invoices_queryset(
+        request, statecode, overdue, salesorderid, opportunityid, customerid, ownerid,
+    )
     return list(queryset)
+
+
+@invoices_router.get('/paginated/', response=PaginatedInvoiceList)
+@require_permission(Permission.INVOICE_READ)
+def list_invoices_paginated(
+    request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
+    statecode: int = None,
+    overdue: bool = None,
+    salesorderid: str = None,
+    opportunityid: str = None,
+    customerid: str = None,
+    ownerid: str = None,
+):
+    """List invoices with offset-based pagination (opt-in alternative to `/`)."""
+    queryset = _build_invoices_queryset(
+        request, statecode, overdue, salesorderid, opportunityid, customerid, ownerid,
+    )
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @invoices_router.get('/all-details', response=List[InvoiceDetailListItemSchema])

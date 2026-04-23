@@ -12,9 +12,12 @@ from django.http import HttpRequest
 
 from apps.notifications.schemas import NotificationSchema, UnreadCountSchema, BulkIdsDto
 from apps.notifications.services import NotificationService
+from core.pagination import cursor_paginate_queryset, create_cursor_paginated_response
 from core.permissions import require_authenticated
 
 notifications_router = Router(tags=["Notifications"])
+
+CursorNotificationList = create_cursor_paginated_response(NotificationSchema)
 
 
 @notifications_router.get("/", response=List[NotificationSchema])
@@ -25,7 +28,7 @@ def list_notifications(
     typecode: Optional[str] = None,
     search: Optional[str] = None,
 ):
-    """List notifications for the current user."""
+    """List notifications for the current user (non-paginated)."""
     notifications = NotificationService.list_notifications(
         user=request.user,
         is_read=is_read,
@@ -33,6 +36,26 @@ def list_notifications(
         search=search,
     )
     return list(notifications)
+
+
+@notifications_router.get("/paginated/", response=CursorNotificationList)
+@require_authenticated
+def list_notifications_paginated(
+    request: HttpRequest,
+    cursor: Optional[str] = None,
+    limit: int = 50,
+    is_read: Optional[bool] = None,
+    typecode: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    """List notifications with cursor-based pagination (ordered DESC by createdon)."""
+    queryset = NotificationService.list_notifications(
+        user=request.user,
+        is_read=is_read,
+        typecode=typecode,
+        search=search,
+    )
+    return cursor_paginate_queryset(queryset, cursor=cursor, limit=limit)
 
 
 @notifications_router.get("/unread-count", response=UnreadCountSchema)

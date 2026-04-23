@@ -25,6 +25,7 @@ from apps.cases.schemas import (
 from apps.users.models import SystemUser
 from apps.audit.services import audit_action
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
 
 
@@ -198,7 +199,7 @@ class CaseService:
             raise NotFound(f"Case with ID {case_id} not found")
 
         # Check ownership (System Administrator and Sales Manager can see all)
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if case.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this case")
 

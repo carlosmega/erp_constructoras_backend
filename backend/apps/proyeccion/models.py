@@ -1,7 +1,9 @@
 """Budget estimation (proyección) models for construction projects."""
 
 import uuid
+from decimal import Decimal
 from django.db import models
+from django.db.models import Q, CheckConstraint, UniqueConstraint
 from core.models import AuditMixin
 
 
@@ -108,6 +110,7 @@ class EstimationProject(AuditMixin):
     estimatedstartdate = models.DateField(db_column='estimatedstartdate', blank=True, null=True)
     estimatedenddate = models.DateField(db_column='estimatedenddate', blank=True, null=True)
     durationmonths = models.IntegerField(db_column='durationmonths', default=0)
+    periodcount = models.IntegerField(db_column='periodcount', default=0)
 
     # Project classification (will carry over to ConstructionProject)
     projecttype = models.IntegerField(db_column='projecttype', default=0)  # 0=Public, 1=Private
@@ -196,7 +199,7 @@ class ConceptFamily(AuditMixin):
     )
 
     code = models.CharField(
-        max_length=10,
+        max_length=50,
         db_column='code'
     )
 
@@ -250,7 +253,7 @@ class ConceptSubfamily(AuditMixin):
     )
 
     code = models.CharField(
-        max_length=10,
+        max_length=50,
         db_column='code'
     )
 
@@ -563,6 +566,15 @@ class IndirectCostDetail(AuditMixin):
         db_column='months'
     )
 
+    startmonth = models.IntegerField(
+        null=True, blank=True, db_column='startmonth',
+        help_text='First period (1-based) where this cost applies. null = from P1.',
+    )
+    endmonth = models.IntegerField(
+        null=True, blank=True, db_column='endmonth',
+        help_text='Last period (1-based) where this cost applies. null = until last.',
+    )
+
     amount = models.DecimalField(
         max_digits=19,
         decimal_places=2,
@@ -586,6 +598,21 @@ class IndirectCostDetail(AuditMixin):
 
     def __str__(self):
         return f"{self.categorycode}-{self.linenumber} - {self.description}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        super().clean()
+        if self.startmonth is not None and self.endmonth is not None:
+            if self.startmonth > self.endmonth:
+                raise ValidationError({
+                    'startmonth': 'startmonth must be <= endmonth'
+                })
+        if self.projectid_id and self.projectid.periodcount:
+            pc = self.projectid.periodcount
+            if self.startmonth is not None and not (1 <= self.startmonth <= pc):
+                raise ValidationError({'startmonth': f'startmonth out of range [1, {pc}]'})
+            if self.endmonth is not None and not (1 <= self.endmonth <= pc):
+                raise ValidationError({'endmonth': f'endmonth out of range [1, {pc}]'})
 
 
 class OfferAlternative(AuditMixin):
@@ -1064,8 +1091,17 @@ class EquipmentYield(AuditMixin):
         return f"{self.category} - {self.description}"
 
 
+class WorkPlanEntryType(models.IntegerChoices):
+    PLANNED = 0, 'Planned'
+    ACTUAL = 1, 'Actual'
+
+
 class WorkPlanEntry(AuditMixin):
-    """Work plan distribution entry for a budget concept across periods."""
+    """Work plan distribution entry for a budget concept across periods.
+
+    Mirrors the Excel "Plan de obra" cell grid: each row is a (concept, period, entrytype)
+    — entrytype distinguishes PROGRAMADO (planned) from PRODUCCION REAL (actual).
+    """
 
     workplanentryid = models.UUIDField(
         primary_key=True,
@@ -1097,6 +1133,12 @@ class WorkPlanEntry(AuditMixin):
         db_column='periodlabel'
     )
 
+    entrytype = models.IntegerField(
+        choices=WorkPlanEntryType.choices,
+        default=WorkPlanEntryType.PLANNED,
+        db_column='entrytype',
+    )
+
     distributedquantity = models.DecimalField(
         max_digits=19,
         decimal_places=4,
@@ -1113,14 +1155,16 @@ class WorkPlanEntry(AuditMixin):
 
     class Meta:
         db_table = 'workplanentry'
-        ordering = ['periodnumber']
-        unique_together = [('conceptid', 'periodnumber')]
+        ordering = ['entrytype', 'periodnumber']
+        unique_together = [('conceptid', 'periodnumber', 'entrytype')]
         indexes = [
             models.Index(fields=['projectid']),
+            models.Index(fields=['projectid', 'entrytype']),
         ]
 
     def __str__(self):
-        return f"Period {self.periodnumber} ({self.periodlabel}) - {self.conceptid}"
+        tname = WorkPlanEntryType(self.entrytype).label
+        return f"[{tname}] P{self.periodnumber} ({self.periodlabel}) - {self.conceptid}"
 
 
 # =============================================================================
@@ -1209,6 +1253,33 @@ class ConceptPriceCatalogItem(AuditMixin):
         db_column='statecode'
     )
 
+    # ── Classification hierarchy ──────────────────────────────────────
+    # SICT:     L1=Libro, L2=Título, L3=Capítulo
+    # Dimovere: L1=(vacío), L2=Familia, L3=Subfamilia
+    classificationl1 = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        db_column='classificationl1',
+        help_text='Level 1: Libro (SICT) — empty for Dimovere'
+    )
+
+    classificationl2 = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        db_column='classificationl2',
+        help_text='Level 2: Título (SICT) / Familia (Dimovere)'
+    )
+
+    classificationl3 = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        db_column='classificationl3',
+        help_text='Level 3: Capítulo (SICT) / Subfamilia (Dimovere)'
+    )
+
     class Meta:
         db_table = 'conceptpricecatalogitem'
         ordering = ['code']
@@ -1216,6 +1287,7 @@ class ConceptPriceCatalogItem(AuditMixin):
             models.Index(fields=['source']),
             models.Index(fields=['code']),
             models.Index(fields=['unit']),
+            models.Index(fields=['classificationl2']),
         ]
 
     def __str__(self):
@@ -1382,3 +1454,157 @@ class FamilyTemplateItem(models.Model):
 
     def __str__(self):
         return f"{self.familycode}/{self.subfamilycode} - {self.familyname}/{self.subfamilyname}"
+
+
+# =============================================================================
+# Temporal Distribution (see spec 2026-04-22)
+# =============================================================================
+
+class ProjectionPeriod(AuditMixin):
+    """Auto-generated time periods for EstimationProject (weekly or fortnightly).
+
+    Mirrors the 90-column grid of the Excel 'Dist. Temporal' sheet but with real
+    dates derived from the project's start/end + periodtype.
+    """
+
+    periodid = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, db_column='periodid'
+    )
+
+    projectid = models.ForeignKey(
+        EstimationProject,
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='projection_periods',
+    )
+
+    periodnumber = models.IntegerField(db_column='periodnumber')
+    periodlabel = models.CharField(max_length=20, db_column='periodlabel')
+    startdate = models.DateField(db_column='startdate')
+    enddate = models.DateField(db_column='enddate')
+    periodtype = models.IntegerField(db_column='periodtype')  # 0=weekly, 1=fortnightly
+
+    class Meta:
+        db_table = 'projectionperiod'
+        ordering = ['periodnumber']
+        unique_together = [('projectid', 'periodnumber')]
+        indexes = [models.Index(fields=['projectid', 'periodnumber'])]
+
+    def __str__(self):
+        return f"P{self.periodnumber} {self.periodlabel}"
+
+
+class CostLineType(models.IntegerChoices):
+    BREAKDOWN = 0, 'Direct Cost (UnitCostBreakdown)'
+    INDIRECT  = 1, 'Indirect Cost (IndirectCostDetail)'
+
+
+class CostDistribution(models.Model):
+    """Fraction (0..1) of a cost line applied to a specific period.
+
+    One row per (line, period). The same table covers direct costs (breakdownid)
+    and indirect costs (indirectcostid) via a polymorphic FK discriminated by linetype.
+    """
+
+    distributionid = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, db_column='distributionid'
+    )
+    projectid = models.ForeignKey(
+        EstimationProject, on_delete=models.CASCADE,
+        db_column='projectid', related_name='cost_distributions',
+    )
+    linetype = models.IntegerField(choices=CostLineType.choices, db_column='linetype')
+    breakdownid = models.ForeignKey(
+        'proyeccion.UnitCostBreakdown', on_delete=models.CASCADE,
+        null=True, blank=True,
+        db_column='breakdownid', related_name='period_distributions',
+    )
+    indirectcostid = models.ForeignKey(
+        'proyeccion.IndirectCostDetail', on_delete=models.CASCADE,
+        null=True, blank=True,
+        db_column='indirectcostid', related_name='period_distributions',
+    )
+
+    periodnumber = models.IntegerField(db_column='periodnumber')
+    fraction = models.DecimalField(
+        max_digits=10, decimal_places=8, default=Decimal('0'), db_column='fraction'
+    )
+    isderived = models.BooleanField(default=True, db_column='isderived')
+
+    # Concurrency + audit
+    version = models.IntegerField(default=0, db_column='version')
+    modifiedby = models.ForeignKey(
+        'users.SystemUser', on_delete=models.PROTECT,
+        null=True, blank=True,
+        db_column='modifiedby', related_name='+',
+    )
+    modifiedon = models.DateTimeField(auto_now=True, db_column='modifiedon')
+    createdon = models.DateTimeField(auto_now_add=True, db_column='createdon')
+
+    class Meta:
+        db_table = 'costdistribution'
+        indexes = [
+            models.Index(fields=['projectid', 'periodnumber']),
+            models.Index(fields=['projectid', 'linetype']),
+            models.Index(fields=['breakdownid']),
+            models.Index(fields=['indirectcostid']),
+        ]
+        constraints = [
+            CheckConstraint(
+                check=(
+                    (Q(breakdownid__isnull=False) & Q(indirectcostid__isnull=True) & Q(linetype=0)) |
+                    (Q(breakdownid__isnull=True) & Q(indirectcostid__isnull=False) & Q(linetype=1))
+                ),
+                name='cost_distribution_exactly_one_fk',
+            ),
+            UniqueConstraint(
+                fields=['breakdownid', 'periodnumber'],
+                name='uq_distribution_breakdown_period',
+                condition=Q(breakdownid__isnull=False),
+            ),
+            UniqueConstraint(
+                fields=['indirectcostid', 'periodnumber'],
+                name='uq_distribution_indirect_period',
+                condition=Q(indirectcostid__isnull=False),
+            ),
+            CheckConstraint(
+                check=Q(fraction__gte=0) & Q(fraction__lte=1),
+                name='cost_distribution_fraction_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Dist P{self.periodnumber} line={self.linetype} frac={self.fraction}"
+
+
+class DistributionPresence(models.Model):
+    """Tracks users viewing/editing the distribution tab for a project.
+
+    Heartbeat refreshes `last_seen` every 30s from the frontend. Entries stale
+    beyond 2 minutes are ignored by the read endpoint; the cleanup_presence
+    management command removes entries older than 7 days.
+    """
+
+    MODE_CHOICES = [('viewing', 'Viewing'), ('editing', 'Editing')]
+
+    presenceid = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, db_column='presenceid'
+    )
+    projectid = models.ForeignKey(
+        EstimationProject, on_delete=models.CASCADE,
+        db_column='projectid', related_name='distribution_presence',
+    )
+    userid = models.ForeignKey(
+        'users.SystemUser', on_delete=models.CASCADE,
+        db_column='userid',
+    )
+    mode = models.CharField(max_length=16, choices=MODE_CHOICES, db_column='mode')
+    last_seen = models.DateTimeField(auto_now=True, db_column='last_seen')
+
+    class Meta:
+        db_table = 'distributionpresence'
+        unique_together = [('projectid', 'userid')]
+        indexes = [models.Index(fields=['projectid', 'last_seen'])]
+
+    def __str__(self):
+        return f"{self.userid} {self.mode} on {self.projectid}"

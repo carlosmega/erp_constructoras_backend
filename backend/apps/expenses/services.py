@@ -17,6 +17,7 @@ from apps.expenses.models import (
     ClassificationStatusCode,
     ClassificationActionCode,
     ExpenseStateCode,
+    ExpenseScopeCode,
     DocumentTypeCode,
     ProvisionStatusCode,
     EstimateStateCode,
@@ -69,10 +70,54 @@ class ExpenseService:
         )
 
     @staticmethod
+    def list_corporate_expenses(
+        budget_id: UUID,
+        user,
+        year: Optional[int] = None,
+        month: Optional[int] = None,
+        categorycode: Optional[str] = None,
+        documenttype: Optional[int] = None,
+        statecode: Optional[int] = None,
+    ) -> QuerySet[ProjectExpense]:
+        """List corporate expenses for a budget with optional filtering."""
+        queryset = ProjectExpense.objects.filter(
+            expensescope=ExpenseScopeCode.CORPORATE,
+            corporatebudgetid=budget_id,
+        )
+        if year is not None:
+            queryset = queryset.filter(invoicedate__year=year)
+        if month is not None:
+            queryset = queryset.filter(invoicedate__month=month)
+        if categorycode is not None:
+            queryset = queryset.filter(corporatecategory=categorycode)
+        if documenttype is not None:
+            queryset = queryset.filter(documenttype=documenttype)
+        if statecode is not None:
+            queryset = queryset.filter(statecode=statecode)
+        else:
+            queryset = queryset.filter(statecode=ExpenseStateCode.ACTIVE)
+
+        return queryset.select_related('ownerid', 'corporatebudgetid')
+
+    @staticmethod
     @transaction.atomic
     @audit_action(action='create', entity='expense', id_field='expenseid')
     def create_expense(dto: CreateProjectExpenseDto, user) -> ProjectExpense:
-        """Create a new project expense with optional lines."""
+        """Create a new project or corporate expense with optional lines."""
+        is_corporate = dto.expensescope == ExpenseScopeCode.CORPORATE
+
+        # Validate scope-specific required fields
+        if is_corporate:
+            if not dto.corporatebudgetid:
+                raise ValidationError("corporatebudgetid is required for corporate expenses.")
+            if not dto.corporatecategory:
+                raise ValidationError("corporatecategory is required for corporate expenses.")
+        else:
+            if not dto.projectid:
+                raise ValidationError("projectid is required for project expenses.")
+            if not dto.periodid:
+                raise ValidationError("periodid is required for project expenses.")
+
         # Validate invoice UUID uniqueness (global, across all projects)
         if dto.invoiceuuid and dto.documenttype == DocumentTypeCode.INVOICE:
             duplicate = ProjectExpense.objects.filter(
@@ -80,6 +125,11 @@ class ExpenseService:
                 statecode=ExpenseStateCode.ACTIVE,
             ).select_related('projectid').first()
             if duplicate:
+                if duplicate.expensescope == ExpenseScopeCode.CORPORATE:
+                    raise ValidationError(
+                        f"Ya existe una factura con UUID {dto.invoiceuuid} "
+                        f"en gastos corporativos. No se permiten facturas duplicadas."
+                    )
                 project_name = getattr(duplicate.projectid, 'name', '') or ''
                 raise ValidationError(
                     f"Ya existe una factura con UUID {dto.invoiceuuid} "
@@ -87,8 +137,11 @@ class ExpenseService:
                 )
 
         expense = ProjectExpense(
-            projectid_id=dto.projectid,
-            periodid_id=dto.periodid,
+            expensescope=dto.expensescope,
+            projectid_id=dto.projectid if not is_corporate else None,
+            periodid_id=dto.periodid if not is_corporate else None,
+            corporatebudgetid_id=dto.corporatebudgetid if is_corporate else None,
+            corporatecategory=dto.corporatecategory if is_corporate else None,
             documenttype=dto.documenttype,
             imputationcodeid_id=dto.imputationcodeid,
             supplierrfc=dto.supplierrfc,
@@ -159,11 +212,12 @@ class ExpenseService:
         expense = ExpenseService.get_expense_by_id(expense_id, user)
 
         update_fields = [
-            'periodid', 'documenttype', 'supplierrfc', 'suppliername',
-            'invoiceuuid', 'invoicefolio', 'invoicedate', 'expensesource',
-            'payrolltype', 'workername', 'paymentmethod', 'paymentstatus',
-            'currency', 'exchangerate', 'subtotal', 'taxamount',
-            'retentionamount', 'discountamount', 'netamount', 'notes',
+            'periodid', 'corporatecategory', 'documenttype', 'supplierrfc',
+            'suppliername', 'invoiceuuid', 'invoicefolio', 'invoicedate',
+            'expensesource', 'payrolltype', 'workername', 'paymentmethod',
+            'paymentstatus', 'currency', 'exchangerate', 'subtotal',
+            'taxamount', 'retentionamount', 'discountamount', 'netamount',
+            'notes',
         ]
 
         for field in update_fields:
@@ -663,6 +717,7 @@ class EstimateService:
             estimationperiod=dto.estimationperiod,
             estimatetype=dto.estimatetype,
             estimatedamount=dto.estimatedamount,
+            advancepayment=dto.advancepayment,
             advanceamortization=dto.advanceamortization,
             otherdeductions=dto.otherdeductions,
             materialdeductions=dto.materialdeductions,
@@ -691,7 +746,7 @@ class EstimateService:
 
         update_fields = [
             'periodid', 'invoicenumber', 'invoicedate', 'estimationperiod',
-            'estimatetype', 'estimatedamount', 'advanceamortization',
+            'estimatetype', 'estimatedamount', 'advancepayment', 'advanceamortization',
             'otherdeductions', 'materialdeductions', 'guaranteefund',
             'taxretained', 'paymentstatus', 'paymentdate', 'amountpaid',
         ]
@@ -725,14 +780,26 @@ class EstimateService:
 
     @staticmethod
     def _calculate_estimate_totals(estimate: ClientEstimate) -> None:
-        """Calculate computed financial fields on an estimate."""
+        """Calculate computed financial fields on an estimate.
+
+        Formulas match Excel 'Control Certificacion' sheet:
+        - totaldeductions = advanceamortization + otherdeductions + materialdeductions + guaranteefund
+        - amountnotax = estimatedamount + advancepayment - totaldeductions
+        - taxamount = amountnotax × 0.16
+        - collectableamount = amountnotax + taxamount - taxretained
+        - totalinvoiced = collectableamount (same value)
+        """
         estimate.totaldeductions = (
             estimate.advanceamortization
             + estimate.otherdeductions
             + estimate.materialdeductions
             + estimate.guaranteefund
         )
-        estimate.amountnotax = estimate.estimatedamount - estimate.totaldeductions
-        estimate.taxamount = estimate.amountnotax * Decimal('0.16')
-        estimate.totalinvoiced = estimate.amountnotax + estimate.taxamount - estimate.taxretained
-        estimate.collectableamount = estimate.totalinvoiced
+        estimate.amountnotax = (
+            estimate.estimatedamount
+            + estimate.advancepayment
+            - estimate.totaldeductions
+        )
+        estimate.taxamount = (estimate.amountnotax * Decimal('0.16')).quantize(Decimal('0.01'))
+        estimate.collectableamount = estimate.amountnotax + estimate.taxamount - estimate.taxretained
+        estimate.totalinvoiced = estimate.collectableamount

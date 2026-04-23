@@ -4,6 +4,7 @@ Handles employee management, payroll calculations, attendance,
 and catalog operations.
 """
 
+import logging
 from typing import Optional, List
 from uuid import UUID
 from datetime import date, datetime, timedelta
@@ -32,8 +33,11 @@ from apps.hrpayroll.schemas import (
 )
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
 from apps.audit.services import audit_action
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -81,7 +85,7 @@ class EmployeeService:
         if department:
             queryset = queryset.filter(department__icontains=department)
         if ownerid:
-            if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if user.role_name not in ADMIN_ROLES:
                 raise PermissionDenied("You cannot view other users' employees")
             queryset = queryset.filter(ownerid=ownerid)
         if search:
@@ -142,17 +146,15 @@ class EmployeeService:
         )
         employee.save()
 
-        try:
-            from apps.notifications.services import NotificationService
-            NotificationService.notify_record_assigned(
-                entity_type='employee',
-                entity_id=str(employee.employeeid),
-                entity_name=employee.fullname,
-                new_owner=employee.ownerid,
-                actor=user,
-            )
-        except Exception:
-            pass
+        from apps.notifications.signals import record_assigned
+        record_assigned.send(
+            sender=Employee,
+            entity_type='employee',
+            entity_id=employee.employeeid,
+            entity_name=employee.fullname,
+            new_owner=employee.ownerid,
+            actor=user,
+        )
 
         return employee
 
@@ -166,7 +168,7 @@ class EmployeeService:
         except Employee.DoesNotExist:
             raise NotFound(f"Employee with ID {employee_id} not found")
 
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if employee.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this employee")
 
@@ -634,7 +636,7 @@ class PayrollRunService:
         except PayrollRun.DoesNotExist:
             raise NotFound(f"PayrollRun with ID {run_id} not found")
 
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
+        if user.role_name not in ADMIN_ROLES:
             if run.ownerid_id != user.systemuserid:
                 raise PermissionDenied("You don't have access to this payroll run")
         return run

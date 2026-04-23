@@ -117,17 +117,28 @@ class Command(BaseCommand):
                 unit = data.get('unit', '') or ''
                 directcost = data.get('directcost', 0)
 
+                # Build classification hierarchy
+                l1 = data.get('bookname', '')     # Libro
+                l2 = data.get('titlename', '')     # Título
+                l3 = data.get('chaptername', '')    # Capítulo
+
                 # Build category from SICT hierarchy
                 # e.g., "Construccion > Terracerias > Desmonte"
-                parts = [
-                    data.get('bookname', ''),
-                    data.get('titlename', ''),
-                    data.get('chaptername', ''),
-                ]
+                parts = [l1, l2, l3]
                 category = ' > '.join(p for p in parts if p)
 
                 if code in existing:
                     catalog_item = existing[code]
+                    # Backfill classification columns on existing items
+                    if not catalog_item.classificationl1 and l1:
+                        catalog_item.classificationl1 = l1
+                        catalog_item.classificationl2 = l2
+                        catalog_item.classificationl3 = l3
+                        catalog_item.category = category
+                        catalog_item.save(update_fields=[
+                            'classificationl1', 'classificationl2',
+                            'classificationl3', 'category',
+                        ])
                     deduped_items += 1
                 else:
                     catalog_item = ConceptPriceCatalogItem(
@@ -136,6 +147,9 @@ class Command(BaseCommand):
                         unit=unit,
                         source=CatalogSourceCode.SICT,
                         category=category,
+                        classificationl1=l1,
+                        classificationl2=l2,
+                        classificationl3=l3,
                         createdby=owner,
                         modifiedby=owner,
                     )

@@ -180,8 +180,18 @@ class TestBudgetLines:
 @pytest.mark.contract
 class TestCorporateExpenses:
     def test_list_expenses(self, admin_auth_client, system_admin):
+        from apps.expenses.models import ProjectExpense, ExpenseScopeCode, DocumentTypeCode
+        from datetime import date as dt_date
         budget = ApprovedBudgetFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
-        CorporateExpenseFactory(corporatebudgetid=budget, createdby=system_admin, modifiedby=system_admin)
+        ProjectExpense.objects.create(
+            expensescope=ExpenseScopeCode.CORPORATE,
+            corporatebudgetid=budget,
+            corporatecategory='4.1',
+            documenttype=DocumentTypeCode.NO_INVOICE_EXPENSE,
+            invoicedate=dt_date(2026, 1, 1),
+            subtotal=80000, netamount=80000,
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
+        )
         response = admin_auth_client.get(f'/api/corporate/budgets/{budget.corporatebudgetid}/expenses/')
         assert response.status_code == 200
         data = response.json()

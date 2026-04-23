@@ -14,6 +14,8 @@ from apps.proyeccion.models import (
     IndirectCostTemplate,
     EquipmentYield,
     WorkPlanEntry,
+    ConceptPriceCatalogItem,
+    ConceptPriceReference,
 )
 
 
@@ -111,3 +113,31 @@ class WorkPlanEntryAdmin(admin.ModelAdmin):
     list_filter = ('projectid',)
     search_fields = ('periodlabel',)
     readonly_fields = ('workplanentryid', 'createdon', 'modifiedon', 'createdby', 'modifiedby')
+
+
+class ConceptPriceReferenceInline(admin.TabularInline):
+    model = ConceptPriceReference
+    extra = 0
+    fields = ('projectname', 'projectlocation', 'unitprice', 'quantity', 'totalamount', 'referencedate')
+    readonly_fields = ('referenceid', 'createdon', 'modifiedon')
+
+
+@admin.register(ConceptPriceCatalogItem)
+class ConceptPriceCatalogItemAdmin(admin.ModelAdmin):
+    list_display = ('code', 'description_short', 'unit', 'source', 'classificationl1', 'classificationl2', 'classificationl3', 'averageprice', 'referencecount', 'statecode')
+    list_filter = ('source', 'statecode', 'classificationl2', 'classificationl3')
+    search_fields = ('code', 'description')
+    readonly_fields = ('catalogitemid', 'averageprice', 'minprice', 'maxprice', 'referencecount', 'createdon', 'modifiedon', 'createdby', 'modifiedby')
+    inlines = [ConceptPriceReferenceInline]
+
+    @admin.display(description='Descripción')
+    def description_short(self, obj):
+        return obj.description[:80] + '...' if len(obj.description) > 80 else obj.description
+
+
+@admin.register(ConceptPriceReference)
+class ConceptPriceReferenceAdmin(admin.ModelAdmin):
+    list_display = ('catalogitemid', 'projectname', 'unitprice', 'quantity', 'totalamount', 'referencedate', 'statecode')
+    list_filter = ('statecode', 'projectname')
+    search_fields = ('projectname', 'catalogitemid__code', 'catalogitemid__description')
+    readonly_fields = ('referenceid', 'createdon', 'modifiedon', 'createdby', 'modifiedby')

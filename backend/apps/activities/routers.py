@@ -13,39 +13,37 @@ from uuid import UUID
 from apps.activities.services import ActivityService
 from apps.activities.matching_service import EmailMatchingService
 from apps.activities.schemas import *
+from core.pagination import cursor_paginate_queryset, create_cursor_paginated_response
 from core.permissions import require_permission, Permission, filter_by_ownership
 
 activities_router = Router(tags=['Activities'])
 
+CursorActivityList = create_cursor_paginated_response(ActivityListItemSchema)
 
-@activities_router.get('/', response=List[ActivityListItemSchema])
-@require_permission(Permission.ACTIVITY_READ)
-def list_activities(
+
+def _build_activities_queryset(
     request: HttpRequest,
-    state: int = None,
-    statecode: Optional[int] = None,
-    type: str = None,
-    activitytypecode: Optional[str] = None,
-    regarding: UUID = None,
-    regardingobjectid: Optional[UUID] = None,
-    ownerid: Optional[str] = None,
-    regardingobjectidtype: Optional[str] = None,
-    upcoming: Optional[bool] = None,
-    overdue: Optional[bool] = None,
-):
-    """List all activities with optional filtering."""
+    state: Optional[int],
+    statecode: Optional[int],
+    type: Optional[str],
+    activitytypecode: Optional[str],
+    regarding: Optional[UUID],
+    regardingobjectid: Optional[UUID],
+    ownerid: Optional[str],
+    regardingobjectidtype: Optional[str],
+    upcoming: Optional[bool],
+    overdue: Optional[bool],
+) -> 'QuerySet[Activity]':
+    """Shared queryset builder for both plain-list and paginated endpoints."""
     from apps.activities.models import Activity, ActivityStateCode, ACTIVITY_TYPE_INT_MAP
     from django.utils import timezone
 
     queryset = filter_by_ownership(Activity.objects.all(), request.user)
 
-    # Support both 'state' and 'statecode' param names
     effective_state = statecode if statecode is not None else state
     if effective_state is not None:
         queryset = queryset.filter(statecode=effective_state)
 
-    # Support both 'type' and 'activitytypecode' param names
-    # Accept integer codes from frontend and map to string
     effective_type = activitytypecode or type
     if effective_type:
         try:
@@ -57,7 +55,6 @@ def list_activities(
             pass
         queryset = queryset.filter(activitytypecode=effective_type)
 
-    # Support both 'regarding' and 'regardingobjectid' param names
     effective_regarding = regardingobjectid or regarding
     if effective_regarding:
         queryset = queryset.filter(regardingobjectid=effective_regarding)
@@ -76,8 +73,63 @@ def list_activities(
             scheduledend__lt=timezone.now()
         )
 
-    queryset = queryset.select_related('ownerid')
+    return queryset.select_related('ownerid')
+
+
+@activities_router.get('/', response=List[ActivityListItemSchema])
+@require_permission(Permission.ACTIVITY_READ)
+def list_activities(
+    request: HttpRequest,
+    state: Optional[int] = None,
+    statecode: Optional[int] = None,
+    type: Optional[str] = None,
+    activitytypecode: Optional[str] = None,
+    regarding: Optional[UUID] = None,
+    regardingobjectid: Optional[UUID] = None,
+    ownerid: Optional[str] = None,
+    regardingobjectidtype: Optional[str] = None,
+    upcoming: Optional[bool] = None,
+    overdue: Optional[bool] = None,
+):
+    """List all activities with optional filtering (non-paginated).
+
+    For large datasets prefer `GET /api/activities/paginated/`.
+    """
+    queryset = _build_activities_queryset(
+        request, state, statecode, type, activitytypecode,
+        regarding, regardingobjectid, ownerid, regardingobjectidtype,
+        upcoming, overdue,
+    )
     return list(queryset)
+
+
+@activities_router.get('/paginated/', response=CursorActivityList)
+@require_permission(Permission.ACTIVITY_READ)
+def list_activities_paginated(
+    request: HttpRequest,
+    cursor: Optional[str] = None,
+    limit: int = 50,
+    state: Optional[int] = None,
+    statecode: Optional[int] = None,
+    type: Optional[str] = None,
+    activitytypecode: Optional[str] = None,
+    regarding: Optional[UUID] = None,
+    regardingobjectid: Optional[UUID] = None,
+    ownerid: Optional[str] = None,
+    regardingobjectidtype: Optional[str] = None,
+    upcoming: Optional[bool] = None,
+    overdue: Optional[bool] = None,
+):
+    """List activities using cursor-based pagination (ordered DESC by createdon).
+
+    Opt-in: the legacy `GET /api/activities/` keeps returning a plain array.
+    """
+    queryset = _build_activities_queryset(
+        request, state, statecode, type, activitytypecode,
+        regarding, regardingobjectid, ownerid, regardingobjectidtype,
+        upcoming, overdue,
+    )
+    return cursor_paginate_queryset(queryset, cursor=cursor, limit=limit)
 
 
 @activities_router.post('/', response={201: ActivityDetailSchema})

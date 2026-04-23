@@ -10,11 +10,11 @@ from apps.corporate.models import (
     CorporateBudget,
     CorporateBudgetVersion,
     CorporateBudgetLine,
-    CorporateExpense,
     CorporateAllocation,
     CorporateAllocationLine,
     WhatIfSimulation,
 )
+from apps.expenses.schemas import ProjectExpenseSchema
 
 
 # =============================================================================
@@ -154,23 +154,9 @@ class BulkUpdateBudgetLinesDto(Schema):
 # Expense Schemas
 # =============================================================================
 
-class CorporateExpenseSchema(ModelSchema):
-    """Full expense response with semaphore."""
-    semaphore: str = 'green'
-
-    class Meta:
-        model = CorporateExpense
-        fields = '__all__'
-
-    @staticmethod
-    def resolve_semaphore(obj):
-        if obj.budgetedamount and obj.budgetedamount > 0:
-            pct = abs(float(obj.variancepercent))
-            if pct > 20:
-                return 'red'
-            elif pct > 10:
-                return 'yellow'
-        return 'green'
+# CorporateExpenseSchema is now an alias for ProjectExpenseSchema.
+# Corporate expenses are stored as ProjectExpense records with expensescope=CORPORATE.
+CorporateExpenseSchema = ProjectExpenseSchema
 
 
 class RecordExpenseDto(Schema):

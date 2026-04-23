@@ -24,6 +24,7 @@ from apps.leads.schemas import (
 )
 from apps.leads.services import LeadService
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.pagination import paginate_queryset, create_paginated_response
 from core.permissions import (
     require_permission,
     require_authenticated,
@@ -35,6 +36,8 @@ from core.permissions import (
 # ============================================================================
 
 leads_router = Router(tags=["Leads"])
+
+PaginatedLeadList = create_paginated_response(LeadListSchema)
 
 
 @leads_router.get("/", response=List[LeadListSchema])
@@ -65,6 +68,33 @@ def list_leads(
     )
 
     return list(leads)
+
+
+@leads_router.get("/paginated/", response=PaginatedLeadList)
+@require_permission(Permission.LEAD_READ)
+def list_leads_paginated(
+    request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
+    statecode: Optional[int] = None,
+    statuscode: Optional[int] = None,
+    leadqualitycode: Optional[int] = None,
+    leadsourcecode: Optional[int] = None,
+    search: Optional[str] = None,
+    ownerid: Optional[str] = None,
+):
+    """List leads with offset-based pagination (opt-in alternative to `/`)."""
+    owner_uuid = UUID(ownerid) if ownerid else None
+    queryset = LeadService.list_leads(
+        user=request.user,
+        statecode=statecode,
+        statuscode=statuscode,
+        leadqualitycode=leadqualitycode,
+        leadsourcecode=leadsourcecode,
+        search=search,
+        ownerid=owner_uuid,
+    )
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @leads_router.post("/", response={201: LeadSchema})

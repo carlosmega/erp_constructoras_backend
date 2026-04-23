@@ -270,13 +270,15 @@ class TestUpdateLead:
             LeadService.update_lead(lead.leadid, dto, salesperson)
 
     def test_update_lead_invalid_status_for_open(self, db, salesperson):
-        """Test that cannot set qualified/disqualified status on open lead."""
-        lead = LeadFactory(ownerid=salesperson)
+        """Invalid statuscode for open lead is rejected at DTO construction.
 
-        dto = UpdateLeadDto(statuscode=LeadStatusCode.QUALIFIED)
+        The validator in UpdateLeadDto catches this earlier than the service,
+        so qualify/disqualify transitions must use their dedicated endpoints.
+        """
+        from pydantic import ValidationError as PydanticValidationError
 
-        with pytest.raises(ValidationError, match='Invalid status code for open lead'):
-            LeadService.update_lead(lead.leadid, dto, salesperson)
+        with pytest.raises(PydanticValidationError, match='New|Contacted'):
+            UpdateLeadDto(statuscode=LeadStatusCode.QUALIFIED)
 
 
 @pytest.mark.unit

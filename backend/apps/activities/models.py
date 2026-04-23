@@ -204,7 +204,13 @@ class Activity(models.Model):
             models.Index(fields=['statecode']),
             models.Index(fields=['ownerid']),
             models.Index(fields=['activitytypecode']),
-            models.Index(fields=['regardingobjectid', 'regardingobjectidtype']),
+            # Covers both 2-field filter and timeline cursor pagination
+            # (ORDER BY createdon DESC within a regarding scope).
+            models.Index(
+                fields=['regardingobjectid', 'regardingobjectidtype', '-createdon'],
+                name='idx_activity_reg_timeline',
+            ),
+            models.Index(fields=['-createdon'], name='idx_activity_created_desc'),
         ]
 
     def __str__(self):

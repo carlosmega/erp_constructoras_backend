@@ -1,6 +1,6 @@
 """API routers for Proyección (Budget Estimation) module."""
 
-from ninja import Router
+from ninja import Router, File, UploadedFile
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -38,6 +38,8 @@ from apps.proyeccion.schemas import (
     CreateWorkPlanEntryDto,
     UpdateWorkPlanEntryDto,
     BulkWorkPlanDto,
+    WorkPlanMatrixSchema,
+    WorkPlanSummarySchema,
     TemporalDistributionSchema,
     CashFlowEntrySchema,
     ProjectBudgetSummarySchema,
@@ -59,6 +61,10 @@ from apps.proyeccion.schemas import (
     CreateFamilyTemplateSetDto,
     SaveProjectAsTemplateDto,
     ApplyFamilyTemplateDto,
+    AnalyzeExcelResponseSchema,
+    ImportExcelRequestDto,
+    ImportExcelResponseSchema,
+    AutoGenerateSkeletonDto,
 )
 from apps.proyeccion.services import (
     EstimationProjectService,
@@ -311,6 +317,20 @@ def create_breakdown(request: HttpRequest, concept_id: UUID, payload: CreateUnit
     return 201, breakdown
 
 
+@budget_concepts_router.post(
+    "/concepts/{concept_id}/breakdowns/bulk/",
+    response={201: List[UnitCostBreakdownSchema]},
+)
+def bulk_create_breakdowns(
+    request: HttpRequest, concept_id: UUID, payload: List[CreateUnitCostBreakdownDto]
+):
+    """Create multiple breakdown lines for a concept in a single request."""
+    for dto in payload:
+        dto.conceptid = concept_id
+    lines = UnitCostBreakdownService.bulk_create_breakdowns(concept_id, payload, request.user)
+    return 201, lines
+
+
 @budget_concepts_router.patch(
     "/breakdowns/{breakdown_id}/",
     response=UnitCostBreakdownSchema,
@@ -334,13 +354,26 @@ def delete_breakdown(request: HttpRequest, breakdown_id: UUID):
 
 
 @budget_concepts_router.post(
-    "/concepts/{concept_id}/auto-hm-epp/",
+    "/concepts/{concept_id}/breakdowns/auto-generate-hm-epp/",
     response={201: List[UnitCostBreakdownSchema]},
 )
 # TODO: Add @require_permission decorator during integration
 def auto_generate_hm_epp(request: HttpRequest, concept_id: UUID):
     """Auto generate Minor Tools (HM) and PPE breakdown lines from labor cost."""
     lines = UnitCostBreakdownService.auto_generate_hm_epp(concept_id, request.user)
+    return 201, lines
+
+
+@budget_concepts_router.post(
+    "/concepts/{concept_id}/breakdowns/auto-generate-skeleton/",
+    response={201: List[UnitCostBreakdownSchema]},
+)
+def auto_generate_skeleton(request: HttpRequest, concept_id: UUID, payload: AutoGenerateSkeletonDto):
+    """Auto-generate skeleton breakdown lines based on subfamily and unit matching rules."""
+    lines = UnitCostBreakdownService.auto_generate_skeleton(
+        concept_id, payload.subfamilyname, payload.unit, request.user,
+        description=payload.description,
+    )
     return 201, lines
 
 
@@ -366,6 +399,28 @@ def copy_breakdowns_from_concept(
     service = UnitCostBreakdownService()
     result = service.copy_from_concept(concept_id, source_concept_id, request.user)
     return 201, result
+
+
+# --- Excel Import Endpoints ---
+
+@budget_concepts_router.post(
+    "/projects/{project_id}/concepts/analyze-excel/",
+    response=AnalyzeExcelResponseSchema,
+)
+def analyze_excel(request: HttpRequest, project_id: UUID, file: UploadedFile = File(...)):
+    """Analyze an uploaded Excel file and match concepts against the catalog."""
+    from apps.proyeccion.services import ExcelImportService
+    return ExcelImportService.analyze(project_id, file, request.user)
+
+
+@budget_concepts_router.post(
+    "/projects/{project_id}/concepts/import-excel/",
+    response=ImportExcelResponseSchema,
+)
+def import_excel(request: HttpRequest, project_id: UUID, payload: ImportExcelRequestDto):
+    """Import concepts from a previously analyzed Excel file."""
+    from apps.proyeccion.services import ExcelImportService
+    return ExcelImportService.do_import(project_id, payload, request.user)
 
 
 # =============================================================================
@@ -605,10 +660,34 @@ def list_workplan_entries(
     request: HttpRequest,
     project_id: UUID,
     conceptid: Optional[UUID] = None,
+    entrytype: Optional[int] = None,
 ):
-    """List work plan entries for a project, optionally filtered by concept."""
-    entries = WorkPlanService.list_entries(project_id, request.user, conceptid=conceptid)
+    """List work plan entries for a project, optionally filtered by concept and/or entrytype."""
+    entries = WorkPlanService.list_entries(
+        project_id, request.user, conceptid=conceptid, entrytype=entrytype
+    )
     return list(entries)
+
+
+@workplan_router.get(
+    "/projects/{project_id}/workplan/matrix/",
+    response=WorkPlanMatrixSchema,
+)
+def get_workplan_matrix(request: HttpRequest, project_id: UUID):
+    """Return the full Plan de Obra matrix (family → subfamily → concept × period).
+
+    Includes planned and actual blocks plus per-family and grand totals (replica of the Excel view).
+    """
+    return WorkPlanService.get_matrix(project_id, request.user)
+
+
+@workplan_router.get(
+    "/projects/{project_id}/workplan/summary/",
+    response=WorkPlanSummarySchema,
+)
+def get_workplan_summary(request: HttpRequest, project_id: UUID):
+    """Return per-family summary: contract, planned, actual amounts + percent advance."""
+    return WorkPlanService.get_summary(project_id, request.user)
 
 
 @workplan_router.post(
@@ -1031,3 +1110,165 @@ def get_family_template(request: HttpRequest, template_set_id: UUID):
 def delete_family_template(request: HttpRequest, template_set_id: UUID):
     """Soft-delete a template set. System templates cannot be deleted."""
     return FamilyTemplateService.delete_template_set(template_set_id, request.user)
+
+
+# =============================================================================
+# 14. Temporal Distribution Router
+# =============================================================================
+
+from apps.proyeccion.schemas import (
+    ProjectionPeriodDto, RegenerateResult,
+)
+from apps.proyeccion.services import PeriodService
+from apps.proyeccion.models import ProjectionPeriod
+
+distribution_router = Router(tags=["Temporal Distribution"])
+
+
+@distribution_router.get(
+    "/projects/{project_id}/projection-periods/",
+    response=List[ProjectionPeriodDto],
+)
+def list_projection_periods(request: HttpRequest, project_id: UUID):
+    """List all projection periods for an estimation project."""
+    EstimationProjectService.get_project(project_id, request.user)  # raises NotFound if missing
+    return list(
+        ProjectionPeriod.objects.filter(projectid=project_id).order_by('periodnumber')
+    )
+
+
+@distribution_router.post(
+    "/projects/{project_id}/projection-periods/regenerate/",
+    response={200: RegenerateResult, 400: dict, 409: dict},
+)
+def regenerate_projection_periods(request: HttpRequest, project_id: UUID, confirm: bool = False):
+    """Regenerate periods from estimatedstart/end + periodtype. Idempotent.
+
+    Returns 409 if manual edits would be lost and confirm=false.
+    """
+    project = EstimationProjectService.get_project(project_id, request.user)
+    try:
+        result = PeriodService.regenerate_projection_periods(project, confirm=confirm)
+    except ValueError as e:
+        msg = str(e)
+        if 'manual distribution edits' in msg:
+            return 409, {'error': 'confirm_required', 'detail': msg}
+        return 400, {'error': 'invalid', 'detail': msg}
+    return 200, result
+
+
+from apps.proyeccion.schemas import (
+    DistributionPayloadDto, BulkEditRequest, BulkEditOkResponse, ConflictResponse,
+)
+from apps.proyeccion.services import CostDistributionService, VersionConflict
+
+
+@distribution_router.get(
+    "/projects/{project_id}/cost-distribution/",
+    response=DistributionPayloadDto,
+)
+def get_cost_distribution(request: HttpRequest, project_id: UUID):
+    """Full distribution matrix + rollups for the project."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    return CostDistributionService.build_payload(project)
+
+
+@distribution_router.patch(
+    "/projects/{project_id}/cost-distribution/bulk/",
+    response={200: BulkEditOkResponse, 409: ConflictResponse, 400: dict},
+)
+def patch_cost_distribution_bulk(request: HttpRequest, project_id: UUID, payload: BulkEditRequest):
+    """Apply multiple cell edits atomically with optimistic locking per cell."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    edits = [{
+        'lineid': str(e.lineid), 'linetype': e.linetype, 'periodnumber': e.periodnumber,
+        'fraction': e.fraction, 'expected_version': e.expected_version,
+    } for e in payload.edits]
+    try:
+        result = CostDistributionService.apply_bulk_edits(project, user=request.user, edits=edits)
+    except VersionConflict as exc:
+        return 409, {'error': 'version_conflict', 'conflicts': exc.conflicts}
+    rebuilt = CostDistributionService.build_payload(project)
+    return 200, {
+        'updated': result['updated'],
+        'new_versions': result['new_versions'],
+        'rollups': rebuilt['rollups'],
+        'totals': rebuilt['totals'],
+    }
+
+
+from apps.proyeccion.schemas import (
+    AutofillRequest, AutofillResponse, ResetLineRequest,
+    PresenceResponse, HeartbeatRequest,
+)
+from apps.proyeccion.services import PresenceService
+
+
+@distribution_router.post(
+    "/projects/{project_id}/cost-distribution/autofill/",
+    response={200: AutofillResponse, 400: dict},
+)
+def autofill_cost_distribution(request: HttpRequest, project_id: UUID, payload: AutofillRequest):
+    """Fill distribution automatically with a given strategy + scope."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    try:
+        result = CostDistributionService.autofill(
+            project,
+            strategy=payload.strategy,
+            only_empty=payload.only_empty,
+            scope=payload.scope,
+        )
+    except ValueError as e:
+        return 400, {'error': 'invalid', 'detail': str(e)}
+    rebuilt = CostDistributionService.build_payload(project)
+    return 200, {
+        'lines_affected': result['lines_affected'],
+        'warnings': result['warnings'],
+        'rollups': rebuilt['rollups'],
+        'totals': rebuilt['totals'],
+    }
+
+
+@distribution_router.post(
+    "/projects/{project_id}/cost-distribution/reset-line/",
+    response={200: dict},
+)
+def reset_cost_distribution_line(request: HttpRequest, project_id: UUID, payload: ResetLineRequest):
+    """Revert a line to derived values (discards manual edits for that line)."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    result = CostDistributionService.reset_line(
+        project, lineid=str(payload.lineid), linetype=payload.linetype,
+    )
+    return 200, result
+
+
+@distribution_router.get(
+    "/projects/{project_id}/cost-distribution/presence/",
+    response=PresenceResponse,
+)
+def get_presence(request: HttpRequest, project_id: UUID):
+    """List active users viewing/editing the distribution tab."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    actives = PresenceService.list_active(project)
+    return {
+        'active_users': [
+            {
+                'userid': str(p.userid.systemuserid),
+                'username': str(p.userid),
+                'mode': p.mode,
+                'last_seen': p.last_seen,
+            }
+            for p in actives
+        ]
+    }
+
+
+@distribution_router.post(
+    "/projects/{project_id}/cost-distribution/presence/heartbeat/",
+    response={200: dict},
+)
+def presence_heartbeat(request: HttpRequest, project_id: UUID, payload: HeartbeatRequest):
+    """Refresh user presence; call every ~30s from the frontend."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    PresenceService.heartbeat(project, request.user, mode=payload.mode)
+    return 200, {'ok': True}

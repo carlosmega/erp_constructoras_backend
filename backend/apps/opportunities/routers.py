@@ -16,9 +16,12 @@ from apps.opportunities.schemas import (
     OpportunityStatsSchema,
 )
 from apps.opportunities.services import OpportunityService
+from core.pagination import paginate_queryset, create_paginated_response
 from core.permissions import require_permission, Permission
 
 opportunities_router = Router(tags=["Opportunities"])
+
+PaginatedOpportunityList = create_paginated_response(OpportunitySchema)
 
 
 @opportunities_router.get("/", response=List[OpportunitySchema])
@@ -37,6 +40,26 @@ def list_opportunities(
         search=search, ownerid=owner_uuid
     )
     return list(opps)
+
+
+@opportunities_router.get("/paginated/", response=PaginatedOpportunityList)
+@require_permission(Permission.OPPORTUNITY_READ)
+def list_opportunities_paginated(
+    request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
+    statecode: Optional[int] = None,
+    salesstage: Optional[int] = None,
+    search: Optional[str] = None,
+    ownerid: Optional[str] = None,
+):
+    """List opportunities with offset-based pagination (opt-in alternative to `/`)."""
+    owner_uuid = UUID(ownerid) if ownerid else None
+    queryset = OpportunityService.list_opportunities(
+        user=request.user, statecode=statecode, salesstage=salesstage,
+        search=search, ownerid=owner_uuid,
+    )
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @opportunities_router.post("/", response={201: OpportunitySchema})

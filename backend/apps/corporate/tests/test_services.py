@@ -6,10 +6,10 @@ from datetime import date
 
 from apps.corporate.models import (
     CorporateBudget, CorporateBudgetVersion, CorporateBudgetLine,
-    CorporateExpense,
     BudgetStateCode, BudgetVersionStateCode,
     CorporateExpenseCategoryCode,
 )
+from apps.expenses.models import ProjectExpense, ExpenseScopeCode, ExpenseStateCode
 from apps.corporate.services import CorporateBudgetService, CorporateExpenseService
 from apps.corporate.schemas import CreateCorporateBudgetDto, UpdateCorporateBudgetDto, CreateBudgetVersionDto, RecordExpenseDto
 from apps.corporate.tests.factories import (
@@ -119,7 +119,10 @@ class TestCorporateBudgetServiceApprove:
         assert result.approvedby == salesperson
         assert result.approveddate == date.today()
 
-    def test_approve_creates_expense_rows(self, db, salesperson):
+    def test_approve_does_not_create_legacy_expense_rows(self, db, salesperson):
+        """Approve no longer creates CorporateExpense rows.
+        Budgeted amounts live in CorporateBudgetLine and actuals
+        come from ProjectExpense records with expensescope=CORPORATE."""
         dto = CreateCorporateBudgetDto(fiscalyear=2039, name='Expense Snapshot')
         budget = CorporateBudgetService.create_budget(dto, salesperson)
 
@@ -132,9 +135,12 @@ class TestCorporateBudgetServiceApprove:
 
         CorporateBudgetService.approve_budget(budget.corporatebudgetid, salesperson)
 
-        expenses = CorporateExpense.objects.filter(corporatebudgetid=budget)
-        # 9 categories * 12 months = 108 expense rows
-        assert expenses.count() == 108
+        # No ProjectExpense rows created by approval (they come from recording)
+        corporate_expenses = ProjectExpense.objects.filter(
+            expensescope=ExpenseScopeCode.CORPORATE,
+            corporatebudgetid=budget,
+        )
+        assert corporate_expenses.count() == 0
 
     def test_approve_already_approved_fails(self, db, salesperson):
         dto = CreateCorporateBudgetDto(fiscalyear=2040, name='Already Approved')
@@ -182,9 +188,13 @@ class TestCorporateBudgetServiceVersions:
 
 @pytest.mark.unit
 class TestCorporateExpenseService:
-    """Test CorporateExpenseService."""
+    """Test CorporateExpenseService.
 
-    def test_record_expense(self, db, salesperson):
+    Corporate expenses are now stored as ProjectExpense records
+    with expensescope=CORPORATE.
+    """
+
+    def test_record_expense_creates_project_expense(self, db, salesperson):
         dto_b = CreateCorporateBudgetDto(fiscalyear=2043, name='Expense Test')
         budget = CorporateBudgetService.create_budget(dto_b, salesperson)
         CorporateBudgetService.approve_budget(budget.corporatebudgetid, salesperson)
@@ -196,32 +206,36 @@ class TestCorporateExpenseService:
             budget.corporatebudgetid, exp_dto, salesperson
         )
 
-        assert expense.actualamount == Decimal('85000')
+        assert expense.netamount == Decimal('85000')
+        assert expense.expensescope == ExpenseScopeCode.CORPORATE
         assert expense.corporatebudgetid == budget
+        assert expense.corporatecategory == '4.1'
+        assert expense.projectid is None
 
-    def test_record_expense_updates_existing(self, db, salesperson):
-        dto_b = CreateCorporateBudgetDto(fiscalyear=2044, name='Upsert Test')
+    def test_record_multiple_expenses_creates_separate_records(self, db, salesperson):
+        dto_b = CreateCorporateBudgetDto(fiscalyear=2044, name='Multi Test')
         budget = CorporateBudgetService.create_budget(dto_b, salesperson)
         CorporateBudgetService.approve_budget(budget.corporatebudgetid, salesperson)
 
-        exp_dto = RecordExpenseDto(
+        exp_dto1 = RecordExpenseDto(
             categorycode='4.1', year=2044, month=1, actualamount=Decimal('50000')
         )
-        CorporateExpenseService.record_expense(budget.corporatebudgetid, exp_dto, salesperson)
+        CorporateExpenseService.record_expense(budget.corporatebudgetid, exp_dto1, salesperson)
 
         exp_dto2 = RecordExpenseDto(
             categorycode='4.1', year=2044, month=1, actualamount=Decimal('75000')
         )
-        expense = CorporateExpenseService.record_expense(
-            budget.corporatebudgetid, exp_dto2, salesperson
-        )
+        CorporateExpenseService.record_expense(budget.corporatebudgetid, exp_dto2, salesperson)
 
-        assert expense.actualamount == Decimal('75000')
-        # Should be only 1 record for this category/month (upsert)
-        count = CorporateExpense.objects.filter(
-            corporatebudgetid=budget, categorycode='4.1', year=2044, month=1
+        # Each record_expense creates a NEW ProjectExpense record
+        count = ProjectExpense.objects.filter(
+            expensescope=ExpenseScopeCode.CORPORATE,
+            corporatebudgetid=budget,
+            corporatecategory='4.1',
+            invoicedate__year=2044,
+            invoicedate__month=1,
         ).count()
-        assert count == 1
+        assert count == 2
 
     def test_budget_vs_actual(self, db, salesperson):
         dto_b = CreateCorporateBudgetDto(fiscalyear=2045, name='BvA Test')
@@ -240,8 +254,7 @@ class TestCorporateExpenseService:
 
         assert 'rows' in summary
         assert len(summary['rows']) == 9
-        assert summary['totalbudgeted'] is not None
-        assert summary['totalactual'] is not None
+        assert summary['totalactual'] >= Decimal('90000')
 
     def test_budget_not_found(self, db, salesperson):
         from uuid import uuid4

@@ -203,3 +203,10 @@ class BulkSaveBudgetLinesDto(Schema):
     """DTO for bulk saving forecast percentages for an imputation code."""
     imputationcodeid: UUID
     lines: list[SaveBudgetLineDto]
+
+
+class UpdateActualVolumeDto(Schema):
+    """DTO for updating actual production volume on a single budget line."""
+    imputationcodeid: UUID
+    periodlabel: str
+    actualvolume: Decimal

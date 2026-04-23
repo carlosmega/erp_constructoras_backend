@@ -106,7 +106,8 @@ class TestExpenseEnums:
 
     def test_estimate_type_code_values(self):
         assert EstimateTypeCode.ESTIMATE.value == 0
-        assert EstimateTypeCode.OTHER.value == 1
+        assert EstimateTypeCode.ADVANCE.value == 1
+        assert EstimateTypeCode.ADVANCE_AMORT.value == 2
 
     def test_estimate_state_code_values(self):
         assert EstimateStateCode.ACTIVE.value == 0

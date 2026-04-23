@@ -12,7 +12,6 @@ from django.utils import timezone
 from apps.corporate.models import (
     CorporateBudget,
     CorporateBudgetLine,
-    CorporateExpense,
     CorporateAllocation,
     CorporateAllocationLine,
     WhatIfSimulation,

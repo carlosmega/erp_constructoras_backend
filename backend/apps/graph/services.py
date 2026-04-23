@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import secrets
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -397,6 +398,23 @@ class MicrosoftSSOService:
         logger.info('SSO token created for user %s (%s)', user.systemuserid, microsoft_email)
         return sso_token
 
+    # Per-token locks serialize the two concurrent exchanges (browser + NextAuth server)
+    # so their INSERT INTO django_session don't race on SQLite.
+    # QUICK FIX — see docs/deuda/001-sso-sqlite-locking.md for the proper solution.
+    _sso_exchange_locks: dict[str, threading.Lock] = {}
+    _sso_exchange_locks_guard = threading.Lock()
+
+    @classmethod
+    def _get_exchange_lock(cls, token_value: str) -> threading.Lock:
+        with cls._sso_exchange_locks_guard:
+            lock = cls._sso_exchange_locks.get(token_value)
+            if lock is None:
+                lock = threading.Lock()
+                cls._sso_exchange_locks[token_value] = lock
+                if len(cls._sso_exchange_locks) > 256:
+                    cls._sso_exchange_locks = {token_value: lock}
+            return lock
+
     @staticmethod
     def exchange_sso_token(token_value: str, request) -> SystemUser:
         """Exchange SSO token for Django session.
@@ -406,7 +424,7 @@ class MicrosoftSSOService:
         Returns the authenticated SystemUser.
 
         Called twice in quick succession (browser + NextAuth server),
-        so we avoid unnecessary DB writes to prevent SQLite locking.
+        so we serialize with a per-token lock to prevent SQLite write contention.
 
         Raises ValidationError if token invalid/expired.
         """
@@ -436,11 +454,13 @@ class MicrosoftSSOService:
         from django.contrib.auth import login as django_login, user_logged_in
         from django.contrib.auth.models import update_last_login
 
-        user_logged_in.disconnect(update_last_login)
-        try:
-            django_login(request, user)
-        finally:
-            user_logged_in.connect(update_last_login)
+        exchange_lock = MicrosoftSSOService._get_exchange_lock(token_value)
+        with exchange_lock:
+            user_logged_in.disconnect(update_last_login)
+            try:
+                django_login(request, user)
+            finally:
+                user_logged_in.connect(update_last_login)
 
         logger.info('SSO token exchanged for user %s', user.systemuserid)
         return user

@@ -15,34 +15,48 @@ from apps.quotes.schemas import (
     CreateQuoteDetailDto, UpdateQuoteDetailDto, QuoteDetailSchema,
     ActivateQuoteDto, CloseQuoteDto, QuoteStatsSchema
 )
+from core.pagination import paginate_queryset, create_paginated_response
 from core.permissions import require_permission, Permission
 
 quotes_router = Router(tags=['Quotes'])
 
+PaginatedQuoteList = create_paginated_response(QuoteListItemSchema)
 
-@quotes_router.get('/', response=List[QuoteListItemSchema])
-@require_permission(Permission.QUOTE_READ)
-def list_quotes(request: HttpRequest, state: int = None, statecode: int = None, owner: UUID = None):
-    """
-    List all quotes with optional filtering.
 
-    Filters:
-    - state/statecode: Filter by statecode (0=Draft, 1=Active, 2=Won, 3=Closed)
-    - owner: Filter by owner ID
-    """
+def _build_quotes_queryset(request: HttpRequest, state, statecode, owner):
+    """Shared queryset builder for legacy and paginated list endpoints."""
     from apps.quotes.models import Quote
     from core.permissions import filter_by_ownership
 
     queryset = filter_by_ownership(Quote.objects.all(), request.user)
-
     effective_state = statecode if statecode is not None else state
     if effective_state is not None:
         queryset = queryset.filter(statecode=effective_state)
     if owner:
         queryset = queryset.filter(ownerid=owner)
+    return queryset.select_related('accountid', 'contactid', 'ownerid')
 
-    queryset = queryset.select_related('accountid', 'contactid', 'ownerid')
-    return list(queryset)
+
+@quotes_router.get('/', response=List[QuoteListItemSchema])
+@require_permission(Permission.QUOTE_READ)
+def list_quotes(request: HttpRequest, state: int = None, statecode: int = None, owner: UUID = None):
+    """List all quotes with optional filtering (non-paginated)."""
+    return list(_build_quotes_queryset(request, state, statecode, owner))
+
+
+@quotes_router.get('/paginated/', response=PaginatedQuoteList)
+@require_permission(Permission.QUOTE_READ)
+def list_quotes_paginated(
+    request: HttpRequest,
+    page: int = 1,
+    page_size: int = 50,
+    state: int = None,
+    statecode: int = None,
+    owner: UUID = None,
+):
+    """List quotes with offset-based pagination (opt-in alternative to `/`)."""
+    queryset = _build_quotes_queryset(request, state, statecode, owner)
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @quotes_router.post('/', response={201: QuoteSchema})

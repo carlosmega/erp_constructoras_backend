@@ -22,10 +22,16 @@ from apps.corporate.schemas import (
     BulkRecordExpenseDto,
     BudgetVsActualSummarySchema,
 )
+from apps.expenses.schemas import (
+    ProjectExpenseSchema,
+    CreateProjectExpenseDto,
+)
+from apps.expenses.models import ExpenseScopeCode
 from apps.corporate.services import (
     CorporateBudgetService,
     CorporateExpenseService,
 )
+from apps.expenses.services import ExpenseService
 
 
 # =============================================================================
@@ -77,7 +83,7 @@ def update_budget(request: HttpRequest, budget_id: UUID, payload: UpdateCorporat
 @budgets_router.post("/budgets/{budget_id}/approve/", response=CorporateBudgetSchema)
 @require_permission(Permission.CORPORATE_UPDATE)
 def approve_budget(request: HttpRequest, budget_id: UUID):
-    """Approve budget - computes totals and snapshots to expense rows."""
+    """Approve budget - computes totals. Actual tracking uses ProjectExpense."""
     CorporateBudgetService.approve_budget(budget_id, request.user)
     return CorporateBudgetService.get_budget(budget_id, request.user)
 
@@ -152,6 +158,21 @@ def bulk_record_expenses(request: HttpRequest, budget_id: UUID, payload: BulkRec
     """Bulk record expenses for a month."""
     expenses = CorporateExpenseService.bulk_record_expenses(budget_id, payload, request.user)
     return 201, expenses
+
+
+@expenses_router.post("/budgets/{budget_id}/expenses/detail/", response={201: ProjectExpenseSchema})
+@require_permission(Permission.CORPORATE_CREATE)
+def create_detailed_corporate_expense(
+    request: HttpRequest,
+    budget_id: UUID,
+    payload: CreateProjectExpenseDto,
+):
+    """Create a corporate expense with full detail (supplier, invoice, lines)."""
+    # Force corporate scope and budget from URL
+    payload.expensescope = ExpenseScopeCode.CORPORATE
+    payload.corporatebudgetid = budget_id
+    expense = ExpenseService.create_expense(payload, request.user)
+    return 201, expense
 
 
 @expenses_router.get("/budgets/{budget_id}/budget-vs-actual/", response=BudgetVsActualSummarySchema)

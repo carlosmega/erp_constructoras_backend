@@ -279,6 +279,57 @@ ConstructionProject
 - All test files follow: `tests/factories.py`, `tests/test_models.py`, `tests/test_services.py`
 - Run operations tests: `python -m pytest apps/projects/tests/ apps/budgets/tests/ apps/expenses/tests/ -v`
 
+## Temporal Distribution (Proyección module)
+
+Added 2026-04-22 — matriz editable de distribución de costos por periodo, equivalente a la pestaña `Dist. Temporal` del Excel de estudio de obra.
+
+### Entities
+- **`ProjectionPeriod`** — periodos auto-generados (semanal/quincenal) desde `EstimationProject.estimatedstartdate + estimatedenddate + periodtype`. Etiquetas en español (ej. `Q01 ENE-26`). Tabla 1-1 con `ImputationPeriod` de Operations al convertir a `ConstructionProject`.
+- **`CostDistribution`** — tabla polimórfica por celda. FK exclusivo `breakdownid` (→ UnitCostBreakdown) XOR `indirectcostid` (→ IndirectCostDetail), discriminado por `linetype`. Campos: `fraction` (0..1, 8 decimales), `isderived` (true=autogenerado, false=edit manual), `version` (optimistic lock), `modifiedby`.
+- **`DistributionPresence`** — tracking de usuarios viendo/editando la tab; refresco por heartbeat cada 30s, cleanup de zombies >7 días vía `python manage.py cleanup_presence`.
+
+Additional fields on existing models:
+- `EstimationProject.periodcount` — cache del conteo de periodos (se actualiza en regenerate).
+- `IndirectCostDetail.startmonth` / `.endmonth` — rango opcional para distribución uniforme de indirectos (default: todo el proyecto).
+
+### Services
+- **`PeriodService.regenerate_projection_periods(project, *, confirm=False)`** — atómico. Preserva ediciones manuales (`isderived=False`) al extender el rango. Raise 409-required si recortar destruiría edits.
+- **`CostDistributionService`** — SUMPRODUCT engine:
+  - `compute_rollups(project)` — per-periodo: direct, indirect, retiros (transversal + utilidad vía `OfferAlternative.ischosen`), venta (desde `WorkPlanEntry` PLANNED), total.
+  - `autofill(project, *, strategy, only_empty, scope)` — strategies: `proportional_workplan` (desde WorkPlanEntry) o `uniform`. Scope: `all | direct_only | indirect_only | family:<CODE>`.
+  - `apply_bulk_edits(project, *, user, edits)` — **optimistic locking por celda** vía `expected_version`; all-or-nothing atomicity. Raise `VersionConflict(conflicts=[...])` en mismatch.
+  - `reset_line(project, *, lineid, linetype)` — borra y regenera una línea (descarta manual edits).
+  - `build_payload(project)` — ensamble del response del GET (jerárquico: families → lines → cells + rollups + totals).
+- **`PresenceService.heartbeat / list_active`** — threshold 2 min para stale.
+
+### API (under `/api/proyeccion/projects/{project_id}/`)
+```
+GET    /projection-periods/                    → List[ProjectionPeriodDto]
+POST   /projection-periods/regenerate/         → RegenerateResult | 400 | 409
+
+GET    /cost-distribution/                     → DistributionPayloadDto (full matrix + rollups)
+PATCH  /cost-distribution/bulk/                → BulkEditOkResponse | 409 ConflictResponse | 400
+POST   /cost-distribution/autofill/            → AutofillResponse | 400
+POST   /cost-distribution/reset-line/          → {reset, warnings}
+
+GET    /cost-distribution/presence/            → PresenceResponse (active users)
+POST   /cost-distribution/presence/heartbeat/  → 200 OK
+```
+
+### Key conventions
+- **Fraction storage, not amount**: `fraction ∈ [0,1]` enforced via `CheckConstraint`. Monto $ = `fraction × line.amount` se calcula al renderizar. Así, cambiar el importe de una línea NO requiere tocar su distribución.
+- **`isderived` flag**: proteccion contra regeneraciones destructivas. `autofill(only_empty=True)` respeta `isderived=False`.
+- **Concurrency**: `apply_bulk_edits` usa `select_for_update()` + version comparison. SQLite ignora el lock silenciosamente (dev OK, Postgres lo enforce en prod).
+- **Checksum tolerance**: 0.01% (±0.0001) — evita falsos positivos con fracciones periódicas como 1/24.
+
+### Testing
+- Factories: `ProjectionPeriodFactory`, `CostDistributionFactory`
+- Test files: `test_projection_period.py`, `test_cost_distribution.py`, `test_concurrency.py`, `test_cost_distribution_api.py`
+- 38 tests específicos — run: `python -m pytest apps/proyeccion/tests/test_projection_period.py apps/proyeccion/tests/test_cost_distribution.py apps/proyeccion/tests/test_concurrency.py apps/proyeccion/tests/test_cost_distribution_api.py -v --no-cov`
+
+### Design spec
+Completa con tradeoffs, edge cases y decisiones: [`docs/superpowers/specs/2026-04-22-distribucion-temporal-design.md`](../docs/superpowers/specs/2026-04-22-distribucion-temporal-design.md).
+
 ## Development Notes
 
 - Entity names use CDS naming: lowercase, no underscores (e.g., `leadid`, `emailaddress1`)

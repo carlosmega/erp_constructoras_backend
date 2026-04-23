@@ -11,9 +11,9 @@ Email Matching Service.
 import re
 import logging
 from uuid import UUID
-from typing import Optional
+from typing import Optional, Any
 
-from django.db.models import Q
+from django.db.models import Q, Model, QuerySet
 from django.utils import timezone
 
 from apps.activities.models import Activity, Email, ActivityTypeCode, MatchMethod
@@ -348,7 +348,7 @@ class EmailMatchingService:
         return list(addresses)
 
     @staticmethod
-    def _get_model_map():
+    def _get_model_map() -> dict[str, tuple[type[Model], str]]:
         """Get mapping of entity types to (Model, pk_field) tuples."""
         from apps.opportunities.models import Opportunity
         from apps.accounts.models import Account
@@ -451,10 +451,10 @@ class EmailMatchingService:
         return activity
 
     @staticmethod
-    def get_unlinked_emails(user: SystemUser) -> list:
+    def get_unlinked_emails(user: SystemUser) -> list[dict[str, Any]]:
         """Get emails without a regarding object, filtered by ownership.
 
-        Returns list of Activity objects for unlinked emails.
+        Returns list of dicts shaped for `UnlinkedEmailSchema`.
         """
         from core.permissions import filter_by_ownership
 
@@ -506,7 +506,7 @@ class EmailMatchingService:
         ).count()
 
     @staticmethod
-    def get_match_suggestions(activity_id: UUID, user: SystemUser) -> dict:
+    def get_match_suggestions(activity_id: UUID, user: SystemUser) -> dict[str, Any]:
         """Run the matching pipeline and return suggestions for an email.
 
         Args:

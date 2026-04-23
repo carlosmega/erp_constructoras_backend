@@ -87,7 +87,8 @@ class AttachmentTypeCode(models.IntegerChoices):
 
 class EstimateTypeCode(models.IntegerChoices):
     ESTIMATE = 0, 'Estimate'
-    OTHER = 1, 'Other'
+    ADVANCE = 1, 'Advance'
+    ADVANCE_AMORT = 2, 'Advance Amortization'
 
 
 class ExpenseScopeCode(models.IntegerChoices):
@@ -367,6 +368,11 @@ class ProjectExpense(AuditMixin):
             models.Index(fields=['projectid', 'statecode']),
             models.Index(fields=['projectid', 'classificationstatus']),
             models.Index(fields=['projectid', 'periodid']),
+            # Supports paginated list ordered DESC by createdon within a project
+            models.Index(
+                fields=['projectid', '-createdon'],
+                name='idx_expense_project_createdon',
+            ),
             models.Index(
                 fields=['expensescope', 'corporatebudgetid', 'corporatecategory'],
                 name='idx_corporate_expense_scope',
@@ -671,6 +677,12 @@ class ClientEstimate(AuditMixin):
         decimal_places=2,
         default=Decimal('0.00'),
         db_column='estimatedamount'
+    )
+    advancepayment = models.DecimalField(
+        max_digits=19,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        db_column='advancepayment'
     )
     advanceamortization = models.DecimalField(
         max_digits=19,

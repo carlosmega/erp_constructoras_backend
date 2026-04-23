@@ -33,6 +33,7 @@ from apps.expenses.services import (
     ProvisionService,
     EstimateService,
 )
+from core.pagination import paginate_queryset, create_paginated_response
 from core.permissions import require_permission, Permission
 
 
@@ -41,6 +42,8 @@ from core.permissions import require_permission, Permission
 # =============================================================================
 
 expenses_router = Router(tags=["Expenses"])
+
+PaginatedProjectExpenseList = create_paginated_response(ProjectExpenseSchema)
 
 
 @expenses_router.get(
@@ -56,7 +59,7 @@ def list_expenses(
     classificationstatus: Optional[int] = None,
     statecode: Optional[int] = None,
 ):
-    """List expenses for a project with optional filtering."""
+    """List expenses for a project with optional filtering (non-paginated)."""
     expenses = ExpenseService.list_expenses(
         project_id=project_id,
         user=request.user,
@@ -66,6 +69,36 @@ def list_expenses(
         statecode=statecode,
     )
     return list(expenses)
+
+
+@expenses_router.get(
+    "/projects/{project_id}/expenses/paginated/",
+    response=PaginatedProjectExpenseList,
+)
+@require_permission(Permission.EXPENSE_READ)
+def list_expenses_paginated(
+    request: HttpRequest,
+    project_id: UUID,
+    page: int = 1,
+    page_size: int = 50,
+    period_id: Optional[UUID] = None,
+    documenttype: Optional[int] = None,
+    classificationstatus: Optional[int] = None,
+    statecode: Optional[int] = None,
+):
+    """List expenses with offset-based pagination.
+
+    Opt-in alternative to the legacy list endpoint; same filters apply.
+    """
+    queryset = ExpenseService.list_expenses(
+        project_id=project_id,
+        user=request.user,
+        period_id=period_id,
+        documenttype=documenttype,
+        classificationstatus=classificationstatus,
+        statecode=statecode,
+    )
+    return paginate_queryset(queryset, page=page, page_size=page_size, request_url=request.path)
 
 
 @expenses_router.post(
@@ -84,8 +117,14 @@ def create_expense(request: HttpRequest, project_id: UUID, payload: CreateProjec
     "/expenses/check-uuid/",
     response={200: dict},
 )
+@require_permission(Permission.EXPENSE_READ)
 def check_uuid_exists(request: HttpRequest, uuid: str):
-    """Check if an invoice UUID already exists (across all projects)."""
+    """Check if an invoice UUID already exists (across all projects).
+
+    Invoice UUIDs are issued by SAT (fiscal authority) and must be globally
+    unique across all projects, so this endpoint intentionally scans without
+    project/ownership scoping. Access still requires EXPENSE_READ.
+    """
     exists = ProjectExpense.objects.filter(
         invoiceuuid=uuid,
         statecode=ExpenseStateCode.ACTIVE,

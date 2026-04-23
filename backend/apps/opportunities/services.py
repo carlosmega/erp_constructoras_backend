@@ -3,6 +3,7 @@ Opportunity business logic service layer.
 Phase 6 Implementation
 """
 
+import logging
 from typing import List, Optional
 from uuid import UUID
 from datetime import date, datetime
@@ -14,12 +15,22 @@ from apps.opportunities.models import Opportunity, OpportunityStateCode, Opportu
 from apps.opportunities.schemas import CreateOpportunityDto, UpdateOpportunityDto, CloseOpportunityDto, OpportunityStatsSchema
 from apps.users.models import SystemUser
 from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.roles import ADMIN_ROLES
 from core.permissions import filter_by_ownership
+from core.services import BaseReadService
 from apps.audit.services import audit_action
 
+logger = logging.getLogger(__name__)
 
-class OpportunityService:
+
+class OpportunityService(BaseReadService[Opportunity]):
     """Service class for Opportunity entity business logic."""
+
+    model = Opportunity
+    pk_field = 'opportunityid'
+    select_related_fields = ('ownerid', 'originatingleadid', 'createdby', 'modifiedby')
+    not_found_message = "Opportunity not found"
+    access_denied_message = "You don't have access to this opportunity"
 
     @staticmethod
     def list_opportunities(
@@ -38,7 +49,7 @@ class OpportunityService:
         if salesstage is not None:
             queryset = queryset.filter(salesstage=salesstage)
         if ownerid:
-            if user.role_name not in ["System Administrator", "Sales Manager"]:
+            if user.role_name not in ADMIN_ROLES:
                 raise PermissionDenied("You cannot view other users' opportunities")
             queryset = queryset.filter(ownerid=ownerid)
         if search:
@@ -95,21 +106,10 @@ class OpportunityService:
         opportunity.save()
         return opportunity
 
-    @staticmethod
-    def get_opportunity_by_id(opportunity_id: UUID, user: SystemUser) -> Opportunity:
-        """Get opportunity by ID with ownership check."""
-        try:
-            opp = Opportunity.objects.select_related(
-                'ownerid', 'originatingleadid', 'createdby', 'modifiedby'
-            ).get(opportunityid=opportunity_id)
-        except Opportunity.DoesNotExist:
-            raise NotFound(f"Opportunity with ID {opportunity_id} not found")
-
-        if user.role_name not in ["System Administrator", "Sales Manager"]:
-            if opp.ownerid_id != user.systemuserid:
-                raise PermissionDenied("You don't have access to this opportunity")
-
-        return opp
+    @classmethod
+    def get_opportunity_by_id(cls, opportunity_id: UUID, user: SystemUser) -> Opportunity:
+        """Get opportunity by ID with ownership check (delegates to BaseReadService)."""
+        return cls.get_by_id(opportunity_id, user)
 
     @staticmethod
     @audit_action(action='update', entity='opportunity', record_arg='opportunity_id')
@@ -149,21 +149,18 @@ class OpportunityService:
         opp.modifiedby = user
         opp.save()
 
-        # Notification: stage changed
         if dto.salesstage is not None and dto.salesstage != old_salesstage:
-            try:
-                from apps.notifications.services import NotificationService
-                stage_label = SalesStage(opp.salesstage).label if opp.salesstage else 'Unknown'
-                NotificationService.notify_state_changed(
-                    entity_type='opportunity',
-                    entity_id=str(opp.opportunityid),
-                    entity_name=opp.name,
-                    new_state=stage_label,
-                    owner=opp.ownerid,
-                    actor=user,
-                )
-            except Exception:
-                pass
+            from apps.notifications.signals import state_changed
+            stage_label = SalesStage(opp.salesstage).label if opp.salesstage else 'Unknown'
+            state_changed.send(
+                sender=Opportunity,
+                entity_type='opportunity',
+                entity_id=opp.opportunityid,
+                entity_name=opp.name,
+                new_state=stage_label,
+                owner=opp.ownerid,
+                actor=user,
+            )
 
         return opp
 
@@ -199,15 +196,11 @@ class OpportunityService:
         opp.modifiedby = user
         opp.save()
 
-        # Notification: opportunity won or lost
-        try:
-            from apps.notifications.services import NotificationService
-            if opp.statecode == OpportunityStateCode.WON:
-                NotificationService.notify_opportunity_won(opp, actor=user)
-            elif opp.statecode == OpportunityStateCode.LOST:
-                NotificationService.notify_opportunity_lost(opp, actor=user)
-        except Exception:
-            pass
+        from apps.notifications.signals import opportunity_won, opportunity_lost
+        if opp.statecode == OpportunityStateCode.WON:
+            opportunity_won.send(sender=Opportunity, opportunity=opp, actor=user)
+        elif opp.statecode == OpportunityStateCode.LOST:
+            opportunity_lost.send(sender=Opportunity, opportunity=opp, actor=user)
 
         return opp
 

@@ -12,6 +12,7 @@ from apps.audit.models import AuditActionCode
 from apps.audit.schemas import AuditLogSchema, AuditLogListResponse
 from apps.audit.services import AuditLogService
 from core.permissions import require_authenticated
+from core.roles import ADMIN_ROLES
 
 audit_router = Router(tags=['Audit'])
 
@@ -38,7 +39,7 @@ def list_audit_logs(
     user = request.user
 
     # Non-admin users can only see their own actions
-    if user.role_name not in ['System Administrator', 'Sales Manager']:
+    if user.role_name not in ADMIN_ROLES:
         userid = user.systemuserid
 
     items = list(AuditLogService.query_logs(

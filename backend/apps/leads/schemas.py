@@ -7,11 +7,12 @@ Phase 5 Implementation (User Story 3)
 """
 
 from ninja import ModelSchema, Schema
+from pydantic import field_validator
 from typing import Optional
 from uuid import UUID
 from datetime import date
 from decimal import Decimal
-from apps.leads.models import Lead
+from apps.leads.models import Lead, LeadStatusCode
 
 
 # ============================================================================
@@ -177,6 +178,25 @@ class UpdateLeadDto(Schema):
     estimatedclosedate: Optional[date] = None
     ownerid: Optional[UUID] = None
     statuscode: Optional[int] = None
+
+    @field_validator('statuscode')
+    @classmethod
+    def validate_open_statuscode(cls, v):
+        """Open leads may only transition between NEW and CONTACTED via this DTO.
+
+        Qualify / disqualify transitions go through dedicated endpoints, so any
+        other value here is a frontend bug.
+        """
+        if v is None:
+            return v
+        valid = {LeadStatusCode.NEW, LeadStatusCode.CONTACTED}
+        if v not in valid:
+            raise ValueError(
+                f"statuscode must be {LeadStatusCode.NEW} (New) or "
+                f"{LeadStatusCode.CONTACTED} (Contacted) for open leads; "
+                "use the qualify/disqualify endpoints for other transitions."
+            )
+        return v
 
 
 class QualifyLeadDto(Schema):

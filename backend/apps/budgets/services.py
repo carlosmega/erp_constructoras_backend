@@ -581,3 +581,25 @@ class BudgetLineService:
                 updated += 1
 
         return updated
+
+    @staticmethod
+    def update_actual_volume(dto, user):
+        """Update (or create) actual production volume for a single period."""
+        code = ImputationCode.objects.get(
+            imputationcodeid=dto.imputationcodeid, statecode=0
+        )
+        # Try to find matching period
+        period = ImputationPeriod.objects.filter(
+            projectid=code.projectid,
+            label=dto.periodlabel,
+        ).first()
+
+        obj, _ = ImputationCodeBudget.objects.update_or_create(
+            imputationcodeid=code,
+            periodlabel=dto.periodlabel,
+            defaults={
+                'actualvolume': dto.actualvolume,
+                'periodid': period,
+            },
+        )
+        return obj
