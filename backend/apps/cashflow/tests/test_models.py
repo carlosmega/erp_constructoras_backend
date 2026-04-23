@@ -1,13 +1,15 @@
 """Tests for cashflow models."""
 import pytest
 from decimal import Decimal
-from django.db.utils import IntegrityError
+from django.db import IntegrityError
 
 from apps.cashflow.tests.factories import ProjectFinancialSettingsFactory
 
 
 @pytest.mark.unit
 class TestProjectFinancialSettings:
+    """Tests for ProjectFinancialSettings model."""
+
     def test_defaults(self, db):
         s = ProjectFinancialSettingsFactory()
         s.refresh_from_db()
