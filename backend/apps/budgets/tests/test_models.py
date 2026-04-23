@@ -235,16 +235,13 @@ class TestCostCategoryFactory:
         assert category.code.startswith('C')
 
 
-@pytest.mark.django_db
 @pytest.mark.unit
-def test_costcategory_has_defaultpaymentlag_with_zero_default():
-    category = CostCategoryFactory()
-    assert category.defaultpaymentlag == 0
+class TestCostCategoryDefaultPaymentLag:
+    def test_default_is_zero(self, db):
+        category = CostCategoryFactory()
+        assert category.defaultpaymentlag == 0
 
-
-@pytest.mark.django_db
-@pytest.mark.unit
-def test_costcategory_accepts_custom_paymentlag():
-    category = CostCategoryFactory(defaultpaymentlag=30)
-    category.refresh_from_db()
-    assert category.defaultpaymentlag == 30
+    def test_accepts_custom_value(self, db):
+        category = CostCategoryFactory(defaultpaymentlag=30)
+        category.refresh_from_db()
+        assert category.defaultpaymentlag == 30
