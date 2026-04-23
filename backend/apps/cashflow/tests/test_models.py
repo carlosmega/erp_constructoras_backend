@@ -23,3 +23,25 @@ class TestProjectFinancialSettings:
         s1 = ProjectFinancialSettingsFactory()
         with pytest.raises(IntegrityError):
             ProjectFinancialSettingsFactory(projectid=s1.projectid)
+
+
+from apps.projects.tests.factories import ConstructionProjectFactory
+
+
+@pytest.mark.unit
+class TestProjectBillingRule:
+    """Tests for ProjectBillingRule model."""
+
+    def test_stores_percent_and_lag(self, db):
+        from apps.cashflow.tests.factories import ProjectBillingRuleFactory
+        rule = ProjectBillingRuleFactory(percent=Decimal('0.5000'), lagperiods=2)
+        rule.refresh_from_db()
+        assert rule.percent == Decimal('0.5000')
+        assert rule.lagperiods == 2
+
+    def test_sequence_unique_per_project(self, db):
+        from apps.cashflow.tests.factories import ProjectBillingRuleFactory
+        project = ConstructionProjectFactory()
+        ProjectBillingRuleFactory(projectid=project, sequence=1)
+        with pytest.raises(IntegrityError):
+            ProjectBillingRuleFactory(projectid=project, sequence=1)

@@ -390,7 +390,7 @@ class ProjectExpense(AuditMixin):
                 condition=models.Q(invoiceuuid__isnull=False, expensescope=1),
             ),
             models.CheckConstraint(
-                condition=(
+                check=(
                     models.Q(expensescope=0, projectid__isnull=False) |
                     models.Q(expensescope=1, corporatebudgetid__isnull=False, corporatecategory__isnull=False)
                 ),

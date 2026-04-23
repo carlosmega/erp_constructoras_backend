@@ -1551,7 +1551,7 @@ class CostDistribution(models.Model):
         ]
         constraints = [
             CheckConstraint(
-                condition=(
+                check=(
                     (Q(breakdownid__isnull=False) & Q(indirectcostid__isnull=True) & Q(linetype=0)) |
                     (Q(breakdownid__isnull=True) & Q(indirectcostid__isnull=False) & Q(linetype=1))
                 ),
@@ -1568,7 +1568,7 @@ class CostDistribution(models.Model):
                 condition=Q(indirectcostid__isnull=False),
             ),
             CheckConstraint(
-                condition=Q(fraction__gte=0) & Q(fraction__lte=1),
+                check=Q(fraction__gte=0) & Q(fraction__lte=1),
                 name='cost_distribution_fraction_range',
             ),
         ]

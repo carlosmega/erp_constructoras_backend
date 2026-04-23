@@ -21,3 +21,13 @@ class ProjectFinancialSettingsFactory(DjangoModelFactory):
     utilitycost = Decimal('0.00')
     utilitywithdrawalperiod = 1
     financecostrate = Decimal('0.001000')
+
+
+class ProjectBillingRuleFactory(DjangoModelFactory):
+    class Meta:
+        model = 'cashflow.ProjectBillingRule'
+
+    projectid = factory.SubFactory(ConstructionProjectFactory)
+    sequence = factory.Sequence(lambda n: (n % 10) + 1)
+    percent = Decimal('1.0000')
+    lagperiods = 0
