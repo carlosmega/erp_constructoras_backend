@@ -198,6 +198,13 @@ class ImputationCode(AuditMixin):
         null=True
     )
 
+    paymentlagperiods = models.IntegerField(
+        null=True,
+        blank=True,
+        db_column='paymentlagperiods',
+        help_text='Payment lag in periods; NULL inherits from category.defaultpaymentlag',
+    )
+
     quantity = models.DecimalField(
         max_digits=12,
         decimal_places=2,

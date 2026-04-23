@@ -245,3 +245,15 @@ class TestCostCategoryDefaultPaymentLag:
         category = CostCategoryFactory(defaultpaymentlag=30)
         category.refresh_from_db()
         assert category.defaultpaymentlag == 30
+
+
+@pytest.mark.unit
+class TestImputationCodePaymentLag:
+    def test_paymentlag_is_nullable(self, db):
+        code = ImputationCodeFactory()
+        assert code.paymentlagperiods is None
+
+    def test_accepts_explicit_value(self, db):
+        code = ImputationCodeFactory(paymentlagperiods=2)
+        code.refresh_from_db()
+        assert code.paymentlagperiods == 2
