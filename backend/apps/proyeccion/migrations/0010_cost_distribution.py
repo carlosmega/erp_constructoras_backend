@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='costdistribution',
-            constraint=models.CheckConstraint(check=models.Q(models.Q(('breakdownid__isnull', False), ('indirectcostid__isnull', True), ('linetype', 0)), models.Q(('breakdownid__isnull', True), ('indirectcostid__isnull', False), ('linetype', 1)), _connector='OR'), name='cost_distribution_exactly_one_fk'),
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('breakdownid__isnull', False), ('indirectcostid__isnull', True), ('linetype', 0)), models.Q(('breakdownid__isnull', True), ('indirectcostid__isnull', False), ('linetype', 1)), _connector='OR'), name='cost_distribution_exactly_one_fk'),
         ),
         migrations.AddConstraint(
             model_name='costdistribution',
@@ -50,6 +50,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='costdistribution',
-            constraint=models.CheckConstraint(check=models.Q(('fraction__gte', 0), ('fraction__lte', 1)), name='cost_distribution_fraction_range'),
+            constraint=models.CheckConstraint(condition=models.Q(('fraction__gte', 0), ('fraction__lte', 1)), name='cost_distribution_fraction_range'),
         ),
     ]

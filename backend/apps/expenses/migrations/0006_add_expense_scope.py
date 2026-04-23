@@ -51,6 +51,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='projectexpense',
-            constraint=models.CheckConstraint(check=models.Q(models.Q(('expensescope', 0), ('projectid__isnull', False)), models.Q(('corporatebudgetid__isnull', False), ('corporatecategory__isnull', False), ('expensescope', 1)), _connector='OR'), name='expense_scope_integrity'),
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('expensescope', 0), ('projectid__isnull', False)), models.Q(('corporatebudgetid__isnull', False), ('corporatecategory__isnull', False), ('expensescope', 1)), _connector='OR'), name='expense_scope_integrity'),
         ),
     ]
