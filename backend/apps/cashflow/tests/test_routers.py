@@ -34,3 +34,49 @@ def test_patch_financial_settings_updates_fields(admin_auth_client):
     # not the model field's decimal_places. So '0.06' stays '0.06'.
     assert resp.json()['imssretentionrate'] == '0.06'
     assert resp.json()['financecostrate'] == '0.002'
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_get_billing_rules_empty_list_initially(admin_auth_client):
+    project = ConstructionProjectFactory()
+    resp = admin_auth_client.get(
+        f'/api/cashflow/projects/{project.pk}/billing-rules/'
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_put_billing_rules_with_valid_sum(admin_auth_client):
+    project = ConstructionProjectFactory()
+    resp = admin_auth_client.put(
+        f'/api/cashflow/projects/{project.pk}/billing-rules/',
+        data={'rules': [
+            {'sequence': 1, 'percent': '0.5', 'lagperiods': 0},
+            {'sequence': 2, 'percent': '0.5', 'lagperiods': 1},
+        ]},
+        content_type='application/json',
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    assert body[0]['sequence'] == 1
+    assert body[1]['sequence'] == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_put_billing_rules_rejects_sum_not_100(admin_auth_client):
+    project = ConstructionProjectFactory()
+    resp = admin_auth_client.put(
+        f'/api/cashflow/projects/{project.pk}/billing-rules/',
+        data={'rules': [
+            {'sequence': 1, 'percent': '0.5', 'lagperiods': 0},
+            {'sequence': 2, 'percent': '0.3', 'lagperiods': 1},
+        ]},
+        content_type='application/json',
+    )
+    assert resp.status_code == 400
+    assert '100' in resp.json()['error']['message']
