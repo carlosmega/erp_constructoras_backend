@@ -110,3 +110,61 @@ class TestImputationPeriods:
         period = ImputationPeriodFactory(projectid=project, createdby=salesperson, statecode=1)
         response = auth_client.patch(f'/api/periods/periods/{period.periodid}/reopen/')
         assert response.status_code == 200
+
+
+@pytest.mark.django_db
+@pytest.mark.contract
+def test_category_get_exposes_defaultpaymentlag(auth_client, salesperson):
+    """defaultpaymentlag must be included in CostCategory list responses."""
+    from apps.projects.tests.factories import ConstructionProjectFactory
+    from apps.budgets.tests.factories import CostCategoryFactory
+    project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+    cat = CostCategoryFactory(projectid=project, createdby=salesperson, defaultpaymentlag=3)
+    resp = auth_client.get(f'/api/categories/projects/{project.projectid}/categories/')
+    assert resp.status_code == 200
+    body = resp.json()
+    target = next((c for c in body if c.get('categoryid') == str(cat.categoryid)), None)
+    assert target is not None, f'Category not found in response; got codes: {[c.get("categoryid") for c in body]}'
+    assert target['defaultpaymentlag'] == 3
+
+
+@pytest.mark.django_db
+@pytest.mark.contract
+def test_imputationcode_patch_updates_paymentlag(auth_client, salesperson):
+    """paymentlagperiods must round-trip through PATCH /api/codes/codes/{id}/."""
+    from apps.projects.tests.factories import ConstructionProjectFactory, ProjectZoneFactory
+    from apps.budgets.tests.factories import CostCategoryFactory, ImputationCodeFactory
+    project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+    zone = ProjectZoneFactory(projectid=project)
+    cat = CostCategoryFactory(projectid=project, createdby=salesperson)
+    code = ImputationCodeFactory(projectid=project, categoryid=cat, zoneid=zone)
+    # Initial state: paymentlagperiods is nullable, typically None
+    resp = auth_client.patch(
+        f'/api/codes/codes/{code.imputationcodeid}/',
+        data={'paymentlagperiods': 2},
+        content_type='application/json',
+    )
+    assert resp.status_code == 200, f'PATCH failed: {resp.status_code} {resp.content.decode() if resp.content else ""}'
+    body = resp.json()
+    assert body['paymentlagperiods'] == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.contract
+def test_imputationcode_get_exposes_paymentlag(auth_client, salesperson):
+    """paymentlagperiods must appear in ImputationCode list responses when set."""
+    from apps.projects.tests.factories import ConstructionProjectFactory, ProjectZoneFactory
+    from apps.budgets.tests.factories import CostCategoryFactory, ImputationCodeFactory
+    project = ConstructionProjectFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+    zone = ProjectZoneFactory(projectid=project)
+    cat = CostCategoryFactory(projectid=project, createdby=salesperson)
+    code = ImputationCodeFactory(
+        projectid=project, categoryid=cat, zoneid=zone,
+        paymentlagperiods=1,
+    )
+    resp = auth_client.get(f'/api/codes/projects/{project.projectid}/codes/')
+    assert resp.status_code == 200
+    body = resp.json()
+    target = next((c for c in body if c.get('imputationcodeid') == str(code.imputationcodeid)), None)
+    assert target is not None
+    assert target['paymentlagperiods'] == 1

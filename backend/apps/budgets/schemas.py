@@ -137,6 +137,7 @@ class UpdateImputationCodeDto(Schema):
     personneltype: Optional[int] = None
     monthlycost: Optional[Decimal] = None
     units: Optional[Decimal] = None
+    paymentlagperiods: Optional[int] = None
     statecode: Optional[int] = None
 
 

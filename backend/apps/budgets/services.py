@@ -242,7 +242,7 @@ class ImputationCodeService:
         update_fields = [
             'name', 'description', 'estimatedsupplier', 'unitcost', 'quantity',
             'executionmonths', 'totalbudget', 'personnelname', 'personnelrole',
-            'personneltype', 'monthlycost', 'units', 'statecode',
+            'personneltype', 'monthlycost', 'units', 'paymentlagperiods', 'statecode',
         ]
 
         for field in update_fields:
