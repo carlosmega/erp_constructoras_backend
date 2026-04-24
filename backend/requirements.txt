@@ -2,8 +2,8 @@
 # Generated from Implementation Plan: 001-crm-backend-foundation
 
 # Core Framework
-Django==5.0.1
-django-ninja==1.1.0
+Django==6.0.2
+django-ninja==1.6.2
 
 # Database
 psycopg[binary]==3.1.18  # PostgreSQL adapter with binary dependencies
@@ -15,10 +15,10 @@ python-decouple==3.8
 python-dateutil==2.9.0.post0
 
 # Filtering & Pagination
-django-filter==23.5
+django-filter==25.2
 
 # CORS for Frontend Integration
-django-cors-headers==4.3.1
+django-cors-headers==4.9.0
 
 # Production Servers
 gunicorn==21.2.0
@@ -37,4 +37,4 @@ pytest-cov==4.1.0
 openpyxl==3.1.5
 
 # Django Extensions (useful for development)
-django-extensions==3.2.3
+django-extensions==4.1
