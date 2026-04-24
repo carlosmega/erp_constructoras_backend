@@ -159,3 +159,67 @@ def test_devolucion_retenciones_returns_accumulated_amount_at_configured_period(
     # -sum(imss) - sum(otras) = -(-200) - (-80) = 280
     expected_return = Decimal('280.0')
     assert devolucion == [Decimal('0'), Decimal('0'), Decimal('0'), expected_return]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_pagos_directo_and_indirecto_no_lag():
+    fx = build_simple_project_fixture(
+        periods=3, produccion_per_period=1000,
+        direct_cost_per_period=700, indirect_cost_per_period=100,
+    )
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    pd = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
+    pi = next(r for r in report.rows if r.code == 'PAGOS_INDIRECTO').values
+    assert pd == [Decimal('700'), Decimal('700'), Decimal('700')]
+    assert pi == [Decimal('100'), Decimal('100'), Decimal('100')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_pago_with_category_lag_shifts_forward():
+    fx = build_simple_project_fixture(periods=4, direct_cost_per_period=700)
+    fx['direct_code'].categoryid.defaultpaymentlag = 1
+    fx['direct_code'].categoryid.save()
+
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    pd = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
+    # P0 spends go to P1, P1 -> P2, P2 -> P3, P3 -> out of horizon
+    assert pd == [Decimal('0'), Decimal('700'), Decimal('700'), Decimal('700')]
+    assert report.stats['pagos_fuera_horizonte'] == Decimal('700')
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_paymentlag_override_on_imputation_code():
+    fx = build_simple_project_fixture(periods=3, direct_cost_per_period=700)
+    fx['direct_code'].categoryid.defaultpaymentlag = 5  # would shift out of horizon
+    fx['direct_code'].categoryid.save()
+    fx['direct_code'].paymentlagperiods = 0  # but code overrides to 0
+    fx['direct_code'].save()
+
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    pd = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
+    assert pd == [Decimal('700'), Decimal('700'), Decimal('700')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_transversal_and_utility_withdrawals():
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
+    fx = build_simple_project_fixture(periods=4)
+    FinancialSettingsService.update(fx['project'].projectid, {
+        'transversalcost': Decimal('500'),
+        'transversalwithdrawalperiod': 2,
+        'utilitycost': Decimal('800'),
+        'utilitywithdrawalperiod': 4,
+    })
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    rt = next(r for r in report.rows if r.code == 'RETIRO_TRANSV').values
+    ru = next(r for r in report.rows if r.code == 'RETIRO_UTILIDADES').values
+    assert rt == [Decimal('0'), Decimal('500'), Decimal('0'), Decimal('0')]
+    assert ru == [Decimal('0'), Decimal('0'), Decimal('0'), Decimal('800')]

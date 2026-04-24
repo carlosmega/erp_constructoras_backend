@@ -101,11 +101,32 @@ class PNTCalculator:
             _Row('SALDO_ANTICIPO', 'Saldo Anticipo', 'COBROS', saldo_anticipo),
         ])
 
+        # --- Pagos ---
+        pagos_directo, pagos_indirecto, pagos_fuera = self._compute_pagos()
+        retiro_transversal = self._single_period_vector(
+            self.settings.transversalcost, self.settings.transversalwithdrawalperiod,
+        )
+        retiro_utilidad = self._single_period_vector(
+            self.settings.utilitycost, self.settings.utilitywithdrawalperiod,
+        )
+        pagos_totales = [
+            pagos_directo[i] + pagos_indirecto[i] + retiro_transversal[i] + retiro_utilidad[i]
+            for i in range(self.N)
+        ]
+
+        rows.extend([
+            _Row('PAGOS_DIRECTO', 'Pagos Costo Directo', 'PAGOS', pagos_directo),
+            _Row('PAGOS_INDIRECTO', 'Pagos Costos Indirectos', 'PAGOS', pagos_indirecto),
+            _Row('RETIRO_TRANSV', 'Retiro Transversales', 'PAGOS', retiro_transversal),
+            _Row('RETIRO_UTILIDADES', 'Retiro Utilidades', 'PAGOS', retiro_utilidad),
+            _Row('PAGOS_TOTALES', 'Pagos Totales', 'PAGOS', pagos_totales, emphasis=True),
+        ])
+
         stats = {
             'pnt_min': ZERO, 'pnt_max': ZERO, 'pnt_avg': ZERO,
             'total_costo_financiero': ZERO,
             'cobros_fuera_horizonte': cobros_fuera_horizonte,
-            'pagos_fuera_horizonte': ZERO,
+            'pagos_fuera_horizonte': pagos_fuera,
             'codes_sin_precio': sorted(codes_sin_precio),
         }
         return _Report(
@@ -217,6 +238,40 @@ class PNTCalculator:
         for x in anticipo_amortizado:
             acc += x
             out.append(acc)
+        return out
+
+    def _compute_pagos(self) -> tuple[list[Decimal], list[Decimal], Decimal]:
+        direct = [ZERO] * self.N
+        indirect = [ZERO] * self.N
+        fuera = ZERO
+
+        budgets = (
+            ImputationCodeBudget.objects
+            .filter(imputationcodeid__projectid=self.project.projectid)
+            .select_related('imputationcodeid', 'imputationcodeid__categoryid')
+        )
+        for b in budgets:
+            i = self._period_index.get(b.periodlabel)
+            if i is None:
+                continue
+            code = b.imputationcodeid
+            lag = code.paymentlagperiods if code.paymentlagperiods is not None \
+                                         else (code.categoryid.defaultpaymentlag or 0)
+            target = i + lag
+            if 0 <= target < self.N:
+                bucket = direct if code.costtype == CostTypeCode.DIRECT else indirect
+                bucket[target] += b.plannedamount
+            else:
+                fuera += b.plannedamount
+        return direct, indirect, fuera
+
+    def _single_period_vector(self, amount: Decimal, period_1indexed: int) -> list[Decimal]:
+        out = [ZERO] * self.N
+        if not amount:
+            return out
+        p = (period_1indexed or 1) - 1
+        if 0 <= p < self.N:
+            out[p] = amount
         return out
 
 
