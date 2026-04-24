@@ -5,15 +5,16 @@ Produces a PNTReportDto with ~22 rows × N periods.
 """
 from __future__ import annotations
 from decimal import Decimal
-from datetime import datetime
 from uuid import UUID
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from django.utils import timezone
 
 from apps.projects.models import ConstructionProject
 from apps.budgets.models import (
     ImputationPeriod, ImputationCodeBudget, CostTypeCode,
 )
-from apps.cashflow.models import ProjectFinancialSettings, ProjectBillingRule
+from apps.cashflow.models import ProjectBillingRule
 from apps.cashflow.services.financial_settings import FinancialSettingsService
 
 
@@ -84,7 +85,7 @@ class PNTCalculator:
             periods=[{'label': p.label, 'startdate': p.startdate, 'enddate': p.enddate} for p in self.periods],
             rows=rows,
             stats=stats,
-            generated_at=datetime.utcnow(),
+            generated_at=timezone.now(),
         )
 
     # -----------------------------------------------------------------
