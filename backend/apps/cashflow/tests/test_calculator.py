@@ -228,11 +228,21 @@ def test_transversal_and_utility_withdrawals():
 @pytest.mark.django_db
 @pytest.mark.unit
 def test_caja_mes_and_acumulada():
-    """Cobros > pagos → positive caja mensual; acumulada = running sum."""
+    """Cobros > pagos → positive caja mensual; acumulada = running sum.
+
+    Default retentions are neutralized so the arithmetic is purely
+    cobro_facturacion - pagos. Retention effects are covered by other tests.
+    """
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
     fx = build_simple_project_fixture(
         periods=3, produccion_per_period=1000,
         direct_cost_per_period=700, indirect_cost_per_period=100,
     )
+    FinancialSettingsService.update(fx['project'].projectid, {
+        'imssretentionrate': Decimal('0'),
+        'otherretentionrate': Decimal('0'),
+        'advanceamortizationrate': Decimal('0'),
+    })
     calc = PNTCalculator(fx['project'].projectid)
     report = calc.compute()
     caja_mes = next(r for r in report.rows if r.code == 'CAJA_MES').values
