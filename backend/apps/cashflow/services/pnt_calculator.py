@@ -72,10 +72,36 @@ class PNTCalculator:
             _Row('COSTO_INDIRECTO', 'Costo Indirecto', 'RESULTADO', costo_indirecto),
         ]
 
+        # --- Cobros ---
+        cobro_facturacion, cobros_fuera_horizonte = self._compute_cobro_facturacion(produccion)
+        anticipo_concedido = self._compute_anticipo_concedido()
+        anticipo_amortizado = [(-self.settings.advanceamortizationrate) * cf for cf in cobro_facturacion]
+        retencion_imss = [(-self.settings.imssretentionrate) * cf for cf in cobro_facturacion]
+        otras_retencion = [(-self.settings.otherretentionrate) * cf for cf in cobro_facturacion]
+        devolucion = self._compute_devolucion_retenciones(retencion_imss, otras_retencion)
+        saldo_anticipo = self._compute_saldo_anticipo(anticipo_amortizado)
+
+        cobro_total = [
+            anticipo_concedido[i] + cobro_facturacion[i] + anticipo_amortizado[i]
+            + retencion_imss[i] + otras_retencion[i] + devolucion[i] + saldo_anticipo[i]
+            for i in range(self.N)
+        ]
+
+        rows.extend([
+            _Row('COBRO_TOTAL', 'Cobro Total sin IVA', 'COBROS', cobro_total, emphasis=True),
+            _Row('COBRO_FACTURACION', 'Cobro Facturación', 'COBROS', cobro_facturacion),
+            _Row('ANTICIPO_CONCEDIDO', 'Anticipo Concedido', 'COBROS', anticipo_concedido),
+            _Row('ANTICIPO_AMORT', 'Anticipo Amortizado', 'COBROS', anticipo_amortizado),
+            _Row('RET_IMSS', 'Retenciones IMSS', 'COBROS', retencion_imss),
+            _Row('OTRAS_RET', 'Otras Retenciones', 'COBROS', otras_retencion),
+            _Row('DEVOLUCION', 'Devolución Retenciones', 'COBROS', devolucion),
+            _Row('SALDO_ANTICIPO', 'Saldo Anticipo', 'COBROS', saldo_anticipo),
+        ])
+
         stats = {
             'pnt_min': ZERO, 'pnt_max': ZERO, 'pnt_avg': ZERO,
             'total_costo_financiero': ZERO,
-            'cobros_fuera_horizonte': ZERO,
+            'cobros_fuera_horizonte': cobros_fuera_horizonte,
             'pagos_fuera_horizonte': ZERO,
             'codes_sin_precio': sorted(codes_sin_precio),
         }
@@ -150,6 +176,45 @@ class PNTCalculator:
             else:
                 costo_indirecto[i] += b.plannedamount
         return produccion, costo_directo, costo_indirecto, codes_sin_precio
+
+    def _compute_cobro_facturacion(self, produccion: list[Decimal]) -> tuple[list[Decimal], Decimal]:
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for i in range(self.N):
+            if produccion[i] == 0:
+                continue
+            for rule in self.billing_rules:
+                target = i + rule.lagperiods
+                amount = produccion[i] * rule.percent
+                if 0 <= target < self.N:
+                    out[target] += amount
+                else:
+                    fuera += amount
+        return out, fuera
+
+    def _compute_anticipo_concedido(self) -> list[Decimal]:
+        out = [ZERO] * self.N
+        p = (self.settings.anticipoentryperiod or 1) - 1
+        if 0 <= p < self.N and self.project.advancepayment_notax:
+            out[p] = self.project.advancepayment_notax
+        return out
+
+    def _compute_devolucion_retenciones(self, imss: list[Decimal], otras: list[Decimal]) -> list[Decimal]:
+        out = [ZERO] * self.N
+        if self.settings.retentionreturnperiod is None:
+            return out
+        p = self.settings.retentionreturnperiod - 1
+        if 0 <= p < self.N:
+            out[p] = -sum(imss) - sum(otras)
+        return out
+
+    def _compute_saldo_anticipo(self, anticipo_amortizado: list[Decimal]) -> list[Decimal]:
+        out = []
+        acc = ZERO
+        for x in anticipo_amortizado:
+            acc += x
+            out.append(acc)
+        return out
 
 
 @dataclass
