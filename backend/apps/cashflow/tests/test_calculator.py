@@ -305,3 +305,100 @@ def test_stats_captured_correctly():
     assert 'pnt_avg' in report.stats
     assert 'total_costo_financiero' in report.stats
     assert isinstance(report.stats['codes_sin_precio'], list)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_monthly_aggregation_sums_flows_and_takes_last_for_acumulados():
+    """Periods are weekly (4 per month); granularity='month' should aggregate.
+
+    PRODUCCION (a flow) is summed: 4 × 100 = 400 per month.
+    CAJA_ACUMULADA (cumulative) takes the LAST value of the month.
+    """
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
+    from apps.budgets.models import ImputationPeriod, PeriodTypeCode, ImputationCodeBudget
+    from datetime import date
+
+    fx = build_simple_project_fixture(periods=0)  # fixture with no periods; we'll add custom ones
+    project = fx['project']
+    # 4 weekly periods all in January 2026
+    for i in range(4):
+        p = ImputationPeriod.objects.create(
+            projectid=project, periodtype=PeriodTypeCode.WEEKLY,
+            year=2026, month=1, periodnumber=i + 1,
+            label=f'S{i+1}-ENE',
+            startdate=date(2026, 1, 1 + i * 7),
+            enddate=date(2026, 1, 7 + i * 7),
+            sortorder=i,
+            createdby=project.createdby, modifiedby=project.modifiedby,
+        )
+        ImputationCodeBudget.objects.create(
+            imputationcodeid=fx['direct_code'],
+            periodid=p, periodlabel=p.label,
+            plannedamount=Decimal('100'),
+            plannedvolume=Decimal('10'),  # price=10 × vol=10 → produccion 100/period
+        )
+
+    # Neutralize retentions so the math is focused on aggregation, not side-effects
+    FinancialSettingsService.update(project.projectid, {
+        'imssretentionrate': Decimal('0'),
+        'otherretentionrate': Decimal('0'),
+        'advanceamortizationrate': Decimal('0'),
+    })
+
+    calc = PNTCalculator(project.projectid)
+    report = calc.compute(granularity='month')
+
+    assert report.granularity == 'month'
+    assert len(report.periods) == 1  # one month
+
+    produccion = next(r for r in report.rows if r.code == 'PRODUCCION').values
+    caja_acum = next(r for r in report.rows if r.code == 'CAJA_ACUMULADA').values
+    # Produccion is a FLOW → summed across 4 weeks = 4 × 100 = 400
+    assert produccion == [Decimal('400')]
+    # CAJA_ACUMULADA is cumulative → takes last value (same dimension, one entry)
+    assert len(caja_acum) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_golden_full_pnt_scenario():
+    """End-to-end golden test with a known expected result. Matches hand calculation."""
+    from apps.cashflow.services.billing_rule import BillingRuleService
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
+    fx = build_simple_project_fixture(
+        periods=3, produccion_per_period=1000,
+        direct_cost_per_period=600, indirect_cost_per_period=100,
+    )
+    project = fx['project']
+    project.advancepayment_notax = Decimal('500')
+    project.save()
+
+    BillingRuleService.replace(project.projectid, [
+        {'sequence': 1, 'percent': Decimal('0.5'), 'lagperiods': 0},
+        {'sequence': 2, 'percent': Decimal('0.5'), 'lagperiods': 1},
+    ])
+    FinancialSettingsService.update(project.projectid, {
+        'imssretentionrate': Decimal('0.05'),
+        'advanceamortizationrate': Decimal('0.2'),
+        'anticipoentryperiod': 1,
+        'financecostrate': Decimal('0'),
+    })
+
+    calc = PNTCalculator(project.projectid)
+    report = calc.compute()
+    row = lambda code: next(r for r in report.rows if r.code == code).values
+
+    # Cobro facturación: P0 = P0*50% = 500; P1 = P0*50% + P1*50% = 500 + 500 = 1000;
+    # P2 = P1*50% + P2*50% = 500 + 500 = 1000. P2*50% (lag 1) → P3 out of horizon → 500.
+    assert row('COBRO_FACTURACION') == [Decimal('500'), Decimal('1000'), Decimal('1000')]
+    assert report.stats['cobros_fuera_horizonte'] == Decimal('500')
+
+    # Retención IMSS 5%: -5%×500=-25, -5%×1000=-50, -5%×1000=-50
+    assert row('RET_IMSS') == [Decimal('-25.00'), Decimal('-50.00'), Decimal('-50.00')]
+
+    # Amortización 20%: -20%×500=-100, -20%×1000=-200, -20%×1000=-200
+    assert row('ANTICIPO_AMORT') == [Decimal('-100.0'), Decimal('-200.0'), Decimal('-200.0')]
+
+    # Anticipo concedido at P1 (1-indexed=1, so index 0) = 500
+    assert row('ANTICIPO_CONCEDIDO') == [Decimal('500'), Decimal('0'), Decimal('0')]

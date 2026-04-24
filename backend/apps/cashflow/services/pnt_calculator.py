@@ -161,10 +161,17 @@ class PNTCalculator:
             'pagos_fuera_horizonte': pagos_fuera,
             'codes_sin_precio': sorted(codes_sin_precio),
         }
+        periods_out = [
+            {'label': p.label, 'startdate': p.startdate, 'enddate': p.enddate}
+            for p in self.periods
+        ]
+        if granularity == 'month':
+            periods_out, rows = self._aggregate_monthly(rows)
+
         return _Report(
             projectid=self.project.projectid,
             granularity=granularity,
-            periods=[{'label': p.label, 'startdate': p.startdate, 'enddate': p.enddate} for p in self.periods],
+            periods=periods_out,
             rows=rows,
             stats=stats,
             generated_at=timezone.now(),
@@ -173,6 +180,49 @@ class PNTCalculator:
     # -----------------------------------------------------------------
     # Internals
     # -----------------------------------------------------------------
+
+    # Rows whose values are per-period flows (summed when aggregating to month).
+    _FLOW_CODES = {
+        'PRODUCCION', 'COSTO_DIRECTO', 'COSTO_INDIRECTO',
+        'COBRO_FACTURACION', 'ANTICIPO_CONCEDIDO', 'ANTICIPO_AMORT',
+        'RET_IMSS', 'OTRAS_RET', 'DEVOLUCION',
+        'PAGOS_DIRECTO', 'PAGOS_INDIRECTO', 'RETIRO_TRANSV', 'RETIRO_UTILIDADES',
+        'PAGOS_TOTALES', 'COBRO_TOTAL', 'CAJA_MES',
+        'COSTO_FINANCIERO', 'RESULTADO',
+    }
+    # Rows whose values are cumulative across periods (take LAST in month).
+    _CUMULATIVE_CODES = {'CAJA_ACUMULADA', 'SALDO_ANTICIPO'}
+
+    def _aggregate_monthly(self, rows: list[_Row]) -> tuple[list[dict], list[_Row]]:
+        """Group periods by (year, month); sum flow rows and take-last cumulative rows."""
+        groups: list[list[int]] = []
+        current_key = None
+        for i, p in enumerate(self.periods):
+            key = (p.year, p.month)
+            if key != current_key:
+                groups.append([i])
+                current_key = key
+            else:
+                groups[-1].append(i)
+
+        new_periods = []
+        for g in groups:
+            first = self.periods[g[0]]
+            last = self.periods[g[-1]]
+            new_periods.append({
+                'label': f'{first.year}-{first.month:02d}',
+                'startdate': first.startdate,
+                'enddate': last.enddate,
+            })
+
+        new_rows = []
+        for r in rows:
+            if r.code in self._CUMULATIVE_CODES:
+                agg = [r.values[g[-1]] for g in groups]
+            else:
+                agg = [sum((r.values[i] for i in g), ZERO) for g in groups]
+            new_rows.append(_Row(r.code, r.label, r.section, agg, emphasis=r.emphasis))
+        return new_periods, new_rows
 
     def _load_billing_rules(self):
         rules = list(
