@@ -223,3 +223,75 @@ def test_transversal_and_utility_withdrawals():
     ru = next(r for r in report.rows if r.code == 'RETIRO_UTILIDADES').values
     assert rt == [Decimal('0'), Decimal('500'), Decimal('0'), Decimal('0')]
     assert ru == [Decimal('0'), Decimal('0'), Decimal('0'), Decimal('800')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_caja_mes_and_acumulada():
+    """Cobros > pagos → positive caja mensual; acumulada = running sum."""
+    fx = build_simple_project_fixture(
+        periods=3, produccion_per_period=1000,
+        direct_cost_per_period=700, indirect_cost_per_period=100,
+    )
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    caja_mes = next(r for r in report.rows if r.code == 'CAJA_MES').values
+    caja_acum = next(r for r in report.rows if r.code == 'CAJA_ACUMULADA').values
+
+    # cobro=1000, pagos=800 → caja=200/period; acumulada=200,400,600
+    assert caja_mes == [Decimal('200'), Decimal('200'), Decimal('200')]
+    assert caja_acum == [Decimal('200'), Decimal('400'), Decimal('600')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_costo_financiero_only_on_negative_balance():
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
+    # Cause negative caja by huge transversal retirement at period 1
+    fx = build_simple_project_fixture(
+        periods=3, produccion_per_period=1000,
+        direct_cost_per_period=700, indirect_cost_per_period=100,
+    )
+    FinancialSettingsService.update(fx['project'].projectid, {
+        'transversalcost': Decimal('10000'),
+        'transversalwithdrawalperiod': 1,
+        'financecostrate': Decimal('0.01'),
+    })
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    cf = next(r for r in report.rows if r.code == 'COSTO_FINANCIERO').values
+    caja_acum = next(r for r in report.rows if r.code == 'CAJA_ACUMULADA').values
+
+    for i, ca in enumerate(caja_acum):
+        if ca < 0:
+            assert cf[i] == ca * Decimal('0.01')
+        else:
+            assert cf[i] == Decimal('0')
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_resultado_row():
+    fx = build_simple_project_fixture(
+        periods=2, produccion_per_period=1000,
+        direct_cost_per_period=700, indirect_cost_per_period=100,
+    )
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+    resultado = next(r for r in report.rows if r.code == 'RESULTADO').values
+    # 1000 - 700 - 100 - 0 - 0 = 200/period
+    assert resultado == [Decimal('200'), Decimal('200')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_stats_captured_correctly():
+    fx = build_simple_project_fixture(periods=3, produccion_per_period=1000)
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+
+    assert 'pnt_min' in report.stats
+    assert 'pnt_max' in report.stats
+    assert 'pnt_avg' in report.stats
+    assert 'total_costo_financiero' in report.stats
+    assert isinstance(report.stats['codes_sin_precio'], list)

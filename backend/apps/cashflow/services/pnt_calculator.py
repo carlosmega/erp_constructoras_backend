@@ -122,9 +122,40 @@ class PNTCalculator:
             _Row('PAGOS_TOTALES', 'Pagos Totales', 'PAGOS', pagos_totales, emphasis=True),
         ])
 
+        # --- Caja ---
+        caja_mes = [cobro_total[i] - pagos_totales[i] for i in range(self.N)]
+        caja_acumulada = []
+        acc = ZERO
+        for x in caja_mes:
+            acc += x
+            caja_acumulada.append(acc)
+        costo_financiero = [
+            ca * self.settings.financecostrate if ca < 0 else ZERO
+            for ca in caja_acumulada
+        ]
+
+        # --- Resultado ---
+        resultado = [
+            produccion[i] - costo_directo[i] - costo_indirecto[i]
+            - retiro_transversal[i] - retiro_utilidad[i]
+            for i in range(self.N)
+        ]
+
+        # Prepend RESULTADO at the top (Excel convention)
+        rows.insert(0, _Row('RESULTADO', 'Resultado', 'RESULTADO', resultado, emphasis=True))
+
+        # Append caja section
+        rows.extend([
+            _Row('CAJA_MES', 'Caja Mes', 'CAJA', caja_mes, emphasis=True),
+            _Row('CAJA_ACUMULADA', 'Caja Acumulada (PNT)', 'CAJA', caja_acumulada, emphasis=True),
+            _Row('COSTO_FINANCIERO', 'Costo Financiero', 'CAJA', costo_financiero),
+        ])
+
         stats = {
-            'pnt_min': ZERO, 'pnt_max': ZERO, 'pnt_avg': ZERO,
-            'total_costo_financiero': ZERO,
+            'pnt_min': min(caja_acumulada) if caja_acumulada else ZERO,
+            'pnt_max': max(caja_acumulada) if caja_acumulada else ZERO,
+            'pnt_avg': (sum(caja_acumulada) / Decimal(self.N)) if self.N else ZERO,
+            'total_costo_financiero': sum(costo_financiero, ZERO),
             'cobros_fuera_horizonte': cobros_fuera_horizonte,
             'pagos_fuera_horizonte': pagos_fuera,
             'codes_sin_precio': sorted(codes_sin_precio),
