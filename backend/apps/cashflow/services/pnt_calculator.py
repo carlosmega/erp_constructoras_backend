@@ -4,6 +4,7 @@ PNTCalculator — derive Posición Neta de Tesorería from budget + financial se
 Produces a PNTReportDto with ~22 rows × N periods.
 """
 from __future__ import annotations
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 from dataclasses import dataclass
