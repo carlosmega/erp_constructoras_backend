@@ -134,6 +134,11 @@ class Permission(str, Enum):
     CORPORATE_ALLOCATE = "corporate_allocate"
     CORPORATE_SIMULATE = "corporate_simulate"
 
+    # Cashflow module permissions
+    CASHFLOW_READ = "cashflow_read"
+    CASHFLOW_UPDATE_SETTINGS = "cashflow_update_settings"
+    CASHFLOW_UPDATE_BILLING_RULES = "cashflow_update_billing_rules"
+
     # HR/Payroll module permissions
     EMPLOYEE_CREATE = "employee_create"
     EMPLOYEE_READ = "employee_read"
@@ -195,6 +200,8 @@ ROLE_PERMISSIONS = {
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
         # Corporate module - full access
         Permission.CORPORATE_CREATE, Permission.CORPORATE_READ, Permission.CORPORATE_UPDATE, Permission.CORPORATE_DELETE, Permission.CORPORATE_ALLOCATE, Permission.CORPORATE_SIMULATE,
+        # Cashflow module - full access
+        Permission.CASHFLOW_READ, Permission.CASHFLOW_UPDATE_SETTINGS, Permission.CASHFLOW_UPDATE_BILLING_RULES,
         # HR/Payroll module - full access
         Permission.EMPLOYEE_CREATE, Permission.EMPLOYEE_READ, Permission.EMPLOYEE_UPDATE, Permission.EMPLOYEE_DELETE, Permission.EMPLOYEE_TERMINATE,
         Permission.PAYROLL_CREATE, Permission.PAYROLL_READ, Permission.PAYROLL_UPDATE, Permission.PAYROLL_DELETE, Permission.PAYROLL_CALCULATE, Permission.PAYROLL_APPROVE,
@@ -229,6 +236,8 @@ ROLE_PERMISSIONS = {
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
         # Corporate module - full access
         Permission.CORPORATE_CREATE, Permission.CORPORATE_READ, Permission.CORPORATE_UPDATE, Permission.CORPORATE_DELETE, Permission.CORPORATE_ALLOCATE, Permission.CORPORATE_SIMULATE,
+        # Cashflow module - full access
+        Permission.CASHFLOW_READ, Permission.CASHFLOW_UPDATE_SETTINGS, Permission.CASHFLOW_UPDATE_BILLING_RULES,
         # HR/Payroll module - full access
         Permission.EMPLOYEE_CREATE, Permission.EMPLOYEE_READ, Permission.EMPLOYEE_UPDATE, Permission.EMPLOYEE_DELETE, Permission.EMPLOYEE_TERMINATE,
         Permission.PAYROLL_CREATE, Permission.PAYROLL_READ, Permission.PAYROLL_UPDATE, Permission.PAYROLL_DELETE, Permission.PAYROLL_CALCULATE, Permission.PAYROLL_APPROVE,
@@ -262,6 +271,8 @@ ROLE_PERMISSIONS = {
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
         # Corporate module - no delete, no allocate
         Permission.CORPORATE_CREATE, Permission.CORPORATE_READ, Permission.CORPORATE_UPDATE, Permission.CORPORATE_SIMULATE,
+        # Cashflow module - full access (subject to ownership checks in router)
+        Permission.CASHFLOW_READ, Permission.CASHFLOW_UPDATE_SETTINGS, Permission.CASHFLOW_UPDATE_BILLING_RULES,
         # HR/Payroll module - read only + create attendance
         Permission.EMPLOYEE_READ,
         Permission.PAYROLL_READ,
@@ -305,6 +316,8 @@ ROLE_PERMISSIONS = {
         Permission.INBOX_READ,
         # Corporate module - read only
         Permission.CORPORATE_READ,
+        # Cashflow module - read only
+        Permission.CASHFLOW_READ,
         # HR/Payroll module - read only
         Permission.EMPLOYEE_READ,
         Permission.PAYROLL_READ,
