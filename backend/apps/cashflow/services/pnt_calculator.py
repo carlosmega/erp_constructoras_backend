@@ -62,6 +62,8 @@ class PNTCalculator:
     # -----------------------------------------------------------------
 
     def compute(self, overrides: dict | None = None, granularity: str = 'period') -> _Report:
+        if granularity not in ('period', 'month'):
+            raise ValueError(f"granularity must be 'period' or 'month', got {granularity!r}")
         if overrides:
             self._apply_overrides(overrides)
 
@@ -195,6 +197,10 @@ class PNTCalculator:
 
     def _aggregate_monthly(self, rows: list[_Row]) -> tuple[list[dict], list[_Row]]:
         """Group periods by (year, month); sum flow rows and take-last cumulative rows."""
+        known_codes = self._FLOW_CODES | self._CUMULATIVE_CODES
+        unknown = {r.code for r in rows} - known_codes
+        assert not unknown, f'Unknown row codes in _aggregate_monthly: {sorted(unknown)}'
+
         groups: list[list[int]] = []
         current_key = None
         for i, p in enumerate(self.periods):

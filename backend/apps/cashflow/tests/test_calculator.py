@@ -402,3 +402,31 @@ def test_golden_full_pnt_scenario():
 
     # Anticipo concedido at P1 (1-indexed=1, so index 0) = 500
     assert row('ANTICIPO_CONCEDIDO') == [Decimal('500'), Decimal('0'), Decimal('0')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_compute_rejects_invalid_granularity():
+    """compute() should reject unknown granularity values with ValueError."""
+    fx = build_simple_project_fixture(periods=2, produccion_per_period=1000)
+    calc = PNTCalculator(fx['project'].projectid)
+    with pytest.raises(ValueError, match='granularity'):
+        calc.compute(granularity='week')
+    with pytest.raises(ValueError, match='granularity'):
+        calc.compute(granularity='')
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_monthly_aggregation_asserts_all_row_codes_are_classified():
+    """Covers the safety assertion in _aggregate_monthly: all row codes
+    must be in either _FLOW_CODES or _CUMULATIVE_CODES. This test
+    exercises the happy path (all known codes → no assertion error)."""
+    fx = build_simple_project_fixture(periods=2, produccion_per_period=1000)
+    calc = PNTCalculator(fx['project'].projectid)
+    # Should not raise
+    report = calc.compute(granularity='month')
+    # Sanity: every emitted row code is in one of the two sets
+    known = PNTCalculator._FLOW_CODES | PNTCalculator._CUMULATIVE_CODES
+    for r in report.rows:
+        assert r.code in known, f'Emitted row code {r.code!r} not classified'
