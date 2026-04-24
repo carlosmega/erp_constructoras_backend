@@ -3,6 +3,7 @@ import pytest
 from decimal import Decimal
 
 from apps.projects.tests.factories import ConstructionProjectFactory
+from apps.cashflow.tests.factories import build_simple_project_fixture
 
 
 @pytest.mark.django_db
@@ -80,3 +81,43 @@ def test_put_billing_rules_rejects_sum_not_100(admin_auth_client):
     )
     assert resp.status_code == 400
     assert '100' in resp.json()['error']['message']
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_get_pnt_returns_full_report(admin_auth_client):
+    fx = build_simple_project_fixture(periods=3, produccion_per_period=1000)
+    resp = admin_auth_client.get(
+        f'/api/cashflow/projects/{fx["project"].pk}/pnt/'
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['granularity'] == 'period'
+    assert len(body['periods']) == 3
+    row_codes = {r['code'] for r in body['rows']}
+    for required in [
+        'RESULTADO', 'PRODUCCION', 'COBRO_TOTAL',
+        'CAJA_MES', 'CAJA_ACUMULADA', 'COSTO_FINANCIERO',
+    ]:
+        assert required in row_codes
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_get_pnt_without_periods_returns_409(admin_auth_client):
+    project = ConstructionProjectFactory()  # no periods initialized
+    resp = admin_auth_client.get(
+        f'/api/cashflow/projects/{project.pk}/pnt/'
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.django_db
+@pytest.mark.integration
+def test_get_pnt_monthly_aggregates(admin_auth_client):
+    fx = build_simple_project_fixture(periods=3, produccion_per_period=1000)
+    resp = admin_auth_client.get(
+        f'/api/cashflow/projects/{fx["project"].pk}/pnt/?granularity=month'
+    )
+    assert resp.status_code == 200
+    assert resp.json()['granularity'] == 'month'

@@ -1,18 +1,23 @@
 """Cashflow / PNT API routers."""
-from typing import List
+import base64
+import json
+from typing import List, Optional
 from uuid import UUID
 from ninja import Router
-from django.http import HttpRequest
+from django.http import HttpRequest, JsonResponse
 
 from apps.cashflow.models import ProjectBillingRule, ProjectFinancialSettings
 from apps.cashflow.schemas import (
     BillingRuleDto,
     FinancialSettingsDto,
+    PNTReportDto,
     ReplaceBillingRulesDto,
     UpdateFinancialSettingsDto,
 )
 from apps.cashflow.services.billing_rule import BillingRuleService
 from apps.cashflow.services.financial_settings import FinancialSettingsService
+from apps.cashflow.services.pnt_calculator import PNTCalculator
+from core.exceptions import ValidationError
 from core.permissions import require_permission, Permission
 
 
@@ -103,3 +108,57 @@ def replace_billing_rules(
     rules_data = [r.dict(exclude={'ruleid'}) for r in payload.rules]
     rules = BillingRuleService.replace(project_id, rules_data)
     return [_serialize_rule(r) for r in rules]
+
+
+@cashflow_router.get(
+    "/projects/{project_id}/pnt/",
+    response=PNTReportDto,
+)
+@require_permission(Permission.CASHFLOW_READ)
+def get_pnt(
+    request: HttpRequest,
+    project_id: UUID,
+    granularity: str = 'period',
+    overrides: Optional[str] = None,
+):
+    """Return the full PNT report for a project.
+
+    Query params:
+    - granularity: 'period' (default) or 'month'
+    - overrides: base64-encoded JSON with override dict (simulation, no DB writes)
+    """
+    if granularity not in ('period', 'month'):
+        raise ValidationError("granularity must be 'period' or 'month'")
+
+    overrides_dict = None
+    if overrides:
+        try:
+            overrides_dict = json.loads(base64.b64decode(overrides).decode())
+        except Exception as exc:
+            raise ValidationError(f'overrides must be base64-encoded JSON: {exc}')
+
+    try:
+        calc = PNTCalculator(project_id)
+    except ValueError as exc:
+        # No periods initialized → 409 Conflict
+        return JsonResponse(
+            {'success': False, 'error': {'code': 'CONFLICT', 'message': str(exc)}},
+            status=409,
+        )
+
+    report = calc.compute(overrides=overrides_dict, granularity=granularity)
+    # Map dataclass _Report → PNTReportDto-compatible dict
+    return {
+        'projectid': report.projectid,
+        'granularity': report.granularity,
+        'periods': report.periods,
+        'rows': [
+            {
+                'code': r.code, 'label': r.label, 'section': r.section,
+                'values': r.values, 'emphasis': r.emphasis,
+            }
+            for r in report.rows
+        ],
+        'stats': report.stats,
+        'generated_at': report.generated_at,
+    }
