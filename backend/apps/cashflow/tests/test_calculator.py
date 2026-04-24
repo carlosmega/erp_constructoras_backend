@@ -92,3 +92,70 @@ def test_advance_payment_entry_period():
     anticipo = next(r for r in report.rows if r.code == 'ANTICIPO_CONCEDIDO').values
     # Anticipo entering at period 2 (1-indexed) -> index 1 in the vector
     assert anticipo == [Decimal('0'), Decimal('5000'), Decimal('0')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_cobro_total_excludes_saldo_anticipo_to_avoid_double_counting():
+    """With non-zero amortization rate, COBRO_TOTAL must not double-count.
+
+    Given cobro_facturacion=1000/period and amortization=20%:
+    - ANTICIPO_AMORT should be [-200, -200, -200]
+    - SALDO_ANTICIPO should be [-200, -400, -600] (cumulative, display-only)
+    - COBRO_TOTAL at each period should include ANTICIPO_AMORT exactly once,
+      NOT both ANTICIPO_AMORT and SALDO_ANTICIPO.
+    """
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
+    fx = build_simple_project_fixture(periods=3, produccion_per_period=1000)
+    # Zero out retentions so COBRO_TOTAL only reflects cobro_facturacion + anticipo_amort;
+    # this isolates the SALDO_ANTICIPO double-count regression.
+    FinancialSettingsService.update(fx['project'].projectid, {
+        'advanceamortizationrate': Decimal('0.2'),
+        'imssretentionrate': Decimal('0'),
+        'otherretentionrate': Decimal('0'),
+    })
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+
+    anticipo_amort = next(r for r in report.rows if r.code == 'ANTICIPO_AMORT').values
+    saldo_anticipo = next(r for r in report.rows if r.code == 'SALDO_ANTICIPO').values
+    cobro_total = next(r for r in report.rows if r.code == 'COBRO_TOTAL').values
+    cobro_facturacion = next(r for r in report.rows if r.code == 'COBRO_FACTURACION').values
+
+    # Per-period amortization deducts 200 from a cobro of 1000.
+    assert anticipo_amort == [Decimal('-200.0'), Decimal('-200.0'), Decimal('-200.0')]
+    # Display-only cumulative of the amortization above.
+    assert saldo_anticipo == [Decimal('-200.0'), Decimal('-400.0'), Decimal('-600.0')]
+    # COBRO_TOTAL = cobro_facturacion + anticipo_amort (no other terms active).
+    # Each period: 1000 + (-200) = 800. If SALDO_ANTICIPO were included, P2 would be 200, not 800.
+    for i in range(3):
+        assert cobro_total[i] == cobro_facturacion[i] + anticipo_amort[i]
+    assert cobro_total == [Decimal('800.0'), Decimal('800.0'), Decimal('800.0')]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_devolucion_retenciones_returns_accumulated_amount_at_configured_period():
+    """When retentionreturnperiod is set, DEVOLUCION returns the sum of all retentions
+    (flipped sign) at that period (1-indexed)."""
+    from apps.cashflow.services.financial_settings import FinancialSettingsService
+    fx = build_simple_project_fixture(periods=4, produccion_per_period=1000)
+    FinancialSettingsService.update(fx['project'].projectid, {
+        'imssretentionrate': Decimal('0.05'),
+        'otherretentionrate': Decimal('0.02'),
+        'retentionreturnperiod': 4,
+    })
+    calc = PNTCalculator(fx['project'].projectid)
+    report = calc.compute()
+
+    imss = next(r for r in report.rows if r.code == 'RET_IMSS').values
+    otras = next(r for r in report.rows if r.code == 'OTRAS_RET').values
+    devolucion = next(r for r in report.rows if r.code == 'DEVOLUCION').values
+
+    # Retentions each period: -50 (IMSS) and -20 (otras).
+    assert imss == [Decimal('-50.0')] * 4
+    assert otras == [Decimal('-20.0')] * 4
+    # Devolucion is zero in periods 1-3, then repays the sum at period 4 (index 3).
+    # -sum(imss) - sum(otras) = -(-200) - (-80) = 280
+    expected_return = Decimal('280.0')
+    assert devolucion == [Decimal('0'), Decimal('0'), Decimal('0'), expected_return]

@@ -81,9 +81,12 @@ class PNTCalculator:
         devolucion = self._compute_devolucion_retenciones(retencion_imss, otras_retencion)
         saldo_anticipo = self._compute_saldo_anticipo(anticipo_amortizado)
 
+        # COBRO_TOTAL is the sum of period-level flows (not cumulative lines).
+        # SALDO_ANTICIPO is reported for display but excluded here to avoid
+        # double-counting ANTICIPO_AMORT (which it accumulates).
         cobro_total = [
             anticipo_concedido[i] + cobro_facturacion[i] + anticipo_amortizado[i]
-            + retencion_imss[i] + otras_retencion[i] + devolucion[i] + saldo_anticipo[i]
+            + retencion_imss[i] + otras_retencion[i] + devolucion[i]
             for i in range(self.N)
         ]
 
