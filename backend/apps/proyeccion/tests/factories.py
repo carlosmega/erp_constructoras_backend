@@ -1,6 +1,7 @@
 """Factory Boy factories for Proyeccion models."""
 
 import factory
+import uuid
 from factory.django import DjangoModelFactory
 from decimal import Decimal
 from datetime import date, timedelta
@@ -384,3 +385,20 @@ class CostDistributionFactory(factory.django.DjangoModelFactory):
         if obj.breakdownid and obj.breakdownid.conceptid:
             obj.projectid = obj.breakdownid.conceptid.projectid
             obj.save()
+
+
+class EstimationFinancialSettingsFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = 'proyeccion.EstimationFinancialSettings'
+
+    settingsid = factory.LazyFunction(uuid.uuid4)
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    advanceamountnotax = Decimal('0')
+    advanceentryperiod = 1
+    advanceamortizationrate = Decimal('0')
+    imssretentionrate = Decimal('0.0500')
+    otherretentionrate = Decimal('0')
+    retentionreturnperiod = None
+    directpaymentlag = 0
+    indirectpaymentlag = 0
+    financecostrate = Decimal('0.001000')

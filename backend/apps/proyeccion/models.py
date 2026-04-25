@@ -1608,3 +1608,77 @@ class DistributionPresence(models.Model):
 
     def __str__(self):
         return f"{self.userid} {self.mode} on {self.projectid}"
+
+
+class EstimationFinancialSettings(AuditMixin):
+    """Financial parameters for an estimation project (1:1)."""
+
+    settingsid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='settingsid',
+    )
+    projectid = models.OneToOneField(
+        'EstimationProject',
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='financial_settings',
+    )
+
+    # Anticipo
+    advanceamountnotax = models.DecimalField(
+        max_digits=19, decimal_places=2,
+        default=Decimal('0'),
+        db_column='advanceamountnotax',
+    )
+    advanceentryperiod = models.IntegerField(
+        default=1,
+        db_column='advanceentryperiod',
+    )
+    advanceamortizationrate = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        default=Decimal('0'),
+        db_column='advanceamortizationrate',
+    )
+
+    # Retenciones del cliente
+    imssretentionrate = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        default=Decimal('0.0500'),
+        db_column='imssretentionrate',
+    )
+    otherretentionrate = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        default=Decimal('0'),
+        db_column='otherretentionrate',
+    )
+    retentionreturnperiod = models.IntegerField(
+        null=True, blank=True,
+        db_column='retentionreturnperiod',
+    )
+
+    # Lag default global de pagos a proveedores
+    directpaymentlag = models.IntegerField(
+        default=0,
+        db_column='directpaymentlag',
+    )
+    indirectpaymentlag = models.IntegerField(
+        default=0,
+        db_column='indirectpaymentlag',
+    )
+
+    # Costo financiero
+    financecostrate = models.DecimalField(
+        max_digits=7, decimal_places=6,
+        default=Decimal('0.001000'),
+        db_column='financecostrate',
+    )
+
+    class Meta:
+        db_table = 'estimationfinancialsettings'
+        verbose_name = 'Estimation Financial Settings'
+        verbose_name_plural = 'Estimation Financial Settings'
+
+    def __str__(self):
+        return f"Financial settings for {self.projectid}"
