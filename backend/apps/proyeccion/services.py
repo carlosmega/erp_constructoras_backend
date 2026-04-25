@@ -3616,3 +3616,108 @@ class EstimationPNTCalculator:
                 )
                 for r in overrides['billing_rules']
             ]
+
+    def compute(self, overrides=None, granularity='period'):
+        if granularity not in ('period', 'month'):
+            raise ValueError(f"granularity must be 'period' or 'month', got {granularity!r}")
+        if overrides:
+            self._apply_overrides(overrides)
+
+        # Base vectors from rollups
+        produccion = list(self.rollups['sale_by_period'])
+        costo_directo_neg = [-x for x in self.rollups['direct_by_period']]
+        costo_indirecto_neg = [-x for x in self.rollups['indirect_by_period']]
+        retiro_transv_neg = [-x for x in self.rollups['retiro_by_period']]
+        retiro_util_neg = [-x for x in self.rollups['utility_by_period']]
+
+        # ---- COBROS ----
+        cobro_facturacion, cobros_fuera = self._compute_cobro_facturacion(produccion)
+        anticipo_concedido = self._single_period_vector(
+            self.settings.advanceamountnotax, self.settings.advanceentryperiod,
+        )
+        anticipo_amortizado = [
+            -self.settings.advanceamortizationrate * cf for cf in cobro_facturacion
+        ]
+        retencion_imss = [-self.settings.imssretentionrate * cf for cf in cobro_facturacion]
+        otras_retencion = [-self.settings.otherretentionrate * cf for cf in cobro_facturacion]
+        devolucion = self._compute_devolucion(retencion_imss, otras_retencion)
+        saldo_anticipo = self._cumsum(anticipo_amortizado)
+
+        cobro_total = [
+            anticipo_concedido[i] + cobro_facturacion[i] + anticipo_amortizado[i]
+            + retencion_imss[i] + otras_retencion[i] + devolucion[i]
+            for i in range(self.N)
+        ]
+        # NOTE: saldo_anticipo intentionally excluded (avoids double-count of amortización).
+
+        rows = [
+            _PNTRow('COBRO_TOTAL', 'Cobro Total sin IVA', 'COBROS', cobro_total, emphasis=True),
+            _PNTRow('COBRO_FACTURACION', 'Cobro Facturación', 'COBROS', cobro_facturacion),
+            _PNTRow('ANTICIPO_CONCEDIDO', 'Anticipo Concedido', 'COBROS', anticipo_concedido),
+            _PNTRow('ANTICIPO_AMORT', 'Anticipo Amortizado', 'COBROS', anticipo_amortizado),
+            _PNTRow('RET_IMSS', 'Retenciones IMSS', 'COBROS', retencion_imss),
+            _PNTRow('OTRAS_RET', 'Otras Retenciones', 'COBROS', otras_retencion),
+            _PNTRow('DEVOLUCION', 'Devolución Retenciones', 'COBROS', devolucion),
+            _PNTRow('SALDO_ANTICIPO', 'Saldo Anticipo', 'COBROS', saldo_anticipo),
+        ]
+
+        # PAGOS, CAJA, RESULTADO will be added in subsequent tasks.
+
+        periods_out = [
+            {'label': p.periodlabel, 'startdate': p.startdate, 'enddate': p.enddate}
+            for p in self.periods
+        ]
+        return _PNTReport(
+            projectid=self.project.estimationprojectid,
+            granularity=granularity,
+            periods=periods_out,
+            rows=rows,
+            stats={
+                'cobros_fuera_horizonte': cobros_fuera,
+            },
+            generated_at=timezone.now(),
+        )
+
+    # --- internals ---
+
+    def _compute_cobro_facturacion(self, produccion):
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for i in range(self.N):
+            if produccion[i] == ZERO:
+                continue
+            for rule in self.billing_rules:
+                target = i + rule.lagperiods
+                amount = produccion[i] * rule.percent
+                if 0 <= target < self.N:
+                    out[target] += amount
+                else:
+                    fuera += amount
+        return out, fuera
+
+    def _single_period_vector(self, amount, period_1indexed):
+        out = [ZERO] * self.N
+        if not amount:
+            return out
+        p = (period_1indexed or 1) - 1
+        if 0 <= p < self.N:
+            out[p] = Decimal(amount)
+        return out
+
+    def _compute_devolucion(self, imss, otras):
+        out = [ZERO] * self.N
+        if self.settings.retentionreturnperiod is None:
+            return out
+        p = self.settings.retentionreturnperiod - 1
+        if 0 <= p < self.N:
+            out[p] = -sum(imss) - sum(otras)
+        return out
+
+    @staticmethod
+    def _cumsum(values):
+        out = []
+        acc = ZERO
+        for v in values:
+            acc += v
+            out.append(acc)
+        return out
