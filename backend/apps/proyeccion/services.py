@@ -3590,7 +3590,10 @@ class EstimationPNTCalculator:
     def _load_billing_rules(self):
         persisted = EstimationBillingRuleService.list(self.project.estimationprojectid)
         if persisted:
-            return persisted
+            return [
+                _InlineBillingRule(sequence=r.sequence, percent=r.percent, lagperiods=r.lagperiods)
+                for r in persisted
+            ]
         # Default implícito: 100%/lag 0
         return [_InlineBillingRule(sequence=1, percent=Decimal('1'), lagperiods=0)]
 
