@@ -1003,3 +1003,80 @@ class PresenceResponse(Schema):
 
 class HeartbeatRequest(Schema):
     mode: Literal['viewing', 'editing']
+
+
+# =============================================================================
+# PNT Cashflow Schemas (Task 15)
+# =============================================================================
+
+class FinancialSettingsDto(Schema):
+    settingsid: UUID
+    projectid: UUID
+    advanceamountnotax: Decimal
+    advanceentryperiod: int
+    advanceamortizationrate: Decimal
+    imssretentionrate: Decimal
+    otherretentionrate: Decimal
+    retentionreturnperiod: Optional[int] = None
+    directpaymentlag: int
+    indirectpaymentlag: int
+    financecostrate: Decimal
+    createdon: datetime
+    modifiedon: datetime
+
+
+class UpdateFinancialSettingsDto(Schema):
+    advanceamountnotax: Optional[Decimal] = None
+    advanceentryperiod: Optional[int] = None
+    advanceamortizationrate: Optional[Decimal] = None
+    imssretentionrate: Optional[Decimal] = None
+    otherretentionrate: Optional[Decimal] = None
+    retentionreturnperiod: Optional[int] = None
+    directpaymentlag: Optional[int] = None
+    indirectpaymentlag: Optional[int] = None
+    financecostrate: Optional[Decimal] = None
+
+
+class BillingRuleDto(Schema):
+    sequence: int
+    percent: Decimal
+    lagperiods: int
+
+
+class ReplaceBillingRulesDto(Schema):
+    rules: list[BillingRuleDto]
+
+
+class PNTPeriodDto(Schema):
+    label: str
+    startdate: date
+    enddate: date
+
+
+class PNTRowDto(Schema):
+    code: str
+    label: str
+    section: str
+    values: list[Decimal]
+    emphasis: bool
+
+
+class PNTStatsDto(Schema):
+    pnt_min: Decimal
+    pnt_max: Decimal
+    pnt_avg: Decimal
+    total_costo_financiero: Decimal
+    cobros_fuera_horizonte: Decimal
+    pagos_fuera_horizonte: Decimal
+    chosen_alternative_id: Optional[UUID] = None
+    transversalpercent_aplicado: Decimal
+    profitpercent_aplicado: Decimal
+
+
+class PNTReportDto(Schema):
+    projectid: UUID
+    granularity: Literal['period', 'month']
+    periods: list[PNTPeriodDto]
+    rows: list[PNTRowDto]
+    stats: PNTStatsDto
+    generated_at: datetime
