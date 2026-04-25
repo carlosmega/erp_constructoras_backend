@@ -81,8 +81,15 @@ from apps.proyeccion.services import (
     EquipmentYieldService,
     ConceptPriceCatalogService,
     FamilyTemplateService,
+    EstimationFinancialSettingsService,
 )
-from apps.proyeccion.models import IndirectCostTemplate
+from apps.proyeccion.models import IndirectCostTemplate, EstimationProject
+from apps.proyeccion.schemas import (
+    FinancialSettingsDto,
+    UpdateFinancialSettingsDto,
+)
+from core.permissions import Permission, require_permission
+from core.exceptions import NotFound
 
 
 # =============================================================================
@@ -1272,3 +1279,61 @@ def presence_heartbeat(request: HttpRequest, project_id: UUID, payload: Heartbea
     project = EstimationProjectService.get_project(project_id, request.user)
     PresenceService.heartbeat(project, request.user, mode=payload.mode)
     return 200, {'ok': True}
+
+
+# =============================================================================
+# 15. Estimation PNT (Cashflow) Router — financial settings, billing rules, PNT
+# =============================================================================
+
+pnt_router = Router(tags=["Estimation PNT (Cashflow)"])
+
+
+def _serialize_settings(s) -> dict:
+    return {
+        'settingsid': s.settingsid,
+        'projectid': s.projectid_id,
+        'advanceamountnotax': s.advanceamountnotax,
+        'advanceentryperiod': s.advanceentryperiod,
+        'advanceamortizationrate': s.advanceamortizationrate,
+        'imssretentionrate': s.imssretentionrate,
+        'otherretentionrate': s.otherretentionrate,
+        'retentionreturnperiod': s.retentionreturnperiod,
+        'directpaymentlag': s.directpaymentlag,
+        'indirectpaymentlag': s.indirectpaymentlag,
+        'financecostrate': s.financecostrate,
+        'createdon': s.createdon,
+        'modifiedon': s.modifiedon,
+    }
+
+
+@pnt_router.get(
+    "/projects/{project_id}/financial-settings/",
+    response=FinancialSettingsDto,
+)
+@require_permission(Permission.ESTIMATION_PNT_READ)
+def get_financial_settings(request: HttpRequest, project_id: UUID):
+    """Get (or lazily create with defaults) the financial settings for a project."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    settings = EstimationFinancialSettingsService.get_or_create(project_id)
+    return _serialize_settings(settings)
+
+
+@pnt_router.patch(
+    "/projects/{project_id}/financial-settings/",
+    response=FinancialSettingsDto,
+)
+@require_permission(Permission.ESTIMATION_PNT_UPDATE_SETTINGS)
+def patch_financial_settings(
+    request: HttpRequest, project_id: UUID, payload: UpdateFinancialSettingsDto
+):
+    """Update whitelisted financial settings fields for a project."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    dto = payload.dict(exclude_unset=True)
+    updated = EstimationFinancialSettingsService.update(project_id, dto, user=request.user)
+    return _serialize_settings(updated)

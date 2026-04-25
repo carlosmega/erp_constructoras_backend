@@ -163,6 +163,7 @@ from apps.proyeccion.routers import (
     concept_price_catalog_router,
     family_templates_router,
     distribution_router,
+    pnt_router,
 )
 from apps.corporate.routers import budgets_router as corporate_budgets_router, expenses_router as corporate_expenses_router
 from apps.corporate.allocation_routers import allocations_router as corporate_allocations_router, portfolio_router as corporate_portfolio_router, simulations_router as corporate_simulations_router
@@ -235,6 +236,7 @@ api.add_router("/proyeccion", indirect_cost_templates_router)
 api.add_router("/proyeccion", concept_price_catalog_router)
 api.add_router("/proyeccion", family_templates_router)
 api.add_router("/proyeccion", distribution_router)
+api.add_router("/proyeccion", pnt_router)
 
 # Corporate module routers
 api.add_router("/corporate", corporate_budgets_router)
