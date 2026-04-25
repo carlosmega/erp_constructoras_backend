@@ -3524,3 +3524,92 @@ class EstimationBillingRuleService:
                 instance.save(update_fields=['createdby', 'modifiedby'])
             created.append(instance)
         return sorted(created, key=lambda x: x.sequence)
+
+
+# =============================================================================
+# Estimation PNT (Proyección de Necesidad de Tesorería) Calculator
+# =============================================================================
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+from django.utils import timezone
+
+ZERO = Decimal('0')
+
+
+@dataclass
+class _PNTRow:
+    code: str
+    label: str
+    section: str  # 'RESULTADO' | 'COBROS' | 'PAGOS' | 'CAJA'
+    values: list
+    emphasis: bool = False
+
+
+@dataclass
+class _PNTReport:
+    projectid: object
+    granularity: str
+    periods: list
+    rows: list
+    stats: dict
+    generated_at: datetime
+
+
+@dataclass
+class _InlineBillingRule:
+    sequence: int
+    percent: Decimal
+    lagperiods: int
+
+
+class EstimationPNTCalculator:
+    """Derive PNT from CostDistribution rollups + financial settings + billing rules."""
+
+    _OVERRIDE_ALLOWLIST = frozenset({
+        'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
+        'advanceamountnotax', 'advanceentryperiod', 'advanceamortizationrate',
+        'directpaymentlag', 'indirectpaymentlag', 'financecostrate',
+    })
+
+    def __init__(self, project_id):
+        self.project = EstimationProject.objects.get(pk=project_id)
+        self.periods = list(
+            ProjectionPeriod.objects.filter(projectid=project_id).order_by('periodnumber')
+        )
+        self.N = len(self.periods)
+        if self.N == 0:
+            raise ValueError(
+                'No hay periodos. Inicializa el Plan de Obra (Paso 9) antes de consultar el PNT.'
+            )
+        self.settings = EstimationFinancialSettingsService.get_or_create(project_id)
+        self.billing_rules = self._load_billing_rules()
+        self.rollups = CostDistributionService.compute_rollups(self.project)
+
+    def _load_billing_rules(self):
+        persisted = EstimationBillingRuleService.list(self.project.estimationprojectid)
+        if persisted:
+            return persisted
+        # Default implícito: 100%/lag 0
+        return [_InlineBillingRule(sequence=1, percent=Decimal('1'), lagperiods=0)]
+
+    def _apply_overrides(self, overrides):
+        """Mutate self.settings / self.billing_rules in-memory only."""
+        for key, value in (overrides or {}).items():
+            if key in self._OVERRIDE_ALLOWLIST:
+                if isinstance(value, (int, float, str)):
+                    value = Decimal(str(value)) if key not in {
+                        'retentionreturnperiod', 'advanceentryperiod',
+                        'directpaymentlag', 'indirectpaymentlag',
+                    } else int(value)
+                setattr(self.settings, key, value)
+        if 'billing_rules' in (overrides or {}):
+            self.billing_rules = [
+                _InlineBillingRule(
+                    sequence=int(r['sequence']),
+                    percent=Decimal(str(r['percent'])),
+                    lagperiods=int(r['lagperiods']),
+                )
+                for r in overrides['billing_rules']
+            ]

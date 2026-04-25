@@ -413,3 +413,39 @@ class EstimationBillingRuleFactory(factory.django.DjangoModelFactory):
     sequence = factory.Sequence(lambda n: (n % 10) + 1)
     percent = Decimal('1.0000')
     lagperiods = 0
+
+
+def build_pnt_ready_project(*, periods=4, periodtype=0):
+    """Helper that wires an EstimationProject + N periods + 1 chosen alternative.
+
+    Returns: (project, list[ProjectionPeriod])
+    """
+    from apps.proyeccion.models import (
+        ProjectionPeriod, OfferAlternative, BudgetConcept,
+        UnitCostBreakdown, IndirectCostDetail, CostDistribution, WorkPlanEntry,
+    )
+    from datetime import date, timedelta
+    project = EstimationProjectFactory(periodtype=periodtype, periodcount=periods)
+    period_list = []
+    base = date(2026, 1, 1)
+    for i in range(periods):
+        offset = i * (7 if periodtype == 0 else 14)
+        p = ProjectionPeriod.objects.create(
+            projectid=project,
+            periodnumber=i + 1,
+            periodlabel=f'P{i + 1:02d}',
+            startdate=base + timedelta(days=offset),
+            enddate=base + timedelta(days=offset + (6 if periodtype == 0 else 13)),
+            periodtype=periodtype,
+        )
+        period_list.append(p)
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name='Base',
+        transversalpercent=Decimal('0.05'), profitpercent=Decimal('0.10'),
+        coefficient=Decimal('1.15'),
+        directcosttotal=Decimal('100000'), indirectcosttotal=Decimal('20000'),
+        constructioncost=Decimal('120000'), salepricenet=Decimal('138000'),
+        taxamount=Decimal('22080'), salepricetotal=Decimal('160080'),
+        ischosen=True,
+    )
+    return project, period_list
