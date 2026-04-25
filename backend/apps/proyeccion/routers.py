@@ -45,7 +45,6 @@ from apps.proyeccion.schemas import (
     WorkPlanMatrixSchema,
     WorkPlanSummarySchema,
     TemporalDistributionSchema,
-    CashFlowEntrySchema,
     ProjectBudgetSummarySchema,
     SupplyCatalogItemSchema,
     CreateSupplyCatalogItemDto,
@@ -80,7 +79,6 @@ from apps.proyeccion.services import (
     SupplyExplosionService,
     WorkPlanService,
     TemporalDistributionService,
-    CashFlowService,
     SupplyCatalogService,
     EquipmentYieldService,
     ConceptPriceCatalogService,
@@ -768,29 +766,6 @@ def get_temporal_distribution(request: HttpRequest, project_id: UUID):
     """Get temporal distribution of invoiced, cost, and result per period."""
     distribution = TemporalDistributionService.calculate(project_id, request.user)
     return distribution
-
-
-@analysis_router.get(
-    "/projects/{project_id}/cashflow/",
-    response=List[CashFlowEntrySchema],
-)
-# TODO: Add @require_permission decorator during integration
-def get_cashflow(
-    request: HttpRequest,
-    project_id: UUID,
-    advancepercent: Decimal = Decimal('0'),
-    paymentdelay: int = 0,
-    paymentfrequency: int = 1,
-):
-    """Get cashflow projection based on work plan and payment parameters."""
-    entries = CashFlowService.calculate(
-        project_id,
-        request.user,
-        advance_percent=advancepercent,
-        payment_delay=paymentdelay,
-        payment_frequency=paymentfrequency,
-    )
-    return entries
 
 
 @analysis_router.get(

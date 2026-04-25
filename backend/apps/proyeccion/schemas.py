@@ -574,17 +574,6 @@ class TemporalDistributionSchema(Schema):
     cumulativeresult: Decimal
 
 
-class CashFlowEntrySchema(Schema):
-    """Cash flow entry per period."""
-    periodnumber: int
-    periodlabel: str
-    income: Decimal
-    expense: Decimal
-    netflow: Decimal
-    cumulativeposition: Decimal
-    isriskzone: bool
-
-
 class ProjectBudgetSummarySchema(Schema):
     """High-level budget summary for a project."""
     projectid: UUID
@@ -613,13 +602,6 @@ class ApplyTemplateDto(Schema):
     """DTO for applying an indirect cost template to a project."""
     projectid: UUID
     projectsize: int  # 0=Small, 1=Medium, 2=Large
-
-
-class CashFlowParamsSchema(Schema):
-    """Parameters for cash flow calculation."""
-    advancepercent: Decimal = Decimal('0')
-    paymentdelay: int = 0
-    paymentfrequency: int = 1
 
 
 # =============================================================================

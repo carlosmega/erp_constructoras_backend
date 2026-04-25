@@ -703,7 +703,7 @@ class TestWorkPlan:
 
 
 # =============================================================================
-# Analysis (Temporal Distribution, Cash Flow, Budget Summary)
+# Analysis (Temporal Distribution, Budget Summary)
 # =============================================================================
 
 @pytest.mark.contract
@@ -712,20 +712,6 @@ class TestAnalysis:
         project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
         response = admin_auth_client.get(
             f'/api/proyeccion/projects/{project.estimationprojectid}/temporal-distribution/'
-        )
-        assert response.status_code == 200
-
-    def test_get_cashflow(self, admin_auth_client, system_admin):
-        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
-        response = admin_auth_client.get(
-            f'/api/proyeccion/projects/{project.estimationprojectid}/cashflow/'
-        )
-        assert response.status_code == 200
-
-    def test_get_cashflow_with_params(self, admin_auth_client, system_admin):
-        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
-        response = admin_auth_client.get(
-            f'/api/proyeccion/projects/{project.estimationprojectid}/cashflow/?advancepercent=10&paymentdelay=30&paymentfrequency=2'
         )
         assert response.status_code == 200
 
