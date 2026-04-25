@@ -3635,22 +3635,54 @@ class EstimationPNTCalculator:
         anticipo_concedido = self._single_period_vector(
             self.settings.advanceamountnotax, self.settings.advanceentryperiod,
         )
-        anticipo_amortizado = [
-            -self.settings.advanceamortizationrate * cf for cf in cobro_facturacion
-        ]
+        anticipo_amortizado = [-self.settings.advanceamortizationrate * cf for cf in cobro_facturacion]
         retencion_imss = [-self.settings.imssretentionrate * cf for cf in cobro_facturacion]
         otras_retencion = [-self.settings.otherretentionrate * cf for cf in cobro_facturacion]
         devolucion = self._compute_devolucion(retencion_imss, otras_retencion)
         saldo_anticipo = self._cumsum(anticipo_amortizado)
-
         cobro_total = [
             anticipo_concedido[i] + cobro_facturacion[i] + anticipo_amortizado[i]
             + retencion_imss[i] + otras_retencion[i] + devolucion[i]
             for i in range(self.N)
         ]
-        # NOTE: saldo_anticipo intentionally excluded (avoids double-count of amortización).
+        # NOTE: SALDO_ANTICIPO is a cumulative running balance derived from
+        # ANTICIPO_AMORT and is reported for visibility only. Including it in
+        # COBRO_TOTAL would double-count amortization (this was the bug in the
+        # discarded operations-side implementation). Locked in by
+        # test_cobro_total_excludes_saldo_anticipo.
+
+        # ---- PAGOS ----
+        pagos_directo, pagos_dir_fuera = self._apply_lag(costo_directo_neg, self.settings.directpaymentlag)
+        pagos_indirecto, pagos_ind_fuera = self._apply_lag(costo_indirecto_neg, self.settings.indirectpaymentlag)
+        pagos_totales = [
+            pagos_directo[i] + pagos_indirecto[i] + retiro_transv_neg[i] + retiro_util_neg[i]
+            for i in range(self.N)
+        ]
+
+        # ---- CAJA ----
+        caja_mes = [cobro_total[i] + pagos_totales[i] for i in range(self.N)]
+        caja_acumulada = self._cumsum(caja_mes)
+        costo_financiero = [
+            ca * self.settings.financecostrate if ca < 0 else ZERO
+            for ca in caja_acumulada
+        ]
+
+        # ---- RESULTADO ----
+        resultado = [
+            produccion[i] + costo_directo_neg[i] + costo_indirecto_neg[i]
+            + retiro_transv_neg[i] + retiro_util_neg[i]
+            for i in range(self.N)
+        ]
 
         rows = [
+            # RESULTADO section
+            _PNTRow('RESULTADO', 'Resultado', 'RESULTADO', resultado, emphasis=True),
+            _PNTRow('PRODUCCION', 'Producción', 'RESULTADO', produccion),
+            _PNTRow('COSTO_DIRECTO', 'Costo Directo', 'RESULTADO', costo_directo_neg),
+            _PNTRow('COSTO_INDIRECTO', 'Costo Indirecto', 'RESULTADO', costo_indirecto_neg),
+            _PNTRow('RETIRO_TRANSV_RES', 'Transversales', 'RESULTADO', retiro_transv_neg),
+            _PNTRow('RETIRO_UTIL_RES', 'Utilidades', 'RESULTADO', retiro_util_neg),
+            # COBROS section
             _PNTRow('COBRO_TOTAL', 'Cobro Total sin IVA', 'COBROS', cobro_total, emphasis=True),
             _PNTRow('COBRO_FACTURACION', 'Cobro Facturación', 'COBROS', cobro_facturacion),
             _PNTRow('ANTICIPO_CONCEDIDO', 'Anticipo Concedido', 'COBROS', anticipo_concedido),
@@ -3659,24 +3691,65 @@ class EstimationPNTCalculator:
             _PNTRow('OTRAS_RET', 'Otras Retenciones', 'COBROS', otras_retencion),
             _PNTRow('DEVOLUCION', 'Devolución Retenciones', 'COBROS', devolucion),
             _PNTRow('SALDO_ANTICIPO', 'Saldo Anticipo', 'COBROS', saldo_anticipo),
+            # PAGOS section
+            _PNTRow('PAGOS_DIRECTO', 'Pagos Costo Directo', 'PAGOS', pagos_directo),
+            _PNTRow('PAGOS_INDIRECTO', 'Pagos Costos Indirectos', 'PAGOS', pagos_indirecto),
+            _PNTRow('RETIRO_TRANSV', 'Retiro Transversales', 'PAGOS', retiro_transv_neg),
+            _PNTRow('RETIRO_UTILIDADES', 'Retiro Utilidades', 'PAGOS', retiro_util_neg),
+            _PNTRow('PAGOS_TOTALES', 'Pagos Totales', 'PAGOS', pagos_totales, emphasis=True),
+            # CAJA section
+            _PNTRow('CAJA_MES', 'Caja Mes', 'CAJA', caja_mes, emphasis=True),
+            _PNTRow('CAJA_ACUMULADA', 'Caja Acumulada (PNT)', 'CAJA', caja_acumulada, emphasis=True),
+            _PNTRow('COSTO_FINANCIERO', 'Costo Financiero', 'CAJA', costo_financiero),
         ]
 
-        # PAGOS, CAJA, RESULTADO will be added in subsequent tasks.
+        chosen = self.rollups.get('chosen_alternative_id')
+        stats = {
+            'pnt_min': min(caja_acumulada) if caja_acumulada else ZERO,
+            'pnt_max': max(caja_acumulada) if caja_acumulada else ZERO,
+            'pnt_avg': (sum(caja_acumulada, ZERO) / Decimal(self.N)) if self.N else ZERO,
+            'total_costo_financiero': sum(costo_financiero, ZERO),
+            'cobros_fuera_horizonte': cobros_fuera,
+            'pagos_fuera_horizonte': pagos_dir_fuera + pagos_ind_fuera,
+            'chosen_alternative_id': chosen,
+            'transversalpercent_aplicado': self.rollups.get('transversalpercent', ZERO),
+            'profitpercent_aplicado': self.rollups.get('profitpercent', ZERO),
+        }
 
         periods_out = [
             {'label': p.periodlabel, 'startdate': p.startdate, 'enddate': p.enddate}
             for p in self.periods
         ]
+
+        if granularity == 'month':
+            periods_out, rows = self._aggregate_monthly(rows)
+
         return _PNTReport(
             projectid=self.project.estimationprojectid,
             granularity=granularity,
             periods=periods_out,
             rows=rows,
-            stats={
-                'cobros_fuera_horizonte': cobros_fuera,
-            },
+            stats=stats,
             generated_at=timezone.now(),
         )
+
+    def _apply_lag(self, vec, lag):
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for i in range(self.N):
+            target = i + (lag or 0)
+            if 0 <= target < self.N:
+                out[target] += vec[i]
+            else:
+                fuera += vec[i]
+        return out, fuera
+
+    def _aggregate_monthly(self, rows):
+        """Stub — implemented in Task 12. For now passthrough."""
+        return [
+            {'label': p.periodlabel, 'startdate': p.startdate, 'enddate': p.enddate}
+            for p in self.periods
+        ], rows
 
     # --- internals ---
 
