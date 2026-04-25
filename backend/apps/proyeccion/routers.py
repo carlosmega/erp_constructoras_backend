@@ -1,5 +1,8 @@
 """API routers for Proyección (Budget Estimation) module."""
 
+import base64
+import json
+
 from ninja import Router, File, UploadedFile
 from ninja.errors import HttpError
 from typing import List, Optional
@@ -84,6 +87,7 @@ from apps.proyeccion.services import (
     FamilyTemplateService,
     EstimationFinancialSettingsService,
     EstimationBillingRuleService,
+    EstimationPNTCalculator,
 )
 from apps.proyeccion.models import IndirectCostTemplate, EstimationProject
 from apps.proyeccion.schemas import (
@@ -91,6 +95,7 @@ from apps.proyeccion.schemas import (
     UpdateFinancialSettingsDto,
     BillingRuleDto,
     ReplaceBillingRulesDto,
+    PNTReportDto,
 )
 from core.permissions import Permission, require_permission
 from core.exceptions import NotFound
@@ -1388,3 +1393,54 @@ def put_billing_rules(
     except ValueError as e:
         raise HttpError(400, str(e))
     return [_serialize_rule(r) for r in rules]
+
+
+def _serialize_pnt_report(report) -> dict:
+    return {
+        'projectid': report.projectid,
+        'granularity': report.granularity,
+        'periods': report.periods,
+        'rows': [
+            {
+                'code': r.code, 'label': r.label, 'section': r.section,
+                'values': r.values, 'emphasis': r.emphasis,
+            }
+            for r in report.rows
+        ],
+        'stats': report.stats,
+        'generated_at': report.generated_at,
+    }
+
+
+@pnt_router.get(
+    "/projects/{project_id}/pnt/",
+    response=PNTReportDto,
+)
+@require_permission(Permission.ESTIMATION_PNT_READ)
+def get_pnt(
+    request: HttpRequest,
+    project_id: UUID,
+    granularity: str = 'period',
+    overrides: str | None = None,
+):
+    """Compute the PNT report. 409 when no periods. Optional base64-JSON overrides."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    overrides_dict = None
+    if overrides:
+        try:
+            overrides_dict = json.loads(base64.b64decode(overrides).decode())
+        except Exception:
+            raise HttpError(400, 'overrides must be base64-encoded JSON')
+    try:
+        calc = EstimationPNTCalculator(project_id)
+    except ValueError as e:
+        # No periods → 409
+        raise HttpError(409, json.dumps({'detail': str(e), 'code': 'no_periods'}))
+    try:
+        report = calc.compute(overrides=overrides_dict, granularity=granularity)
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return _serialize_pnt_report(report)
