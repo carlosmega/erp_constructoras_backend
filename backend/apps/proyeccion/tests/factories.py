@@ -402,3 +402,14 @@ class EstimationFinancialSettingsFactory(factory.django.DjangoModelFactory):
     directpaymentlag = 0
     indirectpaymentlag = 0
     financecostrate = Decimal('0.001000')
+
+
+class EstimationBillingRuleFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = 'proyeccion.EstimationBillingRule'
+
+    ruleid = factory.LazyFunction(uuid.uuid4)
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    sequence = factory.Sequence(lambda n: (n % 10) + 1)
+    percent = Decimal('1.0000')
+    lagperiods = 0

@@ -1682,3 +1682,53 @@ class EstimationFinancialSettings(AuditMixin):
 
     def __str__(self):
         return f"Financial settings for {self.projectid}"
+
+
+class EstimationBillingRule(AuditMixin):
+    """N billing tranches per estimation project (e.g. 50%/30%/20% at lags 0/1/2)."""
+
+    ruleid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='ruleid',
+    )
+    projectid = models.ForeignKey(
+        'EstimationProject',
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='billing_rules',
+    )
+    sequence = models.IntegerField(db_column='sequence')
+    percent = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        db_column='percent',
+    )
+    lagperiods = models.IntegerField(db_column='lagperiods')
+
+    class Meta:
+        db_table = 'estimationbillingrule'
+        verbose_name = 'Estimation Billing Rule'
+        verbose_name_plural = 'Estimation Billing Rules'
+        ordering = ['projectid', 'sequence']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['projectid', 'sequence'],
+                name='uniq_estimation_billing_seq',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sequence__gte=1) & models.Q(sequence__lte=10),
+                name='estimation_billing_seq_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(percent__gte=0) & models.Q(percent__lte=1),
+                name='estimation_billing_pct_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(lagperiods__gte=0) & models.Q(lagperiods__lte=120),
+                name='estimation_billing_lag_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.projectid} #{self.sequence}: {self.percent} @ +{self.lagperiods}"
