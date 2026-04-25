@@ -2,8 +2,7 @@ import pytest
 from decimal import Decimal
 from datetime import date
 from apps.proyeccion.services import EstimationPNTCalculator
-from apps.proyeccion.tests.factories import build_pnt_ready_project
-from apps.proyeccion.tests.test_estimation_pnt_calculator import _make_concept_for_project
+from apps.proyeccion.tests.factories import build_pnt_ready_project, make_concept_for_project
 
 
 @pytest.mark.django_db
@@ -38,7 +37,7 @@ class TestEstimationPNTCalculatorMonthly:
                 startdate=date(2026, 1, 1 + (n - 1) * 14),
                 enddate=date(2026, 1, 14 + (n - 1) * 14),
             )
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
             entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),

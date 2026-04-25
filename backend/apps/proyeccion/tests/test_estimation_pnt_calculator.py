@@ -5,24 +5,8 @@ from apps.proyeccion.services import (
 )
 from apps.proyeccion.tests.factories import (
     EstimationProjectFactory, EstimationBillingRuleFactory, build_pnt_ready_project,
-    ConceptFamilyFactory, ConceptSubfamilyFactory,
+    ConceptFamilyFactory, ConceptSubfamilyFactory, make_concept_for_project,
 )
-
-
-def _make_concept_for_project(project, code='C-001', description='Test', unit='m2'):
-    """Helper: create a BudgetConcept attached to project with required relations."""
-    from apps.proyeccion.models import BudgetConcept
-    family = ConceptFamilyFactory(projectid=project)
-    subfamily = ConceptSubfamilyFactory(familyid=family, projectid=project)
-    return BudgetConcept.objects.create(
-        projectid=project,
-        subfamilyid=subfamily,
-        code=code,
-        sequencenumber=1,
-        description=description,
-        unit=unit,
-        quantity=Decimal('1'),
-    )
 
 
 @pytest.mark.django_db
@@ -96,7 +80,7 @@ class TestEstimationPNTCalculatorCobros:
     def test_cobro_facturacion_default_rule_lag_zero(self):
         project, periods = build_pnt_ready_project(periods=4)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         for i, amt in enumerate([100, 200, 300, 400]):
             WorkPlanEntry.objects.create(
                 conceptid=concept, projectid=project,
@@ -115,7 +99,7 @@ class TestEstimationPNTCalculatorCobros:
         EstimationBillingRuleFactory(projectid=project, sequence=1, percent=Decimal('0.5'), lagperiods=0)
         EstimationBillingRuleFactory(projectid=project, sequence=2, percent=Decimal('0.5'), lagperiods=1)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
             entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
@@ -143,7 +127,7 @@ class TestEstimationPNTCalculatorCobros:
     def test_retencion_imss_is_negative_fraction_of_facturacion(self):
         project, _ = build_pnt_ready_project(periods=2)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
             entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
@@ -156,7 +140,7 @@ class TestEstimationPNTCalculatorCobros:
     def test_devolucion_returns_at_specified_period(self):
         project, _ = build_pnt_ready_project(periods=4)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
             entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
@@ -175,7 +159,7 @@ class TestEstimationPNTCalculatorCobros:
     def test_saldo_anticipo_is_cumulative_amortization(self):
         project, _ = build_pnt_ready_project(periods=3)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         for i in range(3):
             WorkPlanEntry.objects.create(
                 conceptid=concept, projectid=project, periodnumber=i + 1, periodlabel=f'P{i+1:02d}',
@@ -195,7 +179,7 @@ class TestEstimationPNTCalculatorCobros:
         """SALDO_ANTICIPO is reported but NOT summed into COBRO_TOTAL (avoid double-count)."""
         project, _ = build_pnt_ready_project(periods=2)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
             entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
@@ -220,7 +204,7 @@ class TestEstimationPNTCalculatorPagosYCaja:
         from apps.proyeccion.models import (
             UnitCostBreakdown, IndirectCostDetail, CostDistribution,
         )
-        concept = _make_concept_for_project(project)
+        concept = make_concept_for_project(project)
         breakdown = UnitCostBreakdown.objects.create(
             conceptid=concept, categorycode=1, linenumber=1, description='Mat',
             unit='kg', quantity=Decimal('1'), unitprice=Decimal('1000'),

@@ -3758,7 +3758,8 @@ class EstimationPNTCalculator:
         # Defensive: catches typos in row codes when taxonomy is extended
         known = self._FLOW_CODES | self._CUMULATIVE_CODES
         unknown = {r.code for r in rows} - known
-        assert not unknown, f'Unknown row codes in _aggregate_monthly: {sorted(unknown)}'
+        if unknown:
+            raise AssertionError(f'Unknown row codes in _aggregate_monthly: {sorted(unknown)}')
 
         # Group periods by (year, month)
         groups = []

@@ -449,3 +449,18 @@ def build_pnt_ready_project(*, periods=4, periodtype=0):
         ischosen=True,
     )
     return project, period_list
+
+
+def make_concept_for_project(project, code='C-001', description='Test', unit='m2'):
+    """Helper: create a BudgetConcept attached to project with required relations."""
+    family = ConceptFamilyFactory(projectid=project)
+    subfamily = ConceptSubfamilyFactory(familyid=family, projectid=project)
+    return BudgetConcept.objects.create(
+        projectid=project,
+        subfamilyid=subfamily,
+        code=code,
+        sequencenumber=1,
+        description=description,
+        unit=unit,
+        quantity=Decimal('1'),
+    )
