@@ -31,6 +31,7 @@ from apps.proyeccion.models import (
     FamilyTemplateSet,
     FamilyTemplateItem,
     EstimationFinancialSettings,
+    EstimationBillingRule,
 )
 from apps.proyeccion.schemas import (
     CreateConceptFamilyDto,
@@ -3469,3 +3470,57 @@ class EstimationFinancialSettingsService:
             settings.modifiedby = user
         settings.save()
         return settings
+
+
+# =============================================================================
+# Estimation Billing Rule Service
+# =============================================================================
+
+
+class EstimationBillingRuleService:
+    """Manage N billing tranches per estimation project."""
+
+    _SUM_TOLERANCE = Decimal('0.0001')
+    _MAX_RULES = 10
+
+    @staticmethod
+    def list(project_id):
+        return list(
+            EstimationBillingRule.objects.filter(projectid=project_id).order_by('sequence')
+        )
+
+    @classmethod
+    @transaction.atomic
+    def replace(cls, project_id, rules, user=None):
+        """All-or-nothing replacement. Validates count, sum, sequences."""
+        if not rules:
+            raise ValueError('Debe proporcionar al menos 1 regla de facturación.')
+        if len(rules) > cls._MAX_RULES:
+            raise ValueError(f'Máximo {cls._MAX_RULES} reglas permitidas.')
+
+        sequences = [r['sequence'] for r in rules]
+        if len(set(sequences)) != len(sequences):
+            raise ValueError('Las secuencias deben ser únicas.')
+
+        total = sum((Decimal(str(r['percent'])) for r in rules), Decimal('0'))
+        if abs(total - Decimal('1')) > cls._SUM_TOLERANCE:
+            raise ValueError(
+                f'La suma de porcentajes debe ser 100% (±0.01%). Suma actual: {total * 100:.4f}%.'
+            )
+
+        project = EstimationProject.objects.get(pk=project_id)
+        EstimationBillingRule.objects.filter(projectid=project).delete()
+        created = []
+        for r in rules:
+            instance = EstimationBillingRule.objects.create(
+                projectid=project,
+                sequence=r['sequence'],
+                percent=Decimal(str(r['percent'])),
+                lagperiods=int(r['lagperiods']),
+            )
+            if user is not None:
+                instance.createdby = user
+                instance.modifiedby = user
+                instance.save(update_fields=['createdby', 'modifiedby'])
+            created.append(instance)
+        return sorted(created, key=lambda x: x.sequence)
