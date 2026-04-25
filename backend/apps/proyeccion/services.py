@@ -30,6 +30,7 @@ from apps.proyeccion.models import (
     CatalogSourceCode,
     FamilyTemplateSet,
     FamilyTemplateItem,
+    EstimationFinancialSettings,
 )
 from apps.proyeccion.schemas import (
     CreateConceptFamilyDto,
@@ -3433,3 +3434,38 @@ class PresenceService:
             .select_related('userid')
             .order_by('-last_seen')
         )
+
+
+# =============================================================================
+# Estimation Financial Settings Service
+# =============================================================================
+
+
+class EstimationFinancialSettingsService:
+    """Manage 1:1 financial settings for an EstimationProject."""
+
+    _WHITELIST = frozenset({
+        'advanceamountnotax', 'advanceentryperiod', 'advanceamortizationrate',
+        'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
+        'directpaymentlag', 'indirectpaymentlag',
+        'financecostrate',
+    })
+
+    @staticmethod
+    def get_or_create(project_id):
+        """Idempotent. Materializes defaults on first call."""
+        project = EstimationProject.objects.get(pk=project_id)
+        settings, _created = EstimationFinancialSettings.objects.get_or_create(projectid=project)
+        return settings
+
+    @classmethod
+    def update(cls, project_id, dto, user=None):
+        """Apply only whitelisted fields. Ignore unknown keys silently."""
+        settings = cls.get_or_create(project_id)
+        for key, value in (dto or {}).items():
+            if key in cls._WHITELIST:
+                setattr(settings, key, value)
+        if user is not None:
+            settings.modifiedby = user
+        settings.save()
+        return settings

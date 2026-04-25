@@ -30,3 +30,67 @@ class TestEstimationFinancialSettingsModel:
         project = EstimationProjectFactory(name='Test Obra X')
         settings = EstimationFinancialSettings.objects.create(projectid=project)
         assert 'Test Obra X' in str(settings) or str(project.estimationprojectid)[:8] in str(settings)
+
+
+from apps.proyeccion.services import EstimationFinancialSettingsService
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+class TestEstimationFinancialSettingsService:
+    def test_get_or_create_creates_with_defaults_first_time(self):
+        project = EstimationProjectFactory()
+        settings = EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)
+        assert settings.imssretentionrate == Decimal('0.0500')
+        assert EstimationFinancialSettings.objects.filter(projectid=project).count() == 1
+
+    def test_get_or_create_idempotent(self):
+        project = EstimationProjectFactory()
+        s1 = EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)
+        s2 = EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)
+        assert s1.settingsid == s2.settingsid
+        assert EstimationFinancialSettings.objects.filter(projectid=project).count() == 1
+
+    def test_update_applies_whitelisted_fields(self):
+        project = EstimationProjectFactory()
+        EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)
+        updated = EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            {
+                'imssretentionrate': Decimal('0.10'),
+                'advanceamountnotax': Decimal('150000'),
+                'directpaymentlag': 2,
+            },
+            user=None,
+        )
+        assert updated.imssretentionrate == Decimal('0.10')
+        assert updated.advanceamountnotax == Decimal('150000')
+        assert updated.directpaymentlag == 2
+
+    def test_update_ignores_non_whitelisted_keys(self):
+        project = EstimationProjectFactory()
+        EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)
+        updated = EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            {
+                'imssretentionrate': Decimal('0.07'),
+                'settingsid': 'malicious-uuid',
+                'projectid': 'other-project',
+                'unknown_field': 'whatever',
+            },
+            user=None,
+        )
+        assert updated.imssretentionrate == Decimal('0.07')
+        assert str(updated.settingsid) != 'malicious-uuid'
+        assert updated.projectid_id == project.estimationprojectid
+
+    def test_update_creates_settings_lazily_if_absent(self):
+        project = EstimationProjectFactory()
+        # No prior get_or_create — update must materialize defaults first
+        updated = EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            {'financecostrate': Decimal('0.002000')},
+            user=None,
+        )
+        assert updated.financecostrate == Decimal('0.002000')
+        assert updated.imssretentionrate == Decimal('0.0500')  # default
