@@ -120,6 +120,11 @@ class Permission(str, Enum):
     ESTIMATE_UPDATE = "estimate_update"
     ESTIMATE_DELETE = "estimate_delete"
 
+    # Estimation PNT (Cashflow) permissions
+    ESTIMATION_PNT_READ = "estimation_pnt.read"
+    ESTIMATION_PNT_UPDATE_SETTINGS = "estimation_pnt.update_settings"
+    ESTIMATION_PNT_UPDATE_BILLING_RULES = "estimation_pnt.update_billing_rules"
+
     # Invoice Inbox permissions
     INBOX_READ = "inbox_read"
     INBOX_CLASSIFY = "inbox_classify"
@@ -191,6 +196,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE, Permission.BUDGET_DELETE,
         Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_DELETE, Permission.EXPENSE_CLASSIFY, Permission.EXPENSE_VERIFY,
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
+        # Estimation PNT (Cashflow) - full access
+        Permission.ESTIMATION_PNT_READ, Permission.ESTIMATION_PNT_UPDATE_SETTINGS, Permission.ESTIMATION_PNT_UPDATE_BILLING_RULES,
         # Invoice Inbox - full access
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
         # Corporate module - full access
@@ -225,6 +232,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE, Permission.BUDGET_DELETE,
         Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_DELETE, Permission.EXPENSE_CLASSIFY, Permission.EXPENSE_VERIFY,
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE, Permission.ESTIMATE_DELETE,
+        # Estimation PNT (Cashflow) - full access
+        Permission.ESTIMATION_PNT_READ, Permission.ESTIMATION_PNT_UPDATE_SETTINGS, Permission.ESTIMATION_PNT_UPDATE_BILLING_RULES,
         # Invoice Inbox - full access
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
         # Corporate module - full access
@@ -258,6 +267,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_CREATE, Permission.BUDGET_READ, Permission.BUDGET_UPDATE,
         Permission.EXPENSE_CREATE, Permission.EXPENSE_READ, Permission.EXPENSE_UPDATE, Permission.EXPENSE_CLASSIFY,
         Permission.ESTIMATE_CREATE, Permission.ESTIMATE_READ, Permission.ESTIMATE_UPDATE,
+        # Estimation PNT (Cashflow) - full access (read + update settings + update billing rules)
+        Permission.ESTIMATION_PNT_READ, Permission.ESTIMATION_PNT_UPDATE_SETTINGS, Permission.ESTIMATION_PNT_UPDATE_BILLING_RULES,
         # Invoice Inbox - classify and sync
         Permission.INBOX_READ, Permission.INBOX_CLASSIFY, Permission.INBOX_LINK, Permission.INBOX_SYNC,
         # Corporate module - no delete, no allocate
@@ -301,6 +312,8 @@ ROLE_PERMISSIONS = {
         Permission.BUDGET_READ,
         Permission.EXPENSE_READ,
         Permission.ESTIMATE_READ,
+        # Estimation PNT (Cashflow) - read only
+        Permission.ESTIMATION_PNT_READ,
         # Invoice Inbox - read only
         Permission.INBOX_READ,
         # Corporate module - read only
