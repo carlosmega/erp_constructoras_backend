@@ -1,6 +1,7 @@
 """API routers for Proyección (Budget Estimation) module."""
 
 from ninja import Router, File, UploadedFile
+from ninja.errors import HttpError
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -82,11 +83,14 @@ from apps.proyeccion.services import (
     ConceptPriceCatalogService,
     FamilyTemplateService,
     EstimationFinancialSettingsService,
+    EstimationBillingRuleService,
 )
 from apps.proyeccion.models import IndirectCostTemplate, EstimationProject
 from apps.proyeccion.schemas import (
     FinancialSettingsDto,
     UpdateFinancialSettingsDto,
+    BillingRuleDto,
+    ReplaceBillingRulesDto,
 )
 from core.permissions import Permission, require_permission
 from core.exceptions import NotFound
@@ -1337,3 +1341,50 @@ def patch_financial_settings(
     dto = payload.dict(exclude_unset=True)
     updated = EstimationFinancialSettingsService.update(project_id, dto, user=request.user)
     return _serialize_settings(updated)
+
+
+def _serialize_rule(r) -> dict:
+    return {
+        'sequence': r.sequence,
+        'percent': r.percent,
+        'lagperiods': r.lagperiods,
+    }
+
+
+@pnt_router.get(
+    "/projects/{project_id}/billing-rules/",
+    response=list[BillingRuleDto],
+)
+@require_permission(Permission.ESTIMATION_PNT_READ)
+def get_billing_rules(request: HttpRequest, project_id: UUID):
+    """List billing rules for a project (ordered by sequence)."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    rules = EstimationBillingRuleService.list(project_id)
+    return [_serialize_rule(r) for r in rules]
+
+
+@pnt_router.put(
+    "/projects/{project_id}/billing-rules/",
+    response=list[BillingRuleDto],
+)
+@require_permission(Permission.ESTIMATION_PNT_UPDATE_BILLING_RULES)
+def put_billing_rules(
+    request: HttpRequest, project_id: UUID, payload: ReplaceBillingRulesDto
+):
+    """Replace the full set of billing rules for a project (atomic, validates Σ=100%)."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    try:
+        rules = EstimationBillingRuleService.replace(
+            project_id,
+            [r.dict() for r in payload.rules],
+            user=request.user,
+        )
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return [_serialize_rule(r) for r in rules]
