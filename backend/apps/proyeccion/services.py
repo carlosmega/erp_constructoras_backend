@@ -3573,6 +3573,16 @@ class EstimationPNTCalculator:
         'directpaymentlag', 'indirectpaymentlag', 'financecostrate',
     })
 
+    _FLOW_CODES = frozenset({
+        'RESULTADO', 'PRODUCCION', 'COSTO_DIRECTO', 'COSTO_INDIRECTO',
+        'RETIRO_TRANSV_RES', 'RETIRO_UTIL_RES',
+        'COBRO_TOTAL', 'COBRO_FACTURACION', 'ANTICIPO_CONCEDIDO', 'ANTICIPO_AMORT',
+        'RET_IMSS', 'OTRAS_RET', 'DEVOLUCION',
+        'PAGOS_DIRECTO', 'PAGOS_INDIRECTO', 'RETIRO_TRANSV', 'RETIRO_UTILIDADES',
+        'PAGOS_TOTALES', 'CAJA_MES', 'COSTO_FINANCIERO',
+    })
+    _CUMULATIVE_CODES = frozenset({'CAJA_ACUMULADA', 'SALDO_ANTICIPO'})
+
     def __init__(self, project_id):
         self.project = EstimationProject.objects.get(pk=project_id)
         self.periods = list(
@@ -3745,11 +3755,40 @@ class EstimationPNTCalculator:
         return out, fuera
 
     def _aggregate_monthly(self, rows):
-        """Stub — implemented in Task 12. For now passthrough."""
-        return [
-            {'label': p.periodlabel, 'startdate': p.startdate, 'enddate': p.enddate}
-            for p in self.periods
-        ], rows
+        # Defensive: catches typos in row codes when taxonomy is extended
+        known = self._FLOW_CODES | self._CUMULATIVE_CODES
+        unknown = {r.code for r in rows} - known
+        assert not unknown, f'Unknown row codes in _aggregate_monthly: {sorted(unknown)}'
+
+        # Group periods by (year, month)
+        groups = []
+        current_key = None
+        for i, p in enumerate(self.periods):
+            key = (p.startdate.year, p.startdate.month)
+            if key != current_key:
+                groups.append([i])
+                current_key = key
+            else:
+                groups[-1].append(i)
+
+        new_periods = []
+        for g in groups:
+            first = self.periods[g[0]]
+            last = self.periods[g[-1]]
+            new_periods.append({
+                'label': f'{first.startdate.year}-{first.startdate.month:02d}',
+                'startdate': first.startdate,
+                'enddate': last.enddate,
+            })
+
+        new_rows = []
+        for r in rows:
+            if r.code in self._CUMULATIVE_CODES:
+                agg = [r.values[g[-1]] for g in groups]
+            else:
+                agg = [sum((r.values[i] for i in g), ZERO) for g in groups]
+            new_rows.append(_PNTRow(r.code, r.label, r.section, agg, emphasis=r.emphasis))
+        return new_periods, new_rows
 
     # --- internals ---
 
