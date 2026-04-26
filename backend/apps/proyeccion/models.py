@@ -1668,6 +1668,17 @@ class EstimationFinancialSettings(AuditMixin):
         db_column='indirectpaymentlag',
     )
 
+    # Overrides de lag por categoría. Cualquier categoría que no aparezca usa el lag global.
+    # Formato:
+    #   {"direct": {"1": 0, "4": 2}, "indirect": {"C1": 3, "C5": 1}}
+    # Las llaves son categorycode (int como string para directos 1-7, str para indirectos C1-C8).
+    # Los valores son enteros 0..120 (mismas reglas que los lags globales).
+    category_lags = models.JSONField(
+        default=dict,
+        blank=True,
+        db_column='category_lags',
+    )
+
     # Costo financiero
     financecostrate = models.DecimalField(
         max_digits=7, decimal_places=6,

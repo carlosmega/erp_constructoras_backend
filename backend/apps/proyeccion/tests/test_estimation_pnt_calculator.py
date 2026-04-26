@@ -309,6 +309,51 @@ class TestEstimationPNTCalculatorPagosYCaja:
         pagos_ind = next(r for r in report.rows if r.code == 'PAGOS_INDIRECTO').values
         assert all(v == Decimal('-50') for v in pagos_ind)
 
+    def test_pagos_directo_with_per_category_lag_override(self):
+        """category_lags override aplica un lag distinto por categoría sin tocar el global."""
+        project, periods = build_pnt_ready_project(periods=4)
+        # _wire_costs crea 1 breakdown con categorycode=1 (MATERIALS) — $1000 distribuido 25%/periodo.
+        self._wire_costs(project, periods)
+        EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            {
+                'directpaymentlag': 0,  # global = sin lag
+                'category_lags': {'direct': {'1': 2}},  # MATERIALS (cat 1) → lag 2
+            },
+            user=None,
+        )
+        calc = EstimationPNTCalculator(project.estimationprojectid)
+        report = calc.compute()
+        pagos_dir = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
+        # Direct = -250 por periodo. Con lag 2 sobre cat 1: P1=0, P2=0, P3=-250, P4=-250
+        # (los costos de P1 y P2 caen al cap del horizonte: P1→P3, P2→P4. P3→P5 y P4→P6 quedan fuera)
+        assert pagos_dir[0] == Decimal('0')
+        assert pagos_dir[1] == Decimal('0')
+        assert pagos_dir[2] == Decimal('-250')
+        assert pagos_dir[3] == Decimal('-250')
+
+    def test_pagos_per_category_falls_back_to_global_when_category_missing(self):
+        """Si una categoría no tiene override, usa el lag global."""
+        project, periods = build_pnt_ready_project(periods=4)
+        self._wire_costs(project, periods)
+        EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            {
+                'directpaymentlag': 1,  # global
+                # category_lags vacío (default) → todas las cats usan global
+                'category_lags': {},
+            },
+            user=None,
+        )
+        calc = EstimationPNTCalculator(project.estimationprojectid)
+        report = calc.compute()
+        pagos_dir = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
+        # Direct = -250 por periodo. Con lag global 1: P1=0, P2=-250, P3=-250, P4=-250
+        assert pagos_dir[0] == Decimal('0')
+        assert pagos_dir[1] == Decimal('-250')
+        assert pagos_dir[2] == Decimal('-250')
+        assert pagos_dir[3] == Decimal('-250')
+
     def test_retiro_transv_distributed_per_period_no_lag(self):
         project, periods = build_pnt_ready_project(periods=4)
         self._wire_costs(project, periods)

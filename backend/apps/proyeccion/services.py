@@ -2809,32 +2809,48 @@ class CostDistributionService:
         zeros = [Decimal("0")] * N
 
         # Direct: SUMPRODUCT via ORM annotation — join CostDistribution with breakdown.amount
+        # Aggregated by (period, breakdown.categorycode) so we can rollup totals AND
+        # expose per-category vectors (used by PNT calculator for per-category lag).
         direct_by_period = list(zeros)
+        direct_by_period_by_category: dict[int, list[Decimal]] = {}
         direct_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.BREAKDOWN,
         ).annotate(
             contribution=F('breakdownid__amount') * F('fraction'),
-        ).values('periodnumber').annotate(
+        ).values('periodnumber', 'breakdownid__categorycode').annotate(
             total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
         )
         for row in direct_qs:
             p = row['periodnumber']
+            cat = row['breakdownid__categorycode']
+            amount = Decimal(row['total'] or 0)
             if 1 <= p <= N:
-                direct_by_period[p - 1] = Decimal(row['total'] or 0)
+                direct_by_period[p - 1] += amount
+                if cat is not None:
+                    if cat not in direct_by_period_by_category:
+                        direct_by_period_by_category[cat] = list(zeros)
+                    direct_by_period_by_category[cat][p - 1] += amount
 
-        # Indirect: SUMPRODUCT via IndirectCostDetail.amount
+        # Indirect: SUMPRODUCT via IndirectCostDetail.amount, also aggregated by category.
         indirect_by_period = list(zeros)
+        indirect_by_period_by_category: dict[str, list[Decimal]] = {}
         indirect_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.INDIRECT,
         ).annotate(
             contribution=F('indirectcostid__amount') * F('fraction'),
-        ).values('periodnumber').annotate(
+        ).values('periodnumber', 'indirectcostid__categorycode').annotate(
             total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
         )
         for row in indirect_qs:
             p = row['periodnumber']
+            cat = row['indirectcostid__categorycode']
+            amount = Decimal(row['total'] or 0)
             if 1 <= p <= N:
-                indirect_by_period[p - 1] = Decimal(row['total'] or 0)
+                indirect_by_period[p - 1] += amount
+                if cat is not None:
+                    if cat not in indirect_by_period_by_category:
+                        indirect_by_period_by_category[cat] = list(zeros)
+                    indirect_by_period_by_category[cat][p - 1] += amount
 
         # Retiros via chosen alternative
         chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
@@ -2859,6 +2875,8 @@ class CostDistributionService:
         return {
             'direct_by_period': direct_by_period,
             'indirect_by_period': indirect_by_period,
+            'direct_by_period_by_category': direct_by_period_by_category,
+            'indirect_by_period_by_category': indirect_by_period_by_category,
             'retiro_by_period': retiro_by_period,
             'utility_by_period': utility_by_period,
             'total_cost_by_period': total_cost_by_period,
@@ -3356,6 +3374,7 @@ class EstimationFinancialSettingsService:
         'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
         'directpaymentlag', 'indirectpaymentlag',
         'financecostrate',
+        'category_lags',
     })
 
     @staticmethod
@@ -3570,8 +3589,20 @@ class EstimationPNTCalculator:
         # test_cobro_total_excludes_saldo_anticipo.
 
         # ---- PAGOS ----
-        pagos_directo, pagos_dir_fuera = self._apply_lag(costo_directo_neg, self.settings.directpaymentlag)
-        pagos_indirecto, pagos_ind_fuera = self._apply_lag(costo_indirecto_neg, self.settings.indirectpaymentlag)
+        # Si hay overrides por categoría, los aplicamos por categoría y sumamos.
+        # Si no, usamos el lag global sobre el total agregado.
+        pagos_directo, pagos_dir_fuera = self._apply_pagos_lag(
+            self.rollups.get('direct_by_period_by_category', {}),
+            costo_directo_neg,
+            self.settings.directpaymentlag,
+            (self.settings.category_lags or {}).get('direct', {}),
+        )
+        pagos_indirecto, pagos_ind_fuera = self._apply_pagos_lag(
+            self.rollups.get('indirect_by_period_by_category', {}),
+            costo_indirecto_neg,
+            self.settings.indirectpaymentlag,
+            (self.settings.category_lags or {}).get('indirect', {}),
+        )
         pagos_totales = [
             pagos_directo[i] + pagos_indirecto[i] + retiro_transv_neg[i] + retiro_util_neg[i]
             for i in range(self.N)
@@ -3666,6 +3697,38 @@ class EstimationPNTCalculator:
                 out[target] += vec[i]
             else:
                 fuera += vec[i]
+        return out, fuera
+
+    def _apply_pagos_lag(self, by_category, fallback_vec, default_lag, overrides):
+        """Apply per-category lag to costs, falling back to default_lag for any category
+        not in `overrides`. If `by_category` is empty, applies default_lag to fallback_vec.
+
+        Args:
+            by_category: dict {categorycode → vector negativo de N decimales}
+            fallback_vec: vector negativo agregado (length N) — usado si by_category está vacío
+            default_lag: int, lag por defecto cuando una categoría no tiene override
+            overrides: dict {str(categorycode) → int lag}
+
+        Returns:
+            (out_vec, fuera_total) — output con periodos shifted y total fuera de horizonte
+        """
+        # Sin desglose por categoría → comportamiento legacy (lag global).
+        if not by_category:
+            return self._apply_lag(fallback_vec, default_lag)
+
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for cat_code, cat_vec in by_category.items():
+            # cat_vec viene positivo desde rollups; lo negamos para sumarse como costo (pago).
+            override_lag = overrides.get(str(cat_code))
+            lag = int(override_lag) if override_lag is not None else (default_lag or 0)
+            for i in range(self.N):
+                amount = -cat_vec[i]  # convertir a negativo (pago)
+                target = i + lag
+                if 0 <= target < self.N:
+                    out[target] += amount
+                else:
+                    fuera += amount
         return out, fuera
 
     def _aggregate_monthly(self, rows):
