@@ -1218,9 +1218,10 @@ class OfferAlternativeService:
 
     @staticmethod
     def list_alternatives(project_id: UUID, user) -> QuerySet[OfferAlternative]:
-        """List all offer alternatives for a project."""
+        """List active offer alternatives for a project (excludes soft-deleted)."""
         return OfferAlternative.objects.filter(
-            projectid=project_id
+            projectid=project_id,
+            statecode=0,  # Active only — soft-deleted have statecode=1
         ).select_related('createdby', 'modifiedby')
 
     @staticmethod
