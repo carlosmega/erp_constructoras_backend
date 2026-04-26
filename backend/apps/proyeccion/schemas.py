@@ -1053,6 +1053,7 @@ class PNTStatsDto(Schema):
     chosen_alternative_id: Optional[UUID] = None
     transversalpercent_aplicado: Decimal
     profitpercent_aplicado: Decimal
+    advance_fully_amortized_period: Optional[str] = None
 
 
 class PNTReportDto(Schema):

@@ -3551,7 +3551,9 @@ class EstimationPNTCalculator:
         anticipo_concedido = self._single_period_vector(
             self.settings.advanceamountnotax, self.settings.advanceentryperiod,
         )
-        anticipo_amortizado = [-self.settings.advanceamortizationrate * cf for cf in cobro_facturacion]
+        anticipo_amortizado, advance_fully_amortized_at = self._compute_anticipo_amortizado(
+            cobro_facturacion,
+        )
         retencion_imss = [-self.settings.imssretentionrate * cf for cf in cobro_facturacion]
         otras_retencion = [-self.settings.otherretentionrate * cf for cf in cobro_facturacion]
         devolucion = self._compute_devolucion(retencion_imss, otras_retencion)
@@ -3620,6 +3622,11 @@ class EstimationPNTCalculator:
         ]
 
         chosen = self.rollups.get('chosen_alternative_id')
+        advance_fully_amortized_period = (
+            self.periods[advance_fully_amortized_at].periodlabel
+            if advance_fully_amortized_at is not None
+            else None
+        )
         stats = {
             'pnt_min': min(caja_acumulada) if caja_acumulada else ZERO,
             'pnt_max': max(caja_acumulada) if caja_acumulada else ZERO,
@@ -3630,6 +3637,7 @@ class EstimationPNTCalculator:
             'chosen_alternative_id': chosen,
             'transversalpercent_aplicado': self.rollups.get('transversalpercent', ZERO),
             'profitpercent_aplicado': self.rollups.get('profitpercent', ZERO),
+            'advance_fully_amortized_period': advance_fully_amortized_period,
         }
 
         periods_out = [
@@ -3713,6 +3721,45 @@ class EstimationPNTCalculator:
                 else:
                     fuera += amount
         return out, fuera
+
+    def _compute_anticipo_amortizado(self, cobro_facturacion):
+        """Capped amortization: per-period descuento del cobro_facturacion según rate,
+        pero deja de descontar una vez que el saldo acumulado iguala el monto del anticipo.
+
+        Returns:
+            (vector negativo por periodo, índice del periodo donde se completó la amortización
+             — None si nunca se llegó al cap o si no hay anticipo).
+        """
+        out = [ZERO] * self.N
+        advance_amt = self.settings.advanceamountnotax or ZERO
+        rate = self.settings.advanceamortizationrate or ZERO
+
+        # Sin anticipo o sin tasa → no hay amortización
+        if advance_amt <= ZERO or rate <= ZERO:
+            return out, None
+
+        cap = -advance_amt  # piso del saldo acumulado (negativo)
+        cumulative = ZERO
+        fully_amortized_at = None
+
+        for i, cf in enumerate(cobro_facturacion):
+            if cumulative <= cap:
+                # Ya totalmente amortizado: no más descuentos
+                continue
+            proposed = -rate * cf  # negativo
+            new_cumulative = cumulative + proposed
+            if new_cumulative <= cap:
+                # Cap: solo descontar lo necesario para cerrar el saldo
+                actual = cap - cumulative  # ≤ 0
+                out[i] = actual
+                cumulative = cap
+                if fully_amortized_at is None:
+                    fully_amortized_at = i
+            else:
+                out[i] = proposed
+                cumulative = new_cumulative
+
+        return out, fully_amortized_at
 
     def _single_period_vector(self, amount, period_1indexed):
         out = [ZERO] * self.N

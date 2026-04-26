@@ -165,15 +165,18 @@ class TestEstimationPNTCalculatorCobros:
                 conceptid=concept, projectid=project, periodnumber=i + 1, periodlabel=f'P{i+1:02d}',
                 entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
             )
+        # Anticipo grande para que el cap no se active y se vea la acumulación pura.
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
-            {'advanceamortizationrate': Decimal('0.10')},
+            {'advanceamountnotax': Decimal('1000'), 'advanceamortizationrate': Decimal('0.10')},
             user=None,
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
         saldo = next(r for r in report.rows if r.code == 'SALDO_ANTICIPO').values
         assert saldo == [Decimal('-10.0000'), Decimal('-20.0000'), Decimal('-30.0000')]
+        # Cap NO se activó → stat no marcado
+        assert report.stats.get('advance_fully_amortized_period') is None
 
     def test_cobro_total_excludes_saldo_anticipo(self):
         """SALDO_ANTICIPO is reported but NOT summed into COBRO_TOTAL (avoid double-count)."""
@@ -187,6 +190,8 @@ class TestEstimationPNTCalculatorCobros:
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
             {'imssretentionrate': Decimal('0'), 'otherretentionrate': Decimal('0'),
+             'advanceamountnotax': Decimal('1000'),  # cap holgado
+             'advanceentryperiod': 99,  # anticipo entra fuera del horizonte → ANTICIPO_CONCEDIDO=0
              'advanceamortizationrate': Decimal('0.5')},
             user=None,
         )
@@ -194,6 +199,58 @@ class TestEstimationPNTCalculatorCobros:
         report = calc.compute()
         cobro_total = next(r for r in report.rows if r.code == 'COBRO_TOTAL').values
         assert cobro_total[0] == Decimal('50.0000')
+
+    def test_amortizacion_capped_at_advance_amount(self):
+        """Una vez que el saldo acumulado iguala el monto del anticipo, no más amortización."""
+        project, _ = build_pnt_ready_project(periods=4)
+        from apps.proyeccion.models import WorkPlanEntry
+        concept = make_concept_for_project(project)
+        # 4 periodos con distributedamount=100 cada uno → cobro_facturacion = [100, 100, 100, 100]
+        for i in range(4):
+            WorkPlanEntry.objects.create(
+                conceptid=concept, projectid=project, periodnumber=i + 1, periodlabel=f'P{i+1:02d}',
+                entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
+            )
+        EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            {'advanceamountnotax': Decimal('25'),  # cap chico
+             'advanceamortizationrate': Decimal('0.10')},  # 10% × 100 = 10/periodo
+            user=None,
+        )
+        calc = EstimationPNTCalculator(project.estimationprojectid)
+        report = calc.compute()
+        amort = next(r for r in report.rows if r.code == 'ANTICIPO_AMORT').values
+        saldo = next(r for r in report.rows if r.code == 'SALDO_ANTICIPO').values
+        # P1: cum=-10, dentro de cap (-25). actual=-10
+        # P2: cum=-20, dentro de cap. actual=-10
+        # P3: cum=-30 excedería; cap=-25; actual=-5 (solo lo necesario para llegar a -25)
+        # P4: ya en cap → actual=0
+        assert amort == [Decimal('-10.0000'), Decimal('-10.0000'), Decimal('-5.0000'), Decimal('0')]
+        # Saldo acumulado: -10, -20, -25, -25 (no avanza más allá del cap)
+        assert saldo == [Decimal('-10.0000'), Decimal('-20.0000'), Decimal('-25.0000'), Decimal('-25.0000')]
+        # Stat: completó amortización en P3 (índice 2 → label 'P03')
+        assert report.stats['advance_fully_amortized_period'] == 'P03'
+
+    def test_amortizacion_zero_when_no_advance(self):
+        """Sin monto de anticipo, no hay amortización (independiente de la tasa)."""
+        project, _ = build_pnt_ready_project(periods=2)
+        from apps.proyeccion.models import WorkPlanEntry
+        concept = make_concept_for_project(project)
+        WorkPlanEntry.objects.create(
+            conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
+            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+        )
+        EstimationFinancialSettingsService.update(
+            project.estimationprojectid,
+            # advanceamountnotax queda en default 0
+            {'advanceamortizationrate': Decimal('0.20')},
+            user=None,
+        )
+        calc = EstimationPNTCalculator(project.estimationprojectid)
+        report = calc.compute()
+        amort = next(r for r in report.rows if r.code == 'ANTICIPO_AMORT').values
+        assert all(v == Decimal('0') for v in amort)
+        assert report.stats.get('advance_fully_amortized_period') is None
 
 
 @pytest.mark.django_db
