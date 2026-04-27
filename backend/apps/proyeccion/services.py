@@ -3595,19 +3595,15 @@ class EstimationPNTCalculator:
         # test_cobro_total_excludes_saldo_anticipo.
 
         # ---- PAGOS ----
-        # Si hay overrides por categoría, los aplicamos por categoría y sumamos.
-        # Si no, usamos el lag global sobre el total agregado.
         pagos_directo, pagos_dir_fuera = self._apply_pagos_lag(
-            self.rollups.get('direct_by_period_by_category', {}),
-            costo_directo_neg,
+            self.rollups['direct_by_period_by_line'],
+            self.rollups['lag_by_line'],
             self.settings.directpaymentlag,
-            (self.settings.category_lags or {}).get('direct', {}),
         )
         pagos_indirecto, pagos_ind_fuera = self._apply_pagos_lag(
-            self.rollups.get('indirect_by_period_by_category', {}),
-            costo_indirecto_neg,
+            self.rollups['indirect_by_period_by_line'],
+            self.rollups['lag_by_line'],
             self.settings.indirectpaymentlag,
-            (self.settings.category_lags or {}).get('indirect', {}),
         )
         pagos_totales = [
             pagos_directo[i] + pagos_indirecto[i] + retiro_transv_neg[i] + retiro_util_neg[i]
@@ -3705,31 +3701,25 @@ class EstimationPNTCalculator:
                 fuera += vec[i]
         return out, fuera
 
-    def _apply_pagos_lag(self, by_category, fallback_vec, default_lag, overrides):
-        """Apply per-category lag to costs, falling back to default_lag for any category
-        not in `overrides`. If `by_category` is empty, applies default_lag to fallback_vec.
+    def _apply_pagos_lag(self, by_line, lag_by_line, default_lag):
+        """Apply per-line lag to costs. Falls back to default_lag if lag_by_line[id] is None.
 
         Args:
-            by_category: dict {categorycode → vector negativo de N decimales}
-            fallback_vec: vector negativo agregado (length N) — usado si by_category está vacío
-            default_lag: int, lag por defecto cuando una categoría no tiene override
-            overrides: dict {str(categorycode) → int lag}
+            by_line: dict {lineid → vector positivo de N decimales}
+            lag_by_line: dict {lineid → int | None}
+            default_lag: int — fallback when lag_by_line[lineid] is None
 
         Returns:
-            (out_vec, fuera_total) — output con periodos shifted y total fuera de horizonte
+            (out_vec, fuera_total) — output vector with shifted negative amounts;
+            amounts pushed beyond N go to fuera.
         """
-        # Sin desglose por categoría → comportamiento legacy (lag global).
-        if not by_category:
-            return self._apply_lag(fallback_vec, default_lag)
-
         out = [ZERO] * self.N
         fuera = ZERO
-        for cat_code, cat_vec in by_category.items():
-            # cat_vec viene positivo desde rollups; lo negamos para sumarse como costo (pago).
-            override_lag = overrides.get(str(cat_code))
-            lag = int(override_lag) if override_lag is not None else (default_lag or 0)
+        for lineid, line_vec in by_line.items():
+            line_lag = lag_by_line.get(lineid)
+            lag = int(line_lag) if line_lag is not None else (default_lag or 0)
             for i in range(self.N):
-                amount = -cat_vec[i]  # convertir a negativo (pago)
+                amount = -line_vec[i]
                 target = i + lag
                 if 0 <= target < self.N:
                     out[target] += amount
