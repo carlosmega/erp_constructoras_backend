@@ -131,3 +131,79 @@ def test_golden_end_to_end():
     # Stats sanity
     assert report.stats['pnt_min'] is not None
     assert report.stats['pnt_max'] is not None
+
+
+@pytest.mark.workflow
+@pytest.mark.django_db
+def test_pnt_golden_with_per_line_lag():
+    """End-to-end PNT calc where two direct lines have different paymentlagperiods.
+
+    Setup:
+      - 4-period project (weekly)
+      - Direct line A: amount $1000, fraction 1.0 in P1, paymentlagperiods=1
+      - Direct line B: amount $500,  fraction 1.0 in P1, paymentlagperiods=3
+      - Global directpaymentlag = 0 (would be ignored for both lines above)
+      - No indirect, no retiros, no anticipo, no retentions, billing 100%/lag 0
+
+    Expected PAGOS_DIRECTO row: [0, -1000, 0, -500]
+      (line A pays in P2 = P1+1, line B pays in P4 = P1+3)
+    """
+    from apps.proyeccion.services import EstimationPNTCalculator
+    from apps.proyeccion.tests.factories import (
+        EstimationProjectFactory, ProjectionPeriodFactory,
+        BudgetConceptFactory, UnitCostBreakdownFactory, CostDistributionFactory,
+        EstimationFinancialSettingsFactory,
+    )
+    from apps.proyeccion.models import CostLineType, OfferAlternative
+    from decimal import Decimal
+
+    project = EstimationProjectFactory(periodtype=0, periodcount=4)
+    for i in range(1, 5):
+        ProjectionPeriodFactory(projectid=project, periodnumber=i)
+
+    # Create chosen alternative (required for PNT calculator)
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name='Base',
+        transversalpercent=Decimal('0'), profitpercent=Decimal('0'),
+        coefficient=Decimal('1.0'),
+        directcosttotal=Decimal('1500'), indirectcosttotal=Decimal('0'),
+        constructioncost=Decimal('1500'), salepricenet=Decimal('1500'),
+        taxamount=Decimal('0'), salepricetotal=Decimal('1500'),
+        ischosen=True,
+    )
+
+    EstimationFinancialSettingsFactory(
+        projectid=project,
+        directpaymentlag=0,
+        indirectpaymentlag=0,
+        imssretentionrate=Decimal('0'),
+        otherretentionrate=Decimal('0'),
+        advanceamountnotax=Decimal('0'),
+        advanceamortizationrate=Decimal('0'),
+        financecostrate=Decimal('0'),
+    )
+
+    concept = BudgetConceptFactory(projectid=project)
+    line_a = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=1)
+    line_a.amount = Decimal('1000.00')
+    line_a.save()
+    CostDistributionFactory(
+        projectid=project, breakdownid=line_a,
+        linetype=CostLineType.BREAKDOWN, periodnumber=1, fraction=Decimal('1.0'),
+    )
+
+    line_b = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=3)
+    line_b.amount = Decimal('500.00')
+    line_b.save()
+    CostDistributionFactory(
+        projectid=project, breakdownid=line_b,
+        linetype=CostLineType.BREAKDOWN, periodnumber=1, fraction=Decimal('1.0'),
+    )
+
+    calc = EstimationPNTCalculator(project.estimationprojectid)
+    report = calc.compute()
+
+    pagos_directo_row = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO')
+    assert pagos_directo_row.values == [
+        Decimal('0'), Decimal('-1000.0000'), Decimal('0'), Decimal('-500.0000'),
+    ], f"PAGOS_DIRECTO mismatch: {pagos_directo_row.values}"
