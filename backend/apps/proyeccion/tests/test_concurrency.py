@@ -255,3 +255,46 @@ def test_apply_bulk_edits_atomic_with_cell_and_lag():
     assert line.paymentlagperiods is None
     assert line.lineversion == 0
     assert cell.fraction == Decimal('0.50000000')
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_bulk_edits_lag_updates_audit_fields():
+    """Lag edit bumps modifiedon (auto_now) on UnitCostBreakdown and IndirectCostDetail.
+    For IndirectCostDetail, modifiedby is also set to the editing user."""
+    import time
+    project = EstimationProjectFactory()
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project)
+    user = SystemUserFactory()
+
+    # Breakdown line (UnitCostBreakdown has no modifiedby)
+    bd = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=None, lineversion=0)
+    original_bd_modifiedon = bd.modifiedon
+
+    # Indirect line (IndirectCostDetail extends AuditMixin with modifiedby)
+    ind = IndirectCostDetailFactory(projectid=project, paymentlagperiods=None, lineversion=0)
+    original_ind_modifiedon = ind.modifiedon
+    original_ind_modifiedby = ind.modifiedby
+
+    # Ensure enough time passes for auto_now to generate a different timestamp
+    time.sleep(0.01)
+
+    CostDistributionService.apply_bulk_edits(
+        project, user=user, edits=[],
+        lag_edits=[
+            {'lineid': str(bd.breakdownid), 'linetype': 'BREAKDOWN',
+             'paymentlagperiods': 2, 'expected_lineversion': 0},
+            {'lineid': str(ind.indirectcostid), 'linetype': 'INDIRECT',
+             'paymentlagperiods': 3, 'expected_lineversion': 0},
+        ],
+    )
+    bd.refresh_from_db()
+    ind.refresh_from_db()
+
+    # Both should have modifiedon bumped (auto_now=True is enforced via update_fields)
+    assert bd.modifiedon > original_bd_modifiedon, "UnitCostBreakdown.modifiedon should be updated"
+    assert ind.modifiedon > original_ind_modifiedon, "IndirectCostDetail.modifiedon should be updated"
+
+    # IndirectCostDetail should have modifiedby set to the editing user
+    assert ind.modifiedby_id == user.systemuserid, "IndirectCostDetail.modifiedby should be set to the editing user"

@@ -3156,7 +3156,12 @@ class CostDistributionService:
                 line = IndirectCostDetail.objects.get(pk=le['lineid'])
             line.paymentlagperiods = le.get('paymentlagperiods')
             line.lineversion += 1
-            line.save(update_fields=['paymentlagperiods', 'lineversion'])
+            # UnitCostBreakdown has no modifiedby; IndirectCostDetail extends AuditMixin
+            if le['linetype'] == 'BREAKDOWN':
+                line.save(update_fields=['paymentlagperiods', 'lineversion', 'modifiedon'])
+            else:  # INDIRECT
+                line.modifiedby = user
+                line.save(update_fields=['paymentlagperiods', 'lineversion', 'modifiedby', 'modifiedon'])
             new_lineversions[str(le['lineid'])] = line.lineversion
 
         return {
