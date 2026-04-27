@@ -960,16 +960,6 @@ class ConflictItem(Schema):
     your_version: int
 
 
-class LagConflictItem(Schema):
-    """Conflict item for a lag edit version mismatch."""
-    lineid: str
-    kind: Literal['lag']
-    your_lineversion: int
-    server_lineversion: int
-    your_value: Optional[int]
-    server_value: Optional[int]
-
-
 class ConflictResponse(Schema):
     error: Literal['version_conflict']
     conflicts: List[dict]
