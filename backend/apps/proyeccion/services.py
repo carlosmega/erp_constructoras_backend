@@ -2814,11 +2814,7 @@ class CostDistributionService:
         direct_by_period_by_line: dict[str, list[Decimal]] = {}
         lag_by_line: dict[str, int | None] = {}
 
-        breakdowns = (
-            UnitCostBreakdown.objects
-            .filter(conceptid__projectid=project, statecode=0)
-            .select_related('conceptid')
-        )
+        breakdowns = UnitCostBreakdown.objects.filter(conceptid__projectid=project)
         bd_dist_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.BREAKDOWN,
         ).values('breakdownid_id', 'periodnumber', 'fraction')
@@ -2842,9 +2838,7 @@ class CostDistributionService:
         indirect_by_period = list(zeros)
         indirect_by_period_by_line: dict[str, list[Decimal]] = {}
 
-        indirects = IndirectCostDetail.objects.filter(
-            projectid=project, statecode=0,
-        )
+        indirects = IndirectCostDetail.objects.filter(projectid=project)
         ind_dist_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.INDIRECT,
         ).values('indirectcostid_id', 'periodnumber', 'fraction')
