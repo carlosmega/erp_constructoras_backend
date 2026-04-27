@@ -417,7 +417,9 @@ class TestUnitCostBreakdowns:
         concept = self._make_concept(system_admin)
         # Create a labor breakdown line so HM/EPP can derive from it
         UnitCostBreakdownFactory(conceptid=concept, categorycode=1)  # LABOR
-        response = admin_auth_client.post(f'/api/proyeccion/concepts/{concept.conceptid}/auto-hm-epp/')
+        response = admin_auth_client.post(
+            f'/api/proyeccion/concepts/{concept.conceptid}/breakdowns/auto-generate-hm-epp/'
+        )
         assert response.status_code == 201
 
 
