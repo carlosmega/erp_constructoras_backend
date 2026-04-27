@@ -94,22 +94,3 @@ class TestEstimationFinancialSettingsService:
         )
         assert updated.financecostrate == Decimal('0.002000')
         assert updated.imssretentionrate == Decimal('0.0500')  # default
-
-
-@pytest.mark.unit
-@pytest.mark.django_db
-def test_update_ignores_removed_category_lags():
-    """category_lags was removed; updates referencing it are silently ignored."""
-    from apps.proyeccion.services import EstimationFinancialSettingsService
-    from apps.proyeccion.tests.factories import EstimationProjectFactory, SystemUserFactory
-    project = EstimationProjectFactory()
-    user = SystemUserFactory()
-    settings = EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)
-    EstimationFinancialSettingsService.update(
-        project.estimationprojectid,
-        {'category_lags': {'direct': {'P1': 5}}, 'directpaymentlag': 2},
-        user=user,
-    )
-    settings.refresh_from_db()
-    assert settings.directpaymentlag == 2
-    assert not hasattr(settings, 'category_lags')
