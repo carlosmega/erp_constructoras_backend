@@ -3371,6 +3371,8 @@ class CostDistributionService:
             'description': bd.description,
             'unit': bd.unit,
             'totalamount': float(bd.amount),
+            'paymentlagperiods': bd.paymentlagperiods,
+            'lineversion': bd.lineversion,
             'distribution': cells,
             'checksum': float(checksum),
         }
@@ -3390,6 +3392,8 @@ class CostDistributionService:
             'description': ind.description,
             'unit': '',
             'totalamount': float(ind.amount),
+            'paymentlagperiods': ind.paymentlagperiods,
+            'lineversion': ind.lineversion,
             'distribution': cells,
             'checksum': float(checksum),
         }

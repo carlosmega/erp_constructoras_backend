@@ -287,6 +287,42 @@ def test_patch_bulk_lag_out_of_range_returns_400(admin_auth_client, system_admin
     assert response.status_code == 400
 
 
+@pytest.mark.integration
+@pytest.mark.django_db
+def test_get_cost_distribution_includes_lag_and_lineversion(admin_auth_client, system_admin):
+    """GET /cost-distribution/ exposes paymentlagperiods and lineversion per line."""
+    from apps.proyeccion.tests.factories import (
+        EstimationProjectFactory, ProjectionPeriodFactory,
+        BudgetConceptFactory, UnitCostBreakdownFactory,
+    )
+    project = EstimationProjectFactory(
+        ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
+        periodcount=1,
+    )
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project)
+    line = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=4, lineversion=2)
+
+    response = admin_auth_client.get(
+        f'/api/proyeccion/projects/{project.estimationprojectid}/cost-distribution/'
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    # The payload shape is: families[].lines[] (flat list of DistributionLineDto)
+    found = False
+    for family in body.get('families', []):
+        for ln in family.get('lines', []):
+            if isinstance(ln, dict) and ln.get('lineid') == str(line.breakdownid):
+                assert ln['paymentlagperiods'] == 4, f"got {ln.get('paymentlagperiods')!r}"
+                assert ln['lineversion'] == 2, f"got {ln.get('lineversion')!r}"
+                found = True
+    assert found, (
+        f"breakdown line not found in payload — actual structure: {list(body.keys())}, "
+        f"families[0] keys: {list(body['families'][0].keys()) if body.get('families') else 'no families'}"
+    )
+
+
 @pytest.mark.django_db
 @pytest.mark.contract
 class TestPresence:

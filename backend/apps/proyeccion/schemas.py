@@ -870,6 +870,8 @@ class DistributionLineDto(Schema):
     description: str
     unit: str
     totalamount: float
+    paymentlagperiods: Optional[int] = None
+    lineversion: int = 0
     distribution: List[DistributionCellDto]
     checksum: float
 
