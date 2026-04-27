@@ -3375,7 +3375,6 @@ class EstimationFinancialSettingsService:
         'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
         'directpaymentlag', 'indirectpaymentlag',
         'financecostrate',
-        'category_lags',
     })
 
     @staticmethod
