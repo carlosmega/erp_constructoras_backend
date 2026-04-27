@@ -3015,20 +3015,57 @@ class CostDistributionService:
 
     @staticmethod
     @transaction.atomic
-    def apply_bulk_edits(project, *, user, edits: list) -> dict:
-        """Apply multiple edits atomically with optimistic locking per cell.
+    def apply_bulk_edits(project, *, user, edits: list = None, lag_edits: list = None) -> dict:
+        """Apply multiple cell edits and/or per-line lag edits atomically.
 
-        Each edit: {lineid, linetype, periodnumber, fraction, expected_version}
-        Raises VersionConflict(list[{lineid, periodnumber, your_version, server_version,
-                                      your_value, server_value, server_modifiedby,
-                                      server_modifiedon}]) on any version mismatch.
+        Args:
+            edits: list of {lineid, linetype, periodnumber, fraction, expected_version}
+            lag_edits: list of {lineid, linetype, paymentlagperiods, expected_lineversion}
+
+        Validations:
+            - lag_edits[].paymentlagperiods ∈ [0, 120] ∪ {None}
+            - lag_edits[].linetype ∈ {'BREAKDOWN', 'INDIRECT'}
+            - cell version mismatch raises VersionConflict
+            - line version mismatch raises VersionConflict (with lineid + current_lineversion + kind='lag')
+
+        On any conflict (cell or lag), aborts the entire transaction and raises
+        VersionConflict(conflicts=[...]). Conflict items per type:
+            cell:  {lineid, periodnumber, your_version, server_version, your_value,
+                    server_value, server_modifiedby, server_modifiedon}
+            lag:   {lineid, your_lineversion, server_lineversion, your_value, server_value,
+                    kind: 'lag'}
+
+        Returns: {
+            'updated': int,             # cells changed
+            'new_versions': dict,       # cell key → new version
+            'lag_updated': int,         # lines whose lag changed
+            'new_lineversions': dict,   # lineid → new lineversion
+        }
 
         Note: SQLite (used in development) does not support row-level locking, so
         select_for_update() is a no-op at the SQL level in dev. The all-or-nothing
         atomicity via transaction.atomic() still holds. PostgreSQL in production
         enforces proper row-level locking.
         """
+        edits = edits or []
+        lag_edits = lag_edits or []
+
+        # -------- Validate lag edits up front --------
+        for le in lag_edits:
+            plp = le.get('paymentlagperiods')
+            if plp is not None:
+                if not isinstance(plp, int) or plp < 0 or plp > 120:
+                    raise ValueError(
+                        f"paymentlagperiods out of range [0,120] or null: {plp!r}"
+                    )
+            if le['linetype'] not in ('BREAKDOWN', 'INDIRECT'):
+                raise ValueError(
+                    f"linetype must be BREAKDOWN or INDIRECT, got {le['linetype']!r}"
+                )
+
+        # -------- Detect conflicts (cells AND lags) before any mutation --------
         conflicts = []
+
         # SELECT FOR UPDATE on the affected rows to serialize with other writers
         for edit in edits:
             lt = CostLineType.BREAKDOWN if edit['linetype'] == 'BREAKDOWN' else CostLineType.INDIRECT
@@ -3062,10 +3099,30 @@ class CostDistributionService:
                     'server_modifiedon': existing.modifiedon.isoformat(),
                 })
 
+        # ===== LAG CONFLICT DETECTION =====
+        for le in lag_edits:
+            if le['linetype'] == 'BREAKDOWN':
+                line = UnitCostBreakdown.objects.select_for_update().filter(pk=le['lineid']).first()
+            else:
+                line = IndirectCostDetail.objects.select_for_update().filter(pk=le['lineid']).first()
+            if line is None:
+                raise ValueError(f"Line not found: {le['lineid']}")
+            if line.lineversion != le['expected_lineversion']:
+                conflicts.append({
+                    'lineid': le['lineid'],
+                    'kind': 'lag',
+                    'your_lineversion': le['expected_lineversion'],
+                    'server_lineversion': line.lineversion,
+                    'your_value': le.get('paymentlagperiods'),
+                    'server_value': line.paymentlagperiods,
+                })
+
         if conflicts:
             raise VersionConflict(conflicts)
 
-        # No conflicts — apply all
+        # -------- No conflicts — apply all --------
+
+        # Apply cell edits
         new_versions = {}
         for edit in edits:
             lt = CostLineType.BREAKDOWN if edit['linetype'] == 'BREAKDOWN' else CostLineType.INDIRECT
@@ -3090,7 +3147,24 @@ class CostDistributionService:
                 existing.save(update_fields=['fraction', 'isderived', 'version', 'modifiedby', 'modifiedon'])
                 new_versions[f"{edit['lineid']}:{edit['periodnumber']}"] = existing.version
 
-        return {'updated': len(edits), 'new_versions': new_versions}
+        # Apply lag edits
+        new_lineversions = {}
+        for le in lag_edits:
+            if le['linetype'] == 'BREAKDOWN':
+                line = UnitCostBreakdown.objects.get(pk=le['lineid'])
+            else:
+                line = IndirectCostDetail.objects.get(pk=le['lineid'])
+            line.paymentlagperiods = le.get('paymentlagperiods')
+            line.lineversion += 1
+            line.save(update_fields=['paymentlagperiods', 'lineversion'])
+            new_lineversions[str(le['lineid'])] = line.lineversion
+
+        return {
+            'updated': len(edits),
+            'new_versions': new_versions,
+            'lag_updated': len(lag_edits),
+            'new_lineversions': new_lineversions,
+        }
 
     @staticmethod
     @transaction.atomic
