@@ -927,13 +927,24 @@ class BulkEditItem(Schema):
     expected_version: int
 
 
+class BulkLagEditItem(Schema):
+    """Per-line payment lag edit. None = clear (use global default)."""
+    lineid: UUID
+    linetype: Literal['BREAKDOWN', 'INDIRECT']
+    paymentlagperiods: Optional[int] = None
+    expected_lineversion: int
+
+
 class BulkEditRequest(Schema):
-    edits: List[BulkEditItem]
+    edits: List[BulkEditItem] = []
+    lag_edits: List[BulkLagEditItem] = []
 
 
 class BulkEditOkResponse(Schema):
     updated: int
     new_versions: dict
+    lag_updated: int
+    new_lineversions: dict
     rollups: DistributionRollupsDto
     totals: DistributionTotalsDto
 
@@ -949,9 +960,19 @@ class ConflictItem(Schema):
     your_version: int
 
 
+class LagConflictItem(Schema):
+    """Conflict item for a lag edit version mismatch."""
+    lineid: str
+    kind: Literal['lag']
+    your_lineversion: int
+    server_lineversion: int
+    your_value: Optional[int]
+    server_value: Optional[int]
+
+
 class ConflictResponse(Schema):
     error: Literal['version_conflict']
-    conflicts: List[ConflictItem]
+    conflicts: List[dict]
 
 
 class AutofillRequest(Schema):
