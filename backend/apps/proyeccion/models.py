@@ -478,6 +478,19 @@ class UnitCostBreakdown(models.Model):
         db_column='statecode'
     )
 
+    paymentlagperiods = models.IntegerField(
+        null=True,
+        blank=True,
+        db_column='paymentlagperiods',
+        help_text='Lag de pago en periodos del proyecto. NULL = usa el default global (directpaymentlag).',
+    )
+
+    lineversion = models.IntegerField(
+        default=0,
+        db_column='lineversion',
+        help_text='Optimistic lock para edits a nivel de línea (lag).',
+    )
+
     createdon = models.DateTimeField(
         auto_now_add=True,
         db_column='createdon'
@@ -586,6 +599,19 @@ class IndirectCostDetail(AuditMixin):
         default=0,
         choices=ProyeccionStateCode.choices,
         db_column='statecode'
+    )
+
+    paymentlagperiods = models.IntegerField(
+        null=True,
+        blank=True,
+        db_column='paymentlagperiods',
+        help_text='Lag de pago en periodos del proyecto. NULL = usa el default global (indirectpaymentlag).',
+    )
+
+    lineversion = models.IntegerField(
+        default=0,
+        db_column='lineversion',
+        help_text='Optimistic lock para edits a nivel de línea (lag).',
     )
 
     class Meta:
