@@ -2809,49 +2809,60 @@ class CostDistributionService:
         N = project.periodcount or 0
         zeros = [Decimal("0")] * N
 
-        # Direct: SUMPRODUCT via ORM annotation — join CostDistribution with breakdown.amount
-        # Aggregated by (period, breakdown.categorycode) so we can rollup totals AND
-        # expose per-category vectors (used by PNT calculator for per-category lag).
+        # Direct: per-line vectors keyed by breakdown UUID + aggregate by period.
         direct_by_period = list(zeros)
-        direct_by_period_by_category: dict[int, list[Decimal]] = {}
-        direct_qs = CostDistribution.objects.filter(
-            projectid=project, linetype=CostLineType.BREAKDOWN,
-        ).annotate(
-            contribution=F('breakdownid__amount') * F('fraction'),
-        ).values('periodnumber', 'breakdownid__categorycode').annotate(
-            total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
-        )
-        for row in direct_qs:
-            p = row['periodnumber']
-            cat = row['breakdownid__categorycode']
-            amount = Decimal(row['total'] or 0)
-            if 1 <= p <= N:
-                direct_by_period[p - 1] += amount
-                if cat is not None:
-                    if cat not in direct_by_period_by_category:
-                        direct_by_period_by_category[cat] = list(zeros)
-                    direct_by_period_by_category[cat][p - 1] += amount
+        direct_by_period_by_line: dict[str, list[Decimal]] = {}
+        lag_by_line: dict[str, int | None] = {}
 
-        # Indirect: SUMPRODUCT via IndirectCostDetail.amount, also aggregated by category.
-        indirect_by_period = list(zeros)
-        indirect_by_period_by_category: dict[str, list[Decimal]] = {}
-        indirect_qs = CostDistribution.objects.filter(
-            projectid=project, linetype=CostLineType.INDIRECT,
-        ).annotate(
-            contribution=F('indirectcostid__amount') * F('fraction'),
-        ).values('periodnumber', 'indirectcostid__categorycode').annotate(
-            total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
+        breakdowns = (
+            UnitCostBreakdown.objects
+            .filter(conceptid__projectid=project, statecode=0)
+            .select_related('conceptid')
         )
-        for row in indirect_qs:
-            p = row['periodnumber']
-            cat = row['indirectcostid__categorycode']
-            amount = Decimal(row['total'] or 0)
-            if 1 <= p <= N:
-                indirect_by_period[p - 1] += amount
-                if cat is not None:
-                    if cat not in indirect_by_period_by_category:
-                        indirect_by_period_by_category[cat] = list(zeros)
-                    indirect_by_period_by_category[cat][p - 1] += amount
+        bd_dist_qs = CostDistribution.objects.filter(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+        ).values('breakdownid_id', 'periodnumber', 'fraction')
+        bd_dist_by_id: dict[str, dict[int, Decimal]] = {}
+        for row in bd_dist_qs:
+            bd_dist_by_id.setdefault(str(row['breakdownid_id']), {})[row['periodnumber']] = Decimal(row['fraction'])
+
+        for bd in breakdowns:
+            bd_id = str(bd.breakdownid)
+            line_vec = list(zeros)
+            cells = bd_dist_by_id.get(bd_id, {})
+            for i in range(N):
+                frac = cells.get(i + 1, Decimal('0'))
+                value = (bd.amount or Decimal('0')) * frac
+                line_vec[i] = value
+                direct_by_period[i] += value
+            direct_by_period_by_line[bd_id] = line_vec
+            lag_by_line[bd_id] = bd.paymentlagperiods
+
+        # Indirect: per-line vectors keyed by indirectcost UUID + aggregate by period.
+        indirect_by_period = list(zeros)
+        indirect_by_period_by_line: dict[str, list[Decimal]] = {}
+
+        indirects = IndirectCostDetail.objects.filter(
+            projectid=project, statecode=0,
+        )
+        ind_dist_qs = CostDistribution.objects.filter(
+            projectid=project, linetype=CostLineType.INDIRECT,
+        ).values('indirectcostid_id', 'periodnumber', 'fraction')
+        ind_dist_by_id: dict[str, dict[int, Decimal]] = {}
+        for row in ind_dist_qs:
+            ind_dist_by_id.setdefault(str(row['indirectcostid_id']), {})[row['periodnumber']] = Decimal(row['fraction'])
+
+        for ind in indirects:
+            ind_id = str(ind.indirectcostid)
+            line_vec = list(zeros)
+            cells = ind_dist_by_id.get(ind_id, {})
+            for i in range(N):
+                frac = cells.get(i + 1, Decimal('0'))
+                value = (ind.amount or Decimal('0')) * frac
+                line_vec[i] = value
+                indirect_by_period[i] += value
+            indirect_by_period_by_line[ind_id] = line_vec
+            lag_by_line[ind_id] = ind.paymentlagperiods
 
         # Retiros via chosen alternative
         chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
@@ -2874,14 +2885,15 @@ class CostDistributionService:
                 sale_by_period[p - 1] = Decimal(row['total'] or 0)
 
         return {
+            'sale_by_period': sale_by_period,
             'direct_by_period': direct_by_period,
             'indirect_by_period': indirect_by_period,
-            'direct_by_period_by_category': direct_by_period_by_category,
-            'indirect_by_period_by_category': indirect_by_period_by_category,
             'retiro_by_period': retiro_by_period,
             'utility_by_period': utility_by_period,
             'total_cost_by_period': total_cost_by_period,
-            'sale_by_period': sale_by_period,
+            'direct_by_period_by_line': direct_by_period_by_line,
+            'indirect_by_period_by_line': indirect_by_period_by_line,
+            'lag_by_line': lag_by_line,
             'direct_total': sum(direct_by_period, Decimal("0")),
             'indirect_total': sum(indirect_by_period, Decimal("0")),
             'retiro_total': sum(retiro_by_period, Decimal("0")),
