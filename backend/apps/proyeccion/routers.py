@@ -68,6 +68,22 @@ from apps.proyeccion.schemas import (
     ImportExcelRequestDto,
     ImportExcelResponseSchema,
     AutoGenerateSkeletonDto,
+    FinancialSettingsDto,
+    UpdateFinancialSettingsDto,
+    BillingRuleDto,
+    ReplaceBillingRulesDto,
+    PNTReportDto,
+    ProjectionPeriodDto,
+    RegenerateResult,
+    DistributionPayloadDto,
+    BulkEditRequest,
+    BulkEditOkResponse,
+    ConflictResponse,
+    AutofillRequest,
+    AutofillResponse,
+    ResetLineRequest,
+    PresenceResponse,
+    HeartbeatRequest,
 )
 from apps.proyeccion.services import (
     EstimationProjectService,
@@ -86,14 +102,15 @@ from apps.proyeccion.services import (
     EstimationFinancialSettingsService,
     EstimationBillingRuleService,
     EstimationPNTCalculator,
+    PeriodService,
+    CostDistributionService,
+    VersionConflict,
+    PresenceService,
 )
-from apps.proyeccion.models import IndirectCostTemplate, EstimationProject
-from apps.proyeccion.schemas import (
-    FinancialSettingsDto,
-    UpdateFinancialSettingsDto,
-    BillingRuleDto,
-    ReplaceBillingRulesDto,
-    PNTReportDto,
+from apps.proyeccion.models import (
+    IndirectCostTemplate,
+    EstimationProject,
+    ProjectionPeriod,
 )
 from core.permissions import Permission, require_permission
 from core.exceptions import NotFound
@@ -1107,12 +1124,6 @@ def delete_family_template(request: HttpRequest, template_set_id: UUID):
 # 14. Temporal Distribution Router
 # =============================================================================
 
-from apps.proyeccion.schemas import (
-    ProjectionPeriodDto, RegenerateResult,
-)
-from apps.proyeccion.services import PeriodService
-from apps.proyeccion.models import ProjectionPeriod
-
 distribution_router = Router(tags=["Temporal Distribution"])
 
 
@@ -1148,12 +1159,6 @@ def regenerate_projection_periods(request: HttpRequest, project_id: UUID, confir
     return 200, result
 
 
-from apps.proyeccion.schemas import (
-    DistributionPayloadDto, BulkEditRequest, BulkEditOkResponse, ConflictResponse,
-)
-from apps.proyeccion.services import CostDistributionService, VersionConflict
-
-
 @distribution_router.get(
     "/projects/{project_id}/cost-distribution/",
     response=DistributionPayloadDto,
@@ -1186,13 +1191,6 @@ def patch_cost_distribution_bulk(request: HttpRequest, project_id: UUID, payload
         'rollups': rebuilt['rollups'],
         'totals': rebuilt['totals'],
     }
-
-
-from apps.proyeccion.schemas import (
-    AutofillRequest, AutofillResponse, ResetLineRequest,
-    PresenceResponse, HeartbeatRequest,
-)
-from apps.proyeccion.services import PresenceService
 
 
 @distribution_router.post(
