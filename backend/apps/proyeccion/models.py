@@ -1551,7 +1551,7 @@ class CostDistribution(models.Model):
         ]
         constraints = [
             CheckConstraint(
-                check=(
+                condition=(
                     (Q(breakdownid__isnull=False) & Q(indirectcostid__isnull=True) & Q(linetype=0)) |
                     (Q(breakdownid__isnull=True) & Q(indirectcostid__isnull=False) & Q(linetype=1))
                 ),
@@ -1568,7 +1568,7 @@ class CostDistribution(models.Model):
                 condition=Q(indirectcostid__isnull=False),
             ),
             CheckConstraint(
-                check=Q(fraction__gte=0) & Q(fraction__lte=1),
+                condition=Q(fraction__gte=0) & Q(fraction__lte=1),
                 name='cost_distribution_fraction_range',
             ),
         ]
@@ -1608,3 +1608,138 @@ class DistributionPresence(models.Model):
 
     def __str__(self):
         return f"{self.userid} {self.mode} on {self.projectid}"
+
+
+class EstimationFinancialSettings(AuditMixin):
+    """Financial parameters for an estimation project (1:1)."""
+
+    settingsid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='settingsid',
+    )
+    projectid = models.OneToOneField(
+        'EstimationProject',
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='financial_settings',
+    )
+
+    # Anticipo
+    advanceamountnotax = models.DecimalField(
+        max_digits=19, decimal_places=2,
+        default=Decimal('0'),
+        db_column='advanceamountnotax',
+    )
+    advanceentryperiod = models.IntegerField(
+        default=1,
+        db_column='advanceentryperiod',
+    )
+    advanceamortizationrate = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        default=Decimal('0'),
+        db_column='advanceamortizationrate',
+    )
+
+    # Retenciones del cliente
+    imssretentionrate = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        default=Decimal('0.0500'),
+        db_column='imssretentionrate',
+    )
+    otherretentionrate = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        default=Decimal('0'),
+        db_column='otherretentionrate',
+    )
+    retentionreturnperiod = models.IntegerField(
+        null=True, blank=True,
+        db_column='retentionreturnperiod',
+    )
+
+    # Lag default global de pagos a proveedores
+    directpaymentlag = models.IntegerField(
+        default=0,
+        db_column='directpaymentlag',
+    )
+    indirectpaymentlag = models.IntegerField(
+        default=0,
+        db_column='indirectpaymentlag',
+    )
+
+    # Overrides de lag por categoría. Cualquier categoría que no aparezca usa el lag global.
+    # Formato:
+    #   {"direct": {"1": 0, "4": 2}, "indirect": {"C1": 3, "C5": 1}}
+    # Las llaves son categorycode (int como string para directos 1-7, str para indirectos C1-C8).
+    # Los valores son enteros 0..120 (mismas reglas que los lags globales).
+    category_lags = models.JSONField(
+        default=dict,
+        blank=True,
+        db_column='category_lags',
+    )
+
+    # Costo financiero
+    financecostrate = models.DecimalField(
+        max_digits=7, decimal_places=6,
+        default=Decimal('0.001000'),
+        db_column='financecostrate',
+    )
+
+    class Meta:
+        db_table = 'estimationfinancialsettings'
+        verbose_name = 'Estimation Financial Settings'
+        verbose_name_plural = 'Estimation Financial Settings'
+
+    def __str__(self):
+        return f"Financial settings for {self.projectid}"
+
+
+class EstimationBillingRule(AuditMixin):
+    """N billing tranches per estimation project (e.g. 50%/30%/20% at lags 0/1/2)."""
+
+    ruleid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='ruleid',
+    )
+    projectid = models.ForeignKey(
+        'EstimationProject',
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='billing_rules',
+    )
+    sequence = models.IntegerField(db_column='sequence')
+    percent = models.DecimalField(
+        max_digits=5, decimal_places=4,
+        db_column='percent',
+    )
+    lagperiods = models.IntegerField(db_column='lagperiods')
+
+    class Meta:
+        db_table = 'estimationbillingrule'
+        verbose_name = 'Estimation Billing Rule'
+        verbose_name_plural = 'Estimation Billing Rules'
+        ordering = ['projectid', 'sequence']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['projectid', 'sequence'],
+                name='uniq_estimation_billing_seq',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sequence__gte=1) & models.Q(sequence__lte=10),
+                name='estimation_billing_seq_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(percent__gte=0) & models.Q(percent__lte=1),
+                name='estimation_billing_pct_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(lagperiods__gte=0) & models.Q(lagperiods__lte=120),
+                name='estimation_billing_lag_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.projectid} #{self.sequence}: {self.percent} @ +{self.lagperiods}"

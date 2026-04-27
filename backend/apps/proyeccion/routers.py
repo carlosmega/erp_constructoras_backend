@@ -1,6 +1,10 @@
 """API routers for Proyección (Budget Estimation) module."""
 
+import base64
+import json
+
 from ninja import Router, File, UploadedFile
+from ninja.errors import HttpError
 from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -41,7 +45,6 @@ from apps.proyeccion.schemas import (
     WorkPlanMatrixSchema,
     WorkPlanSummarySchema,
     TemporalDistributionSchema,
-    CashFlowEntrySchema,
     ProjectBudgetSummarySchema,
     SupplyCatalogItemSchema,
     CreateSupplyCatalogItemDto,
@@ -76,13 +79,24 @@ from apps.proyeccion.services import (
     SupplyExplosionService,
     WorkPlanService,
     TemporalDistributionService,
-    CashFlowService,
     SupplyCatalogService,
     EquipmentYieldService,
     ConceptPriceCatalogService,
     FamilyTemplateService,
+    EstimationFinancialSettingsService,
+    EstimationBillingRuleService,
+    EstimationPNTCalculator,
 )
-from apps.proyeccion.models import IndirectCostTemplate
+from apps.proyeccion.models import IndirectCostTemplate, EstimationProject
+from apps.proyeccion.schemas import (
+    FinancialSettingsDto,
+    UpdateFinancialSettingsDto,
+    BillingRuleDto,
+    ReplaceBillingRulesDto,
+    PNTReportDto,
+)
+from core.permissions import Permission, require_permission
+from core.exceptions import NotFound
 
 
 # =============================================================================
@@ -755,29 +769,6 @@ def get_temporal_distribution(request: HttpRequest, project_id: UUID):
 
 
 @analysis_router.get(
-    "/projects/{project_id}/cashflow/",
-    response=List[CashFlowEntrySchema],
-)
-# TODO: Add @require_permission decorator during integration
-def get_cashflow(
-    request: HttpRequest,
-    project_id: UUID,
-    advancepercent: Decimal = Decimal('0'),
-    paymentdelay: int = 0,
-    paymentfrequency: int = 1,
-):
-    """Get cashflow projection based on work plan and payment parameters."""
-    entries = CashFlowService.calculate(
-        project_id,
-        request.user,
-        advance_percent=advancepercent,
-        payment_delay=paymentdelay,
-        payment_frequency=paymentfrequency,
-    )
-    return entries
-
-
-@analysis_router.get(
     "/projects/{project_id}/budget-summary/",
     response=ProjectBudgetSummarySchema,
 )
@@ -1272,3 +1263,159 @@ def presence_heartbeat(request: HttpRequest, project_id: UUID, payload: Heartbea
     project = EstimationProjectService.get_project(project_id, request.user)
     PresenceService.heartbeat(project, request.user, mode=payload.mode)
     return 200, {'ok': True}
+
+
+# =============================================================================
+# 15. Estimation PNT (Cashflow) Router — financial settings, billing rules, PNT
+# =============================================================================
+
+pnt_router = Router(tags=["Estimation PNT (Cashflow)"])
+
+
+def _serialize_settings(s) -> dict:
+    return {
+        'settingsid': s.settingsid,
+        'projectid': s.projectid_id,
+        'advanceamountnotax': s.advanceamountnotax,
+        'advanceentryperiod': s.advanceentryperiod,
+        'advanceamortizationrate': s.advanceamortizationrate,
+        'imssretentionrate': s.imssretentionrate,
+        'otherretentionrate': s.otherretentionrate,
+        'retentionreturnperiod': s.retentionreturnperiod,
+        'directpaymentlag': s.directpaymentlag,
+        'indirectpaymentlag': s.indirectpaymentlag,
+        'financecostrate': s.financecostrate,
+        'createdon': s.createdon,
+        'modifiedon': s.modifiedon,
+    }
+
+
+@pnt_router.get(
+    "/projects/{project_id}/financial-settings/",
+    response=FinancialSettingsDto,
+)
+@require_permission(Permission.ESTIMATION_PNT_READ)
+def get_financial_settings(request: HttpRequest, project_id: UUID):
+    """Get (or lazily create with defaults) the financial settings for a project."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    settings = EstimationFinancialSettingsService.get_or_create(project_id)
+    return _serialize_settings(settings)
+
+
+@pnt_router.patch(
+    "/projects/{project_id}/financial-settings/",
+    response=FinancialSettingsDto,
+)
+@require_permission(Permission.ESTIMATION_PNT_UPDATE_SETTINGS)
+def patch_financial_settings(
+    request: HttpRequest, project_id: UUID, payload: UpdateFinancialSettingsDto
+):
+    """Update whitelisted financial settings fields for a project."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    dto = payload.dict(exclude_unset=True)
+    updated = EstimationFinancialSettingsService.update(project_id, dto, user=request.user)
+    return _serialize_settings(updated)
+
+
+def _serialize_rule(r) -> dict:
+    return {
+        'sequence': r.sequence,
+        'percent': r.percent,
+        'lagperiods': r.lagperiods,
+    }
+
+
+@pnt_router.get(
+    "/projects/{project_id}/billing-rules/",
+    response=list[BillingRuleDto],
+)
+@require_permission(Permission.ESTIMATION_PNT_READ)
+def get_billing_rules(request: HttpRequest, project_id: UUID):
+    """List billing rules for a project (ordered by sequence)."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    rules = EstimationBillingRuleService.list(project_id)
+    return [_serialize_rule(r) for r in rules]
+
+
+@pnt_router.put(
+    "/projects/{project_id}/billing-rules/",
+    response=list[BillingRuleDto],
+)
+@require_permission(Permission.ESTIMATION_PNT_UPDATE_BILLING_RULES)
+def put_billing_rules(
+    request: HttpRequest, project_id: UUID, payload: ReplaceBillingRulesDto
+):
+    """Replace the full set of billing rules for a project (atomic, validates Σ=100%)."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    try:
+        rules = EstimationBillingRuleService.replace(
+            project_id,
+            [r.dict() for r in payload.rules],
+            user=request.user,
+        )
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return [_serialize_rule(r) for r in rules]
+
+
+def _serialize_pnt_report(report) -> dict:
+    return {
+        'projectid': report.projectid,
+        'granularity': report.granularity,
+        'periods': report.periods,
+        'rows': [
+            {
+                'code': r.code, 'label': r.label, 'section': r.section,
+                'values': r.values, 'emphasis': r.emphasis,
+            }
+            for r in report.rows
+        ],
+        'stats': report.stats,
+        'generated_at': report.generated_at,
+    }
+
+
+@pnt_router.get(
+    "/projects/{project_id}/pnt/",
+    response=PNTReportDto,
+)
+@require_permission(Permission.ESTIMATION_PNT_READ)
+def get_pnt(
+    request: HttpRequest,
+    project_id: UUID,
+    granularity: str = 'period',
+    overrides: str | None = None,
+):
+    """Compute the PNT report. 409 when no periods. Optional base64-JSON overrides."""
+    try:
+        EstimationProject.objects.get(pk=project_id)
+    except EstimationProject.DoesNotExist:
+        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    overrides_dict = None
+    if overrides:
+        try:
+            overrides_dict = json.loads(base64.b64decode(overrides).decode())
+        except Exception:
+            raise HttpError(400, 'overrides must be base64-encoded JSON')
+    try:
+        calc = EstimationPNTCalculator(project_id)
+    except ValueError as e:
+        # No periods → 409
+        raise HttpError(409, json.dumps({'detail': str(e), 'code': 'no_periods'}))
+    try:
+        report = calc.compute(overrides=overrides_dict, granularity=granularity)
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return _serialize_pnt_report(report)

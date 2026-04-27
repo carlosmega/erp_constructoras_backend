@@ -30,6 +30,8 @@ from apps.proyeccion.models import (
     CatalogSourceCode,
     FamilyTemplateSet,
     FamilyTemplateItem,
+    EstimationFinancialSettings,
+    EstimationBillingRule,
 )
 from apps.proyeccion.schemas import (
     CreateConceptFamilyDto,
@@ -1216,9 +1218,10 @@ class OfferAlternativeService:
 
     @staticmethod
     def list_alternatives(project_id: UUID, user) -> QuerySet[OfferAlternative]:
-        """List all offer alternatives for a project."""
+        """List active offer alternatives for a project (excludes soft-deleted)."""
         return OfferAlternative.objects.filter(
-            projectid=project_id
+            projectid=project_id,
+            statecode=0,  # Active only — soft-deleted have statecode=1
         ).select_related('createdby', 'modifiedby')
 
     @staticmethod
@@ -1843,100 +1846,6 @@ class TemporalDistributionService:
                 'cumulativeinvoiced': cumulative_invoiced,
                 'cumulativecost': cumulative_cost,
                 'cumulativeresult': cumulative_result,
-            })
-
-        return results
-
-
-class CashFlowService:
-    """Service class for cash flow reports (read-only, computed)."""
-
-    @staticmethod
-    def calculate(
-        project_id: UUID,
-        user,
-        advance_percent: Decimal = Decimal('0'),
-        payment_delay: int = 0,
-        payment_frequency: int = 1,
-    ) -> list[dict]:
-        """Compute cash flow: income (with advance and delayed payments), expenses, net flow.
-
-        Parameters:
-        - advance_percent: % of total sale received as advance in period 0
-        - payment_delay: number of periods to delay income receipts
-        - payment_frequency: collect income every N periods
-
-        Returns a list of dicts matching CashFlowEntrySchema.
-        """
-        # Get temporal distribution as base data
-        distribution = TemporalDistributionService.calculate(project_id, user)
-
-        if not distribution:
-            return []
-
-        # Calculate total sale for advance
-        total_invoiced = sum(d['invoicedamount'] for d in distribution)
-        advance_amount = total_invoiced * advance_percent / Decimal('100')
-
-        # Build raw income per period (before delay)
-        max_period = max(d['periodnumber'] for d in distribution)
-        raw_income = defaultdict(Decimal)
-        raw_expense = defaultdict(Decimal)
-        period_labels = {}
-
-        for d in distribution:
-            pn = d['periodnumber']
-            period_labels[pn] = d['periodlabel']
-            raw_expense[pn] = d['costamount']
-
-            # Income = invoiced amount, reduced by advance proportion
-            remaining_invoiced = d['invoicedamount'] * (Decimal('1') - advance_percent / Decimal('100'))
-            raw_income[pn] = remaining_invoiced
-
-        # Apply payment delay and frequency
-        delayed_income = defaultdict(Decimal)
-
-        # Add advance in period 1 (first period)
-        first_period = min(period_labels.keys()) if period_labels else 1
-        if advance_amount > 0:
-            delayed_income[first_period] += advance_amount
-
-        for pn in sorted(raw_income.keys()):
-            target_period = pn + payment_delay
-
-            # Apply frequency: only collect every N periods
-            if payment_frequency > 1:
-                # Accumulate to the next collection period
-                periods_since_start = target_period - first_period
-                remainder = periods_since_start % payment_frequency
-                if remainder != 0:
-                    target_period += (payment_frequency - remainder)
-
-            delayed_income[target_period] += raw_income[pn]
-
-        # Determine full range of periods
-        all_periods = sorted(set(list(raw_expense.keys()) + list(delayed_income.keys())))
-
-        # Build cash flow entries
-        results = []
-        cumulative_position = Decimal('0')
-
-        for pn in all_periods:
-            income = delayed_income.get(pn, Decimal('0'))
-            expense = raw_expense.get(pn, Decimal('0'))
-            net_flow = income - expense
-            cumulative_position += net_flow
-
-            label = period_labels.get(pn, f"Period {pn}")
-
-            results.append({
-                'periodnumber': pn,
-                'periodlabel': label,
-                'income': income,
-                'expense': expense,
-                'netflow': net_flow,
-                'cumulativeposition': cumulative_position,
-                'isriskzone': cumulative_position < 0,
             })
 
         return results
@@ -2901,32 +2810,48 @@ class CostDistributionService:
         zeros = [Decimal("0")] * N
 
         # Direct: SUMPRODUCT via ORM annotation — join CostDistribution with breakdown.amount
+        # Aggregated by (period, breakdown.categorycode) so we can rollup totals AND
+        # expose per-category vectors (used by PNT calculator for per-category lag).
         direct_by_period = list(zeros)
+        direct_by_period_by_category: dict[int, list[Decimal]] = {}
         direct_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.BREAKDOWN,
         ).annotate(
             contribution=F('breakdownid__amount') * F('fraction'),
-        ).values('periodnumber').annotate(
+        ).values('periodnumber', 'breakdownid__categorycode').annotate(
             total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
         )
         for row in direct_qs:
             p = row['periodnumber']
+            cat = row['breakdownid__categorycode']
+            amount = Decimal(row['total'] or 0)
             if 1 <= p <= N:
-                direct_by_period[p - 1] = Decimal(row['total'] or 0)
+                direct_by_period[p - 1] += amount
+                if cat is not None:
+                    if cat not in direct_by_period_by_category:
+                        direct_by_period_by_category[cat] = list(zeros)
+                    direct_by_period_by_category[cat][p - 1] += amount
 
-        # Indirect: SUMPRODUCT via IndirectCostDetail.amount
+        # Indirect: SUMPRODUCT via IndirectCostDetail.amount, also aggregated by category.
         indirect_by_period = list(zeros)
+        indirect_by_period_by_category: dict[str, list[Decimal]] = {}
         indirect_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.INDIRECT,
         ).annotate(
             contribution=F('indirectcostid__amount') * F('fraction'),
-        ).values('periodnumber').annotate(
+        ).values('periodnumber', 'indirectcostid__categorycode').annotate(
             total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
         )
         for row in indirect_qs:
             p = row['periodnumber']
+            cat = row['indirectcostid__categorycode']
+            amount = Decimal(row['total'] or 0)
             if 1 <= p <= N:
-                indirect_by_period[p - 1] = Decimal(row['total'] or 0)
+                indirect_by_period[p - 1] += amount
+                if cat is not None:
+                    if cat not in indirect_by_period_by_category:
+                        indirect_by_period_by_category[cat] = list(zeros)
+                    indirect_by_period_by_category[cat][p - 1] += amount
 
         # Retiros via chosen alternative
         chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
@@ -2951,6 +2876,8 @@ class CostDistributionService:
         return {
             'direct_by_period': direct_by_period,
             'indirect_by_period': indirect_by_period,
+            'direct_by_period_by_category': direct_by_period_by_category,
+            'indirect_by_period_by_category': indirect_by_period_by_category,
             'retiro_by_period': retiro_by_period,
             'utility_by_period': utility_by_period,
             'total_cost_by_period': total_cost_by_period,
@@ -3433,3 +3360,494 @@ class PresenceService:
             .select_related('userid')
             .order_by('-last_seen')
         )
+
+
+# =============================================================================
+# Estimation Financial Settings Service
+# =============================================================================
+
+
+class EstimationFinancialSettingsService:
+    """Manage 1:1 financial settings for an EstimationProject."""
+
+    _WHITELIST = frozenset({
+        'advanceamountnotax', 'advanceentryperiod', 'advanceamortizationrate',
+        'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
+        'directpaymentlag', 'indirectpaymentlag',
+        'financecostrate',
+        'category_lags',
+    })
+
+    @staticmethod
+    def get_or_create(project_id):
+        """Idempotent. Materializes defaults on first call."""
+        project = EstimationProject.objects.get(pk=project_id)
+        settings, _created = EstimationFinancialSettings.objects.get_or_create(projectid=project)
+        return settings
+
+    @classmethod
+    def update(cls, project_id, dto, user=None):
+        """Apply only whitelisted fields. Ignore unknown keys silently."""
+        settings = cls.get_or_create(project_id)
+        for key, value in (dto or {}).items():
+            if key in cls._WHITELIST:
+                setattr(settings, key, value)
+        if user is not None:
+            settings.modifiedby = user
+        settings.save()
+        return settings
+
+
+# =============================================================================
+# Estimation Billing Rule Service
+# =============================================================================
+
+
+class EstimationBillingRuleService:
+    """Manage N billing tranches per estimation project."""
+
+    _SUM_TOLERANCE = Decimal('0.0001')
+    _MAX_RULES = 10
+
+    @staticmethod
+    def list(project_id):
+        return list(
+            EstimationBillingRule.objects.filter(projectid=project_id).order_by('sequence')
+        )
+
+    @classmethod
+    @transaction.atomic
+    def replace(cls, project_id, rules, user=None):
+        """All-or-nothing replacement. Validates count, sum, sequences."""
+        if not rules:
+            raise ValueError('Debe proporcionar al menos 1 regla de facturación.')
+        if len(rules) > cls._MAX_RULES:
+            raise ValueError(f'Máximo {cls._MAX_RULES} reglas permitidas.')
+
+        sequences = [r['sequence'] for r in rules]
+        if len(set(sequences)) != len(sequences):
+            raise ValueError('Las secuencias deben ser únicas.')
+
+        total = sum((Decimal(str(r['percent'])) for r in rules), Decimal('0'))
+        if abs(total - Decimal('1')) > cls._SUM_TOLERANCE:
+            raise ValueError(
+                f'La suma de porcentajes debe ser 100% (±0.01%). Suma actual: {total * 100:.4f}%.'
+            )
+
+        project = EstimationProject.objects.get(pk=project_id)
+        EstimationBillingRule.objects.filter(projectid=project).delete()
+        created = []
+        for r in rules:
+            instance = EstimationBillingRule.objects.create(
+                projectid=project,
+                sequence=r['sequence'],
+                percent=Decimal(str(r['percent'])),
+                lagperiods=int(r['lagperiods']),
+            )
+            if user is not None:
+                instance.createdby = user
+                instance.modifiedby = user
+                instance.save(update_fields=['createdby', 'modifiedby'])
+            created.append(instance)
+        return sorted(created, key=lambda x: x.sequence)
+
+
+# =============================================================================
+# Estimation PNT (Proyección de Necesidad de Tesorería) Calculator
+# =============================================================================
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+from django.utils import timezone
+
+ZERO = Decimal('0')
+
+
+@dataclass
+class _PNTRow:
+    code: str
+    label: str
+    section: str  # 'RESULTADO' | 'COBROS' | 'PAGOS' | 'CAJA'
+    values: list
+    emphasis: bool = False
+
+
+@dataclass
+class _PNTReport:
+    projectid: object
+    granularity: str
+    periods: list
+    rows: list
+    stats: dict
+    generated_at: datetime
+
+
+@dataclass
+class _InlineBillingRule:
+    sequence: int
+    percent: Decimal
+    lagperiods: int
+
+
+class EstimationPNTCalculator:
+    """Derive PNT from CostDistribution rollups + financial settings + billing rules."""
+
+    _OVERRIDE_ALLOWLIST = frozenset({
+        'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
+        'advanceamountnotax', 'advanceentryperiod', 'advanceamortizationrate',
+        'directpaymentlag', 'indirectpaymentlag', 'financecostrate',
+    })
+
+    _FLOW_CODES = frozenset({
+        'RESULTADO', 'PRODUCCION', 'COSTO_DIRECTO', 'COSTO_INDIRECTO',
+        'RETIRO_TRANSV_RES', 'RETIRO_UTIL_RES',
+        'COBRO_TOTAL', 'COBRO_FACTURACION', 'ANTICIPO_CONCEDIDO', 'ANTICIPO_AMORT',
+        'RET_IMSS', 'OTRAS_RET', 'DEVOLUCION',
+        'PAGOS_DIRECTO', 'PAGOS_INDIRECTO', 'RETIRO_TRANSV', 'RETIRO_UTILIDADES',
+        'PAGOS_TOTALES', 'CAJA_MES', 'COSTO_FINANCIERO',
+    })
+    _CUMULATIVE_CODES = frozenset({'CAJA_ACUMULADA', 'SALDO_ANTICIPO'})
+
+    def __init__(self, project_id):
+        self.project = EstimationProject.objects.get(pk=project_id)
+        self.periods = list(
+            ProjectionPeriod.objects.filter(projectid=project_id).order_by('periodnumber')
+        )
+        self.N = len(self.periods)
+        if self.N == 0:
+            raise ValueError(
+                'No hay periodos. Inicializa el Plan de Obra (Paso 9) antes de consultar el PNT.'
+            )
+        self.settings = EstimationFinancialSettingsService.get_or_create(project_id)
+        self.billing_rules = self._load_billing_rules()
+        self.rollups = CostDistributionService.compute_rollups(self.project)
+
+    def _load_billing_rules(self):
+        persisted = EstimationBillingRuleService.list(self.project.estimationprojectid)
+        if persisted:
+            return [
+                _InlineBillingRule(sequence=r.sequence, percent=r.percent, lagperiods=r.lagperiods)
+                for r in persisted
+            ]
+        # Default implícito: 100%/lag 0
+        return [_InlineBillingRule(sequence=1, percent=Decimal('1'), lagperiods=0)]
+
+    def _apply_overrides(self, overrides):
+        """Mutate self.settings / self.billing_rules in-memory only."""
+        for key, value in (overrides or {}).items():
+            if key in self._OVERRIDE_ALLOWLIST:
+                if isinstance(value, (int, float, str)):
+                    value = Decimal(str(value)) if key not in {
+                        'retentionreturnperiod', 'advanceentryperiod',
+                        'directpaymentlag', 'indirectpaymentlag',
+                    } else int(value)
+                setattr(self.settings, key, value)
+        if 'billing_rules' in (overrides or {}):
+            self.billing_rules = [
+                _InlineBillingRule(
+                    sequence=int(r['sequence']),
+                    percent=Decimal(str(r['percent'])),
+                    lagperiods=int(r['lagperiods']),
+                )
+                for r in overrides['billing_rules']
+            ]
+
+    def compute(self, overrides=None, granularity='period'):
+        if granularity not in ('period', 'month'):
+            raise ValueError(f"granularity must be 'period' or 'month', got {granularity!r}")
+        if overrides:
+            self._apply_overrides(overrides)
+
+        # Base vectors from rollups
+        produccion = list(self.rollups['sale_by_period'])
+        costo_directo_neg = [-x for x in self.rollups['direct_by_period']]
+        costo_indirecto_neg = [-x for x in self.rollups['indirect_by_period']]
+        retiro_transv_neg = [-x for x in self.rollups['retiro_by_period']]
+        retiro_util_neg = [-x for x in self.rollups['utility_by_period']]
+
+        # ---- COBROS ----
+        cobro_facturacion, cobros_fuera = self._compute_cobro_facturacion(produccion)
+        anticipo_concedido = self._single_period_vector(
+            self.settings.advanceamountnotax, self.settings.advanceentryperiod,
+        )
+        anticipo_amortizado, advance_fully_amortized_at = self._compute_anticipo_amortizado(
+            cobro_facturacion,
+        )
+        retencion_imss = [-self.settings.imssretentionrate * cf for cf in cobro_facturacion]
+        otras_retencion = [-self.settings.otherretentionrate * cf for cf in cobro_facturacion]
+        devolucion = self._compute_devolucion(retencion_imss, otras_retencion)
+        saldo_anticipo = self._cumsum(anticipo_amortizado)
+        cobro_total = [
+            anticipo_concedido[i] + cobro_facturacion[i] + anticipo_amortizado[i]
+            + retencion_imss[i] + otras_retencion[i] + devolucion[i]
+            for i in range(self.N)
+        ]
+        # NOTE: SALDO_ANTICIPO is a cumulative running balance derived from
+        # ANTICIPO_AMORT and is reported for visibility only. Including it in
+        # COBRO_TOTAL would double-count amortization (this was the bug in the
+        # discarded operations-side implementation). Locked in by
+        # test_cobro_total_excludes_saldo_anticipo.
+
+        # ---- PAGOS ----
+        # Si hay overrides por categoría, los aplicamos por categoría y sumamos.
+        # Si no, usamos el lag global sobre el total agregado.
+        pagos_directo, pagos_dir_fuera = self._apply_pagos_lag(
+            self.rollups.get('direct_by_period_by_category', {}),
+            costo_directo_neg,
+            self.settings.directpaymentlag,
+            (self.settings.category_lags or {}).get('direct', {}),
+        )
+        pagos_indirecto, pagos_ind_fuera = self._apply_pagos_lag(
+            self.rollups.get('indirect_by_period_by_category', {}),
+            costo_indirecto_neg,
+            self.settings.indirectpaymentlag,
+            (self.settings.category_lags or {}).get('indirect', {}),
+        )
+        pagos_totales = [
+            pagos_directo[i] + pagos_indirecto[i] + retiro_transv_neg[i] + retiro_util_neg[i]
+            for i in range(self.N)
+        ]
+
+        # ---- CAJA ----
+        caja_mes = [cobro_total[i] + pagos_totales[i] for i in range(self.N)]
+        caja_acumulada = self._cumsum(caja_mes)
+        costo_financiero = [
+            ca * self.settings.financecostrate if ca < 0 else ZERO
+            for ca in caja_acumulada
+        ]
+
+        # ---- RESULTADO ----
+        resultado = [
+            produccion[i] + costo_directo_neg[i] + costo_indirecto_neg[i]
+            + retiro_transv_neg[i] + retiro_util_neg[i]
+            for i in range(self.N)
+        ]
+
+        rows = [
+            # RESULTADO section
+            _PNTRow('RESULTADO', 'Resultado', 'RESULTADO', resultado, emphasis=True),
+            _PNTRow('PRODUCCION', 'Producción', 'RESULTADO', produccion),
+            _PNTRow('COSTO_DIRECTO', 'Costo Directo', 'RESULTADO', costo_directo_neg),
+            _PNTRow('COSTO_INDIRECTO', 'Costo Indirecto', 'RESULTADO', costo_indirecto_neg),
+            _PNTRow('RETIRO_TRANSV_RES', 'Transversales', 'RESULTADO', retiro_transv_neg),
+            _PNTRow('RETIRO_UTIL_RES', 'Utilidades', 'RESULTADO', retiro_util_neg),
+            # COBROS section
+            _PNTRow('COBRO_TOTAL', 'Cobro Total sin IVA', 'COBROS', cobro_total, emphasis=True),
+            _PNTRow('COBRO_FACTURACION', 'Cobro Facturación', 'COBROS', cobro_facturacion),
+            _PNTRow('ANTICIPO_CONCEDIDO', 'Anticipo Concedido', 'COBROS', anticipo_concedido),
+            _PNTRow('ANTICIPO_AMORT', 'Anticipo Amortizado', 'COBROS', anticipo_amortizado),
+            _PNTRow('RET_IMSS', 'Retenciones IMSS', 'COBROS', retencion_imss),
+            _PNTRow('OTRAS_RET', 'Otras Retenciones', 'COBROS', otras_retencion),
+            _PNTRow('DEVOLUCION', 'Devolución Retenciones', 'COBROS', devolucion),
+            _PNTRow('SALDO_ANTICIPO', 'Saldo Anticipo', 'COBROS', saldo_anticipo),
+            # PAGOS section
+            _PNTRow('PAGOS_DIRECTO', 'Pagos Costo Directo', 'PAGOS', pagos_directo),
+            _PNTRow('PAGOS_INDIRECTO', 'Pagos Costos Indirectos', 'PAGOS', pagos_indirecto),
+            _PNTRow('RETIRO_TRANSV', 'Retiro Transversales', 'PAGOS', retiro_transv_neg),
+            _PNTRow('RETIRO_UTILIDADES', 'Retiro Utilidades', 'PAGOS', retiro_util_neg),
+            _PNTRow('PAGOS_TOTALES', 'Pagos Totales', 'PAGOS', pagos_totales, emphasis=True),
+            # CAJA section
+            _PNTRow('CAJA_MES', 'Caja Mes', 'CAJA', caja_mes, emphasis=True),
+            _PNTRow('CAJA_ACUMULADA', 'Caja Acumulada (PNT)', 'CAJA', caja_acumulada, emphasis=True),
+            _PNTRow('COSTO_FINANCIERO', 'Costo Financiero', 'CAJA', costo_financiero),
+        ]
+
+        chosen = self.rollups.get('chosen_alternative_id')
+        advance_fully_amortized_period = (
+            self.periods[advance_fully_amortized_at].periodlabel
+            if advance_fully_amortized_at is not None
+            else None
+        )
+        stats = {
+            'pnt_min': min(caja_acumulada) if caja_acumulada else ZERO,
+            'pnt_max': max(caja_acumulada) if caja_acumulada else ZERO,
+            'pnt_avg': (sum(caja_acumulada, ZERO) / Decimal(self.N)) if self.N else ZERO,
+            'total_costo_financiero': sum(costo_financiero, ZERO),
+            'cobros_fuera_horizonte': cobros_fuera,
+            'pagos_fuera_horizonte': pagos_dir_fuera + pagos_ind_fuera,
+            'chosen_alternative_id': chosen,
+            'transversalpercent_aplicado': self.rollups.get('transversalpercent', ZERO),
+            'profitpercent_aplicado': self.rollups.get('profitpercent', ZERO),
+            'advance_fully_amortized_period': advance_fully_amortized_period,
+        }
+
+        periods_out = [
+            {'label': p.periodlabel, 'startdate': p.startdate, 'enddate': p.enddate}
+            for p in self.periods
+        ]
+
+        if granularity == 'month':
+            periods_out, rows = self._aggregate_monthly(rows)
+
+        return _PNTReport(
+            projectid=self.project.estimationprojectid,
+            granularity=granularity,
+            periods=periods_out,
+            rows=rows,
+            stats=stats,
+            generated_at=timezone.now(),
+        )
+
+    def _apply_lag(self, vec, lag):
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for i in range(self.N):
+            target = i + (lag or 0)
+            if 0 <= target < self.N:
+                out[target] += vec[i]
+            else:
+                fuera += vec[i]
+        return out, fuera
+
+    def _apply_pagos_lag(self, by_category, fallback_vec, default_lag, overrides):
+        """Apply per-category lag to costs, falling back to default_lag for any category
+        not in `overrides`. If `by_category` is empty, applies default_lag to fallback_vec.
+
+        Args:
+            by_category: dict {categorycode → vector negativo de N decimales}
+            fallback_vec: vector negativo agregado (length N) — usado si by_category está vacío
+            default_lag: int, lag por defecto cuando una categoría no tiene override
+            overrides: dict {str(categorycode) → int lag}
+
+        Returns:
+            (out_vec, fuera_total) — output con periodos shifted y total fuera de horizonte
+        """
+        # Sin desglose por categoría → comportamiento legacy (lag global).
+        if not by_category:
+            return self._apply_lag(fallback_vec, default_lag)
+
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for cat_code, cat_vec in by_category.items():
+            # cat_vec viene positivo desde rollups; lo negamos para sumarse como costo (pago).
+            override_lag = overrides.get(str(cat_code))
+            lag = int(override_lag) if override_lag is not None else (default_lag or 0)
+            for i in range(self.N):
+                amount = -cat_vec[i]  # convertir a negativo (pago)
+                target = i + lag
+                if 0 <= target < self.N:
+                    out[target] += amount
+                else:
+                    fuera += amount
+        return out, fuera
+
+    def _aggregate_monthly(self, rows):
+        # Defensive: catches typos in row codes when taxonomy is extended
+        known = self._FLOW_CODES | self._CUMULATIVE_CODES
+        unknown = {r.code for r in rows} - known
+        if unknown:
+            raise AssertionError(f'Unknown row codes in _aggregate_monthly: {sorted(unknown)}')
+
+        # Group periods by (year, month)
+        groups = []
+        current_key = None
+        for i, p in enumerate(self.periods):
+            key = (p.startdate.year, p.startdate.month)
+            if key != current_key:
+                groups.append([i])
+                current_key = key
+            else:
+                groups[-1].append(i)
+
+        new_periods = []
+        for g in groups:
+            first = self.periods[g[0]]
+            last = self.periods[g[-1]]
+            new_periods.append({
+                'label': f'{first.startdate.year}-{first.startdate.month:02d}',
+                'startdate': first.startdate,
+                'enddate': last.enddate,
+            })
+
+        new_rows = []
+        for r in rows:
+            if r.code in self._CUMULATIVE_CODES:
+                agg = [r.values[g[-1]] for g in groups]
+            else:
+                agg = [sum((r.values[i] for i in g), ZERO) for g in groups]
+            new_rows.append(_PNTRow(r.code, r.label, r.section, agg, emphasis=r.emphasis))
+        return new_periods, new_rows
+
+    # --- internals ---
+
+    def _compute_cobro_facturacion(self, produccion):
+        out = [ZERO] * self.N
+        fuera = ZERO
+        for i in range(self.N):
+            if produccion[i] == ZERO:
+                continue
+            for rule in self.billing_rules:
+                target = i + rule.lagperiods
+                amount = produccion[i] * rule.percent
+                if 0 <= target < self.N:
+                    out[target] += amount
+                else:
+                    fuera += amount
+        return out, fuera
+
+    def _compute_anticipo_amortizado(self, cobro_facturacion):
+        """Capped amortization: per-period descuento del cobro_facturacion según rate,
+        pero deja de descontar una vez que el saldo acumulado iguala el monto del anticipo.
+
+        Returns:
+            (vector negativo por periodo, índice del periodo donde se completó la amortización
+             — None si nunca se llegó al cap o si no hay anticipo).
+        """
+        out = [ZERO] * self.N
+        advance_amt = self.settings.advanceamountnotax or ZERO
+        rate = self.settings.advanceamortizationrate or ZERO
+
+        # Sin anticipo o sin tasa → no hay amortización
+        if advance_amt <= ZERO or rate <= ZERO:
+            return out, None
+
+        cap = -advance_amt  # piso del saldo acumulado (negativo)
+        cumulative = ZERO
+        fully_amortized_at = None
+
+        for i, cf in enumerate(cobro_facturacion):
+            if cumulative <= cap:
+                # Ya totalmente amortizado: no más descuentos
+                continue
+            proposed = -rate * cf  # negativo
+            new_cumulative = cumulative + proposed
+            if new_cumulative <= cap:
+                # Cap: solo descontar lo necesario para cerrar el saldo
+                actual = cap - cumulative  # ≤ 0
+                out[i] = actual
+                cumulative = cap
+                if fully_amortized_at is None:
+                    fully_amortized_at = i
+            else:
+                out[i] = proposed
+                cumulative = new_cumulative
+
+        return out, fully_amortized_at
+
+    def _single_period_vector(self, amount, period_1indexed):
+        out = [ZERO] * self.N
+        if not amount:
+            return out
+        p = (period_1indexed or 1) - 1
+        if 0 <= p < self.N:
+            out[p] = Decimal(amount)
+        return out
+
+    def _compute_devolucion(self, imss, otras):
+        out = [ZERO] * self.N
+        if self.settings.retentionreturnperiod is None:
+            return out
+        p = self.settings.retentionreturnperiod - 1
+        if 0 <= p < self.N:
+            out[p] = -sum(imss) - sum(otras)
+        return out
+
+    @staticmethod
+    def _cumsum(values):
+        out = []
+        acc = ZERO
+        for v in values:
+            acc += v
+            out.append(acc)
+        return out

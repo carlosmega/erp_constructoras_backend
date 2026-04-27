@@ -1,6 +1,7 @@
 """Factory Boy factories for Proyeccion models."""
 
 import factory
+import uuid
 from factory.django import DjangoModelFactory
 from decimal import Decimal
 from datetime import date, timedelta
@@ -384,3 +385,82 @@ class CostDistributionFactory(factory.django.DjangoModelFactory):
         if obj.breakdownid and obj.breakdownid.conceptid:
             obj.projectid = obj.breakdownid.conceptid.projectid
             obj.save()
+
+
+class EstimationFinancialSettingsFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = 'proyeccion.EstimationFinancialSettings'
+
+    settingsid = factory.LazyFunction(uuid.uuid4)
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    advanceamountnotax = Decimal('0')
+    advanceentryperiod = 1
+    advanceamortizationrate = Decimal('0')
+    imssretentionrate = Decimal('0.0500')
+    otherretentionrate = Decimal('0')
+    retentionreturnperiod = None
+    directpaymentlag = 0
+    indirectpaymentlag = 0
+    financecostrate = Decimal('0.001000')
+
+
+class EstimationBillingRuleFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = 'proyeccion.EstimationBillingRule'
+
+    ruleid = factory.LazyFunction(uuid.uuid4)
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    sequence = factory.Sequence(lambda n: (n % 10) + 1)
+    percent = Decimal('1.0000')
+    lagperiods = 0
+
+
+def build_pnt_ready_project(*, periods=4, periodtype=0):
+    """Helper that wires an EstimationProject + N periods + 1 chosen alternative.
+
+    Returns: (project, list[ProjectionPeriod])
+    """
+    from apps.proyeccion.models import (
+        ProjectionPeriod, OfferAlternative, BudgetConcept,
+        UnitCostBreakdown, IndirectCostDetail, CostDistribution, WorkPlanEntry,
+    )
+    from datetime import date, timedelta
+    project = EstimationProjectFactory(periodtype=periodtype, periodcount=periods)
+    period_list = []
+    base = date(2026, 1, 1)
+    for i in range(periods):
+        offset = i * (7 if periodtype == 0 else 14)
+        p = ProjectionPeriod.objects.create(
+            projectid=project,
+            periodnumber=i + 1,
+            periodlabel=f'P{i + 1:02d}',
+            startdate=base + timedelta(days=offset),
+            enddate=base + timedelta(days=offset + (6 if periodtype == 0 else 13)),
+            periodtype=periodtype,
+        )
+        period_list.append(p)
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name='Base',
+        transversalpercent=Decimal('0.05'), profitpercent=Decimal('0.10'),
+        coefficient=Decimal('1.15'),
+        directcosttotal=Decimal('100000'), indirectcosttotal=Decimal('20000'),
+        constructioncost=Decimal('120000'), salepricenet=Decimal('138000'),
+        taxamount=Decimal('22080'), salepricetotal=Decimal('160080'),
+        ischosen=True,
+    )
+    return project, period_list
+
+
+def make_concept_for_project(project, code='C-001', description='Test', unit='m2'):
+    """Helper: create a BudgetConcept attached to project with required relations."""
+    family = ConceptFamilyFactory(projectid=project)
+    subfamily = ConceptSubfamilyFactory(familyid=family, projectid=project)
+    return BudgetConcept.objects.create(
+        projectid=project,
+        subfamilyid=subfamily,
+        code=code,
+        sequencenumber=1,
+        description=description,
+        unit=unit,
+        quantity=Decimal('1'),
+    )

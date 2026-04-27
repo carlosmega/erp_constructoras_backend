@@ -783,6 +783,19 @@ class TestOfferAlternativeService:
         )
         assert result.count() == 2
 
+    def test_list_alternatives_excludes_soft_deleted(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        active = OfferAlternativeFactory(projectid=project)
+        to_delete = OfferAlternativeFactory(projectid=project)
+        OfferAlternativeService.delete_alternative(to_delete.alternativeid, user)
+
+        result = OfferAlternativeService.list_alternatives(
+            project.estimationprojectid, user,
+        )
+        assert result.count() == 1
+        assert result.first().alternativeid == active.alternativeid
+
     def test_create_alternative(self):
         project = EstimationProjectFactory()
         user = project.ownerid
