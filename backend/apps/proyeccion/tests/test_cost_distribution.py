@@ -303,3 +303,73 @@ def test_reset_line_clears_manual_edits_and_regenerates():
     for d in dists:
         assert d.fraction == Decimal("0.33333333")  # uniform fallback (no workplan)
         assert d.isderived is True
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_compute_rollups_emits_by_line_and_lag_by_line():
+    """compute_rollups returns direct_by_period_by_line, indirect_by_period_by_line,
+    and lag_by_line in addition to existing aggregate vectors."""
+    from apps.proyeccion.services import CostDistributionService
+    from apps.proyeccion.tests.factories import (
+        EstimationProjectFactory, ProjectionPeriodFactory,
+        BudgetConceptFactory, UnitCostBreakdownFactory, IndirectCostDetailFactory,
+    )
+    from apps.proyeccion.models import CostLineType, CostDistribution
+    from decimal import Decimal
+
+    project = EstimationProjectFactory(periodcount=2)
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    ProjectionPeriodFactory(projectid=project, periodnumber=2)
+
+    concept = BudgetConceptFactory(projectid=project)
+    breakdown = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal('1000.00'), paymentlagperiods=2)
+    CostDistribution.objects.create(
+        projectid=project, linetype=CostLineType.BREAKDOWN,
+        breakdownid=breakdown, periodnumber=1, fraction=Decimal('1.0'),
+    )
+
+    indirect = IndirectCostDetailFactory(projectid=project, amount=Decimal('500.00'))
+    CostDistribution.objects.create(
+        projectid=project, linetype=CostLineType.INDIRECT,
+        indirectcostid=indirect, periodnumber=1, fraction=Decimal('1.0'),
+    )
+
+    rollups = CostDistributionService.compute_rollups(project)
+
+    # Existing aggregate vectors still present
+    assert 'direct_by_period' in rollups
+    assert 'indirect_by_period' in rollups
+
+    # New per-line dicts present
+    assert 'direct_by_period_by_line' in rollups
+    assert 'indirect_by_period_by_line' in rollups
+    assert 'lag_by_line' in rollups
+
+    # Per-line vectors keyed by string UUID
+    direct_by_line = rollups['direct_by_period_by_line']
+    indirect_by_line = rollups['indirect_by_period_by_line']
+    assert str(breakdown.breakdownid) in direct_by_line
+    assert str(indirect.indirectcostid) in indirect_by_line
+
+    # Vector lengths == number of periods (2)
+    assert len(direct_by_line[str(breakdown.breakdownid)]) == 2
+    assert direct_by_line[str(breakdown.breakdownid)][0] == Decimal('1000.00')
+
+    # lag_by_line: breakdown has 2, indirect has None
+    lag_by_line = rollups['lag_by_line']
+    assert lag_by_line[str(breakdown.breakdownid)] == 2
+    assert lag_by_line[str(indirect.indirectcostid)] is None
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_compute_rollups_no_longer_emits_by_category():
+    """The old direct_by_period_by_category / indirect_by_period_by_category keys are gone."""
+    from apps.proyeccion.services import CostDistributionService
+    from apps.proyeccion.tests.factories import EstimationProjectFactory, ProjectionPeriodFactory
+    project = EstimationProjectFactory()
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    rollups = CostDistributionService.compute_rollups(project)
+    assert 'direct_by_period_by_category' not in rollups
+    assert 'indirect_by_period_by_category' not in rollups

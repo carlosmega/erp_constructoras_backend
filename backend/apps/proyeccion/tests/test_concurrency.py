@@ -53,7 +53,7 @@ from apps.proyeccion.models import CostDistribution, CostLineType
 from apps.proyeccion.services import CostDistributionService, VersionConflict
 from apps.proyeccion.tests.factories import (
     EstimationProjectFactory, BudgetConceptFactory, UnitCostBreakdownFactory,
-    ProjectionPeriodFactory,
+    ProjectionPeriodFactory, IndirectCostDetailFactory, CostDistributionFactory,
 )
 
 
@@ -147,3 +147,154 @@ def test_presence_list_excludes_stale_over_2min():
     active = PresenceService.list_active(project)
     assert len(active) == 1
     assert active[0].userid == u_fresh
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_bulk_edits_persists_lag_on_breakdown():
+    """A lag_edit with valid expected_lineversion updates the line and bumps lineversion."""
+    project = EstimationProjectFactory()
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project)
+    line = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=None, lineversion=0)
+    user = SystemUserFactory()
+
+    result = CostDistributionService.apply_bulk_edits(
+        project, user=user,
+        edits=[],
+        lag_edits=[{
+            'lineid': str(line.breakdownid),
+            'linetype': 'BREAKDOWN',
+            'paymentlagperiods': 3,
+            'expected_lineversion': 0,
+        }],
+    )
+    line.refresh_from_db()
+    assert line.paymentlagperiods == 3
+    assert line.lineversion == 1
+    assert result['lag_updated'] == 1
+    assert result['new_lineversions'] == {str(line.breakdownid): 1}
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_bulk_edits_lag_version_conflict():
+    """If expected_lineversion mismatches, raises VersionConflict and does NOT mutate."""
+    project = EstimationProjectFactory()
+    line = IndirectCostDetailFactory(projectid=project, paymentlagperiods=2, lineversion=5)
+    user = SystemUserFactory()
+    with pytest.raises(VersionConflict) as exc:
+        CostDistributionService.apply_bulk_edits(
+            project, user=user, edits=[],
+            lag_edits=[{
+                'lineid': str(line.indirectcostid),
+                'linetype': 'INDIRECT',
+                'paymentlagperiods': 7,
+                'expected_lineversion': 4,   # actual is 5
+            }],
+        )
+    line.refresh_from_db()
+    assert line.paymentlagperiods == 2
+    assert line.lineversion == 5
+    assert any(c.get('lineid') == str(line.indirectcostid) for c in exc.value.conflicts)
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_bulk_edits_lag_clear_to_null():
+    """paymentlagperiods=None clears the override (back to global)."""
+    project = EstimationProjectFactory()
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project)
+    line = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=4, lineversion=2)
+    user = SystemUserFactory()
+    CostDistributionService.apply_bulk_edits(
+        project, user=user, edits=[],
+        lag_edits=[{
+            'lineid': str(line.breakdownid),
+            'linetype': 'BREAKDOWN',
+            'paymentlagperiods': None,
+            'expected_lineversion': 2,
+        }],
+    )
+    line.refresh_from_db()
+    assert line.paymentlagperiods is None
+    assert line.lineversion == 3
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_bulk_edits_atomic_with_cell_and_lag():
+    """If a cell conflict and a lag edit are submitted together, neither is applied."""
+    project = EstimationProjectFactory()
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project)
+    line = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=None, lineversion=0)
+    cell = CostDistributionFactory(
+        projectid=project, breakdownid=line,
+        linetype=CostLineType.BREAKDOWN, periodnumber=1, fraction=Decimal('0.50'),
+    )
+    cell.version = 5
+    cell.save()
+    user = SystemUserFactory()
+    with pytest.raises(VersionConflict):
+        CostDistributionService.apply_bulk_edits(
+            project, user=user,
+            edits=[{
+                'lineid': str(line.breakdownid), 'linetype': 'BREAKDOWN',
+                'periodnumber': 1, 'fraction': Decimal('0.75'),
+                'expected_version': 4,   # mismatch — actual is 5
+            }],
+            lag_edits=[{
+                'lineid': str(line.breakdownid), 'linetype': 'BREAKDOWN',
+                'paymentlagperiods': 2, 'expected_lineversion': 0,
+            }],
+        )
+    line.refresh_from_db()
+    cell.refresh_from_db()
+    assert line.paymentlagperiods is None
+    assert line.lineversion == 0
+    assert cell.fraction == Decimal('0.50000000')
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_bulk_edits_lag_updates_audit_fields():
+    """Lag edit bumps modifiedon (auto_now) on UnitCostBreakdown and IndirectCostDetail.
+    For IndirectCostDetail, modifiedby is also set to the editing user."""
+    import time
+    project = EstimationProjectFactory()
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project)
+    user = SystemUserFactory()
+
+    # Breakdown line (UnitCostBreakdown has no modifiedby)
+    bd = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=None, lineversion=0)
+    original_bd_modifiedon = bd.modifiedon
+
+    # Indirect line (IndirectCostDetail extends AuditMixin with modifiedby)
+    ind = IndirectCostDetailFactory(projectid=project, paymentlagperiods=None, lineversion=0)
+    original_ind_modifiedon = ind.modifiedon
+    original_ind_modifiedby = ind.modifiedby
+
+    # Ensure enough time passes for auto_now to generate a different timestamp
+    time.sleep(0.01)
+
+    CostDistributionService.apply_bulk_edits(
+        project, user=user, edits=[],
+        lag_edits=[
+            {'lineid': str(bd.breakdownid), 'linetype': 'BREAKDOWN',
+             'paymentlagperiods': 2, 'expected_lineversion': 0},
+            {'lineid': str(ind.indirectcostid), 'linetype': 'INDIRECT',
+             'paymentlagperiods': 3, 'expected_lineversion': 0},
+        ],
+    )
+    bd.refresh_from_db()
+    ind.refresh_from_db()
+
+    # Both should have modifiedon bumped (auto_now=True is enforced via update_fields)
+    assert bd.modifiedon > original_bd_modifiedon, "UnitCostBreakdown.modifiedon should be updated"
+    assert ind.modifiedon > original_ind_modifiedon, "IndirectCostDetail.modifiedon should be updated"
+
+    # IndirectCostDetail should have modifiedby set to the editing user
+    assert ind.modifiedby_id == user.systemuserid, "IndirectCostDetail.modifiedby should be set to the editing user"

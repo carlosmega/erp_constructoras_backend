@@ -870,6 +870,8 @@ class DistributionLineDto(Schema):
     description: str
     unit: str
     totalamount: float
+    paymentlagperiods: Optional[int] = None
+    lineversion: int = 0
     distribution: List[DistributionCellDto]
     checksum: float
 
@@ -927,13 +929,24 @@ class BulkEditItem(Schema):
     expected_version: int
 
 
+class BulkLagEditItem(Schema):
+    """Per-line payment lag edit. None = clear (use global default)."""
+    lineid: UUID
+    linetype: Literal['BREAKDOWN', 'INDIRECT']
+    paymentlagperiods: Optional[int] = None
+    expected_lineversion: int
+
+
 class BulkEditRequest(Schema):
-    edits: List[BulkEditItem]
+    edits: List[BulkEditItem] = []
+    lag_edits: List[BulkLagEditItem] = []
 
 
 class BulkEditOkResponse(Schema):
     updated: int
     new_versions: dict
+    lag_updated: int
+    new_lineversions: dict
     rollups: DistributionRollupsDto
     totals: DistributionTotalsDto
 
@@ -951,7 +964,7 @@ class ConflictItem(Schema):
 
 class ConflictResponse(Schema):
     error: Literal['version_conflict']
-    conflicts: List[ConflictItem]
+    conflicts: List[dict]
 
 
 class AutofillRequest(Schema):

@@ -1174,20 +1174,31 @@ def get_cost_distribution(request: HttpRequest, project_id: UUID):
     response={200: BulkEditOkResponse, 409: ConflictResponse, 400: dict},
 )
 def patch_cost_distribution_bulk(request: HttpRequest, project_id: UUID, payload: BulkEditRequest):
-    """Apply multiple cell edits atomically with optimistic locking per cell."""
+    """Apply multiple cell edits and/or per-line lag edits atomically."""
     project = EstimationProjectService.get_project(project_id, request.user)
     edits = [{
         'lineid': str(e.lineid), 'linetype': e.linetype, 'periodnumber': e.periodnumber,
         'fraction': e.fraction, 'expected_version': e.expected_version,
     } for e in payload.edits]
+    lag_edits = [{
+        'lineid': str(le.lineid), 'linetype': le.linetype,
+        'paymentlagperiods': le.paymentlagperiods,
+        'expected_lineversion': le.expected_lineversion,
+    } for le in payload.lag_edits]
     try:
-        result = CostDistributionService.apply_bulk_edits(project, user=request.user, edits=edits)
+        result = CostDistributionService.apply_bulk_edits(
+            project, user=request.user, edits=edits, lag_edits=lag_edits,
+        )
     except VersionConflict as exc:
         return 409, {'error': 'version_conflict', 'conflicts': exc.conflicts}
+    except ValueError as exc:
+        return 400, {'error': 'invalid', 'detail': str(exc)}
     rebuilt = CostDistributionService.build_payload(project)
     return 200, {
         'updated': result['updated'],
         'new_versions': result['new_versions'],
+        'lag_updated': result['lag_updated'],
+        'new_lineversions': result['new_lineversions'],
         'rollups': rebuilt['rollups'],
         'totals': rebuilt['totals'],
     }

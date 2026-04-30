@@ -2809,49 +2809,54 @@ class CostDistributionService:
         N = project.periodcount or 0
         zeros = [Decimal("0")] * N
 
-        # Direct: SUMPRODUCT via ORM annotation — join CostDistribution with breakdown.amount
-        # Aggregated by (period, breakdown.categorycode) so we can rollup totals AND
-        # expose per-category vectors (used by PNT calculator for per-category lag).
+        # Direct: per-line vectors keyed by breakdown UUID + aggregate by period.
         direct_by_period = list(zeros)
-        direct_by_period_by_category: dict[int, list[Decimal]] = {}
-        direct_qs = CostDistribution.objects.filter(
-            projectid=project, linetype=CostLineType.BREAKDOWN,
-        ).annotate(
-            contribution=F('breakdownid__amount') * F('fraction'),
-        ).values('periodnumber', 'breakdownid__categorycode').annotate(
-            total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
-        )
-        for row in direct_qs:
-            p = row['periodnumber']
-            cat = row['breakdownid__categorycode']
-            amount = Decimal(row['total'] or 0)
-            if 1 <= p <= N:
-                direct_by_period[p - 1] += amount
-                if cat is not None:
-                    if cat not in direct_by_period_by_category:
-                        direct_by_period_by_category[cat] = list(zeros)
-                    direct_by_period_by_category[cat][p - 1] += amount
+        direct_by_period_by_line: dict[str, list[Decimal]] = {}
+        lag_by_line: dict[str, int | None] = {}
 
-        # Indirect: SUMPRODUCT via IndirectCostDetail.amount, also aggregated by category.
+        breakdowns = UnitCostBreakdown.objects.filter(conceptid__projectid=project)
+        bd_dist_qs = CostDistribution.objects.filter(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+        ).values('breakdownid_id', 'periodnumber', 'fraction')
+        bd_dist_by_id: dict[str, dict[int, Decimal]] = {}
+        for row in bd_dist_qs:
+            bd_dist_by_id.setdefault(str(row['breakdownid_id']), {})[row['periodnumber']] = Decimal(row['fraction'])
+
+        for bd in breakdowns:
+            bd_id = str(bd.breakdownid)
+            line_vec = list(zeros)
+            cells = bd_dist_by_id.get(bd_id, {})
+            for i in range(N):
+                frac = cells.get(i + 1, Decimal('0'))
+                value = (bd.amount or Decimal('0')) * frac
+                line_vec[i] = value
+                direct_by_period[i] += value
+            direct_by_period_by_line[bd_id] = line_vec
+            lag_by_line[bd_id] = bd.paymentlagperiods
+
+        # Indirect: per-line vectors keyed by indirectcost UUID + aggregate by period.
         indirect_by_period = list(zeros)
-        indirect_by_period_by_category: dict[str, list[Decimal]] = {}
-        indirect_qs = CostDistribution.objects.filter(
+        indirect_by_period_by_line: dict[str, list[Decimal]] = {}
+
+        indirects = IndirectCostDetail.objects.filter(projectid=project)
+        ind_dist_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.INDIRECT,
-        ).annotate(
-            contribution=F('indirectcostid__amount') * F('fraction'),
-        ).values('periodnumber', 'indirectcostid__categorycode').annotate(
-            total=Coalesce(Sum('contribution'), Decimal("0"), output_field=DecimalField(max_digits=19, decimal_places=4)),
-        )
-        for row in indirect_qs:
-            p = row['periodnumber']
-            cat = row['indirectcostid__categorycode']
-            amount = Decimal(row['total'] or 0)
-            if 1 <= p <= N:
-                indirect_by_period[p - 1] += amount
-                if cat is not None:
-                    if cat not in indirect_by_period_by_category:
-                        indirect_by_period_by_category[cat] = list(zeros)
-                    indirect_by_period_by_category[cat][p - 1] += amount
+        ).values('indirectcostid_id', 'periodnumber', 'fraction')
+        ind_dist_by_id: dict[str, dict[int, Decimal]] = {}
+        for row in ind_dist_qs:
+            ind_dist_by_id.setdefault(str(row['indirectcostid_id']), {})[row['periodnumber']] = Decimal(row['fraction'])
+
+        for ind in indirects:
+            ind_id = str(ind.indirectcostid)
+            line_vec = list(zeros)
+            cells = ind_dist_by_id.get(ind_id, {})
+            for i in range(N):
+                frac = cells.get(i + 1, Decimal('0'))
+                value = (ind.amount or Decimal('0')) * frac
+                line_vec[i] = value
+                indirect_by_period[i] += value
+            indirect_by_period_by_line[ind_id] = line_vec
+            lag_by_line[ind_id] = ind.paymentlagperiods
 
         # Retiros via chosen alternative
         chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
@@ -2874,14 +2879,15 @@ class CostDistributionService:
                 sale_by_period[p - 1] = Decimal(row['total'] or 0)
 
         return {
+            'sale_by_period': sale_by_period,
             'direct_by_period': direct_by_period,
             'indirect_by_period': indirect_by_period,
-            'direct_by_period_by_category': direct_by_period_by_category,
-            'indirect_by_period_by_category': indirect_by_period_by_category,
             'retiro_by_period': retiro_by_period,
             'utility_by_period': utility_by_period,
             'total_cost_by_period': total_cost_by_period,
-            'sale_by_period': sale_by_period,
+            'direct_by_period_by_line': direct_by_period_by_line,
+            'indirect_by_period_by_line': indirect_by_period_by_line,
+            'lag_by_line': lag_by_line,
             'direct_total': sum(direct_by_period, Decimal("0")),
             'indirect_total': sum(indirect_by_period, Decimal("0")),
             'retiro_total': sum(retiro_by_period, Decimal("0")),
@@ -3009,20 +3015,57 @@ class CostDistributionService:
 
     @staticmethod
     @transaction.atomic
-    def apply_bulk_edits(project, *, user, edits: list) -> dict:
-        """Apply multiple edits atomically with optimistic locking per cell.
+    def apply_bulk_edits(project, *, user, edits: list = None, lag_edits: list = None) -> dict:
+        """Apply multiple cell edits and/or per-line lag edits atomically.
 
-        Each edit: {lineid, linetype, periodnumber, fraction, expected_version}
-        Raises VersionConflict(list[{lineid, periodnumber, your_version, server_version,
-                                      your_value, server_value, server_modifiedby,
-                                      server_modifiedon}]) on any version mismatch.
+        Args:
+            edits: list of {lineid, linetype, periodnumber, fraction, expected_version}
+            lag_edits: list of {lineid, linetype, paymentlagperiods, expected_lineversion}
+
+        Validations:
+            - lag_edits[].paymentlagperiods ∈ [0, 120] ∪ {None}
+            - lag_edits[].linetype ∈ {'BREAKDOWN', 'INDIRECT'}
+            - cell version mismatch raises VersionConflict
+            - line version mismatch raises VersionConflict (with lineid + current_lineversion + kind='lag')
+
+        On any conflict (cell or lag), aborts the entire transaction and raises
+        VersionConflict(conflicts=[...]). Conflict items per type:
+            cell:  {lineid, periodnumber, your_version, server_version, your_value,
+                    server_value, server_modifiedby, server_modifiedon}
+            lag:   {lineid, your_lineversion, server_lineversion, your_value, server_value,
+                    kind: 'lag'}
+
+        Returns: {
+            'updated': int,             # cells changed
+            'new_versions': dict,       # cell key → new version
+            'lag_updated': int,         # lines whose lag changed
+            'new_lineversions': dict,   # lineid → new lineversion
+        }
 
         Note: SQLite (used in development) does not support row-level locking, so
         select_for_update() is a no-op at the SQL level in dev. The all-or-nothing
         atomicity via transaction.atomic() still holds. PostgreSQL in production
         enforces proper row-level locking.
         """
+        edits = edits or []
+        lag_edits = lag_edits or []
+
+        # -------- Validate lag edits up front --------
+        for le in lag_edits:
+            plp = le.get('paymentlagperiods')
+            if plp is not None:
+                if not isinstance(plp, int) or plp < 0 or plp > 120:
+                    raise ValueError(
+                        f"paymentlagperiods out of range [0,120] or null: {plp!r}"
+                    )
+            if le['linetype'] not in ('BREAKDOWN', 'INDIRECT'):
+                raise ValueError(
+                    f"linetype must be BREAKDOWN or INDIRECT, got {le['linetype']!r}"
+                )
+
+        # -------- Detect conflicts (cells AND lags) before any mutation --------
         conflicts = []
+
         # SELECT FOR UPDATE on the affected rows to serialize with other writers
         for edit in edits:
             lt = CostLineType.BREAKDOWN if edit['linetype'] == 'BREAKDOWN' else CostLineType.INDIRECT
@@ -3056,10 +3099,30 @@ class CostDistributionService:
                     'server_modifiedon': existing.modifiedon.isoformat(),
                 })
 
+        # ===== LAG CONFLICT DETECTION =====
+        for le in lag_edits:
+            if le['linetype'] == 'BREAKDOWN':
+                line = UnitCostBreakdown.objects.select_for_update().filter(pk=le['lineid']).first()
+            else:
+                line = IndirectCostDetail.objects.select_for_update().filter(pk=le['lineid']).first()
+            if line is None:
+                raise ValueError(f"Line not found: {le['lineid']}")
+            if line.lineversion != le['expected_lineversion']:
+                conflicts.append({
+                    'lineid': le['lineid'],
+                    'kind': 'lag',
+                    'your_lineversion': le['expected_lineversion'],
+                    'server_lineversion': line.lineversion,
+                    'your_value': le.get('paymentlagperiods'),
+                    'server_value': line.paymentlagperiods,
+                })
+
         if conflicts:
             raise VersionConflict(conflicts)
 
-        # No conflicts — apply all
+        # -------- No conflicts — apply all --------
+
+        # Apply cell edits
         new_versions = {}
         for edit in edits:
             lt = CostLineType.BREAKDOWN if edit['linetype'] == 'BREAKDOWN' else CostLineType.INDIRECT
@@ -3084,7 +3147,29 @@ class CostDistributionService:
                 existing.save(update_fields=['fraction', 'isderived', 'version', 'modifiedby', 'modifiedon'])
                 new_versions[f"{edit['lineid']}:{edit['periodnumber']}"] = existing.version
 
-        return {'updated': len(edits), 'new_versions': new_versions}
+        # Apply lag edits
+        new_lineversions = {}
+        for le in lag_edits:
+            if le['linetype'] == 'BREAKDOWN':
+                line = UnitCostBreakdown.objects.get(pk=le['lineid'])
+            else:
+                line = IndirectCostDetail.objects.get(pk=le['lineid'])
+            line.paymentlagperiods = le.get('paymentlagperiods')
+            line.lineversion += 1
+            # UnitCostBreakdown has no modifiedby; IndirectCostDetail extends AuditMixin
+            if le['linetype'] == 'BREAKDOWN':
+                line.save(update_fields=['paymentlagperiods', 'lineversion', 'modifiedon'])
+            else:  # INDIRECT
+                line.modifiedby = user
+                line.save(update_fields=['paymentlagperiods', 'lineversion', 'modifiedby', 'modifiedon'])
+            new_lineversions[str(le['lineid'])] = line.lineversion
+
+        return {
+            'updated': len(edits),
+            'new_versions': new_versions,
+            'lag_updated': len(lag_edits),
+            'new_lineversions': new_lineversions,
+        }
 
     @staticmethod
     @transaction.atomic
@@ -3286,6 +3371,8 @@ class CostDistributionService:
             'description': bd.description,
             'unit': bd.unit,
             'totalamount': float(bd.amount),
+            'paymentlagperiods': bd.paymentlagperiods,
+            'lineversion': bd.lineversion,
             'distribution': cells,
             'checksum': float(checksum),
         }
@@ -3305,6 +3392,8 @@ class CostDistributionService:
             'description': ind.description,
             'unit': '',
             'totalamount': float(ind.amount),
+            'paymentlagperiods': ind.paymentlagperiods,
+            'lineversion': ind.lineversion,
             'distribution': cells,
             'checksum': float(checksum),
         }
@@ -3375,7 +3464,6 @@ class EstimationFinancialSettingsService:
         'imssretentionrate', 'otherretentionrate', 'retentionreturnperiod',
         'directpaymentlag', 'indirectpaymentlag',
         'financecostrate',
-        'category_lags',
     })
 
     @staticmethod
@@ -3590,19 +3678,15 @@ class EstimationPNTCalculator:
         # test_cobro_total_excludes_saldo_anticipo.
 
         # ---- PAGOS ----
-        # Si hay overrides por categoría, los aplicamos por categoría y sumamos.
-        # Si no, usamos el lag global sobre el total agregado.
         pagos_directo, pagos_dir_fuera = self._apply_pagos_lag(
-            self.rollups.get('direct_by_period_by_category', {}),
-            costo_directo_neg,
+            self.rollups['direct_by_period_by_line'],
+            self.rollups['lag_by_line'],
             self.settings.directpaymentlag,
-            (self.settings.category_lags or {}).get('direct', {}),
         )
         pagos_indirecto, pagos_ind_fuera = self._apply_pagos_lag(
-            self.rollups.get('indirect_by_period_by_category', {}),
-            costo_indirecto_neg,
+            self.rollups['indirect_by_period_by_line'],
+            self.rollups['lag_by_line'],
             self.settings.indirectpaymentlag,
-            (self.settings.category_lags or {}).get('indirect', {}),
         )
         pagos_totales = [
             pagos_directo[i] + pagos_indirecto[i] + retiro_transv_neg[i] + retiro_util_neg[i]
@@ -3700,31 +3784,25 @@ class EstimationPNTCalculator:
                 fuera += vec[i]
         return out, fuera
 
-    def _apply_pagos_lag(self, by_category, fallback_vec, default_lag, overrides):
-        """Apply per-category lag to costs, falling back to default_lag for any category
-        not in `overrides`. If `by_category` is empty, applies default_lag to fallback_vec.
+    def _apply_pagos_lag(self, by_line, lag_by_line, default_lag):
+        """Apply per-line lag to costs. Falls back to default_lag if lag_by_line[id] is None.
 
         Args:
-            by_category: dict {categorycode → vector negativo de N decimales}
-            fallback_vec: vector negativo agregado (length N) — usado si by_category está vacío
-            default_lag: int, lag por defecto cuando una categoría no tiene override
-            overrides: dict {str(categorycode) → int lag}
+            by_line: dict {lineid → vector positivo de N decimales}
+            lag_by_line: dict {lineid → int | None}
+            default_lag: int — fallback when lag_by_line[lineid] is None
 
         Returns:
-            (out_vec, fuera_total) — output con periodos shifted y total fuera de horizonte
+            (out_vec, fuera_total) — output vector with shifted negative amounts;
+            amounts pushed beyond N go to fuera.
         """
-        # Sin desglose por categoría → comportamiento legacy (lag global).
-        if not by_category:
-            return self._apply_lag(fallback_vec, default_lag)
-
         out = [ZERO] * self.N
         fuera = ZERO
-        for cat_code, cat_vec in by_category.items():
-            # cat_vec viene positivo desde rollups; lo negamos para sumarse como costo (pago).
-            override_lag = overrides.get(str(cat_code))
-            lag = int(override_lag) if override_lag is not None else (default_lag or 0)
+        for lineid, line_vec in by_line.items():
+            line_lag = lag_by_line.get(lineid)
+            lag = int(line_lag) if line_lag is not None else (default_lag or 0)
             for i in range(self.N):
-                amount = -cat_vec[i]  # convertir a negativo (pago)
+                amount = -line_vec[i]
                 target = i + lag
                 if 0 <= target < self.N:
                     out[target] += amount

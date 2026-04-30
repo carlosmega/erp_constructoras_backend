@@ -185,6 +185,8 @@ class UnitCostBreakdownFactory(DjangoModelFactory):
     yieldvalue = Decimal('1')
     amount = factory.LazyAttribute(lambda o: o.quantity * o.unitprice * o.yieldvalue)
     statecode = 0
+    paymentlagperiods = None
+    lineversion = 0
 
 
 class IndirectCostDetailFactory(DjangoModelFactory):
@@ -204,6 +206,8 @@ class IndirectCostDetailFactory(DjangoModelFactory):
     statecode = 0
     createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
     modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
+    paymentlagperiods = None
+    lineversion = 0
 
 
 class IndirectCostTemplateFactory(DjangoModelFactory):

@@ -214,3 +214,33 @@ class TestConceptPriceReferenceModel:
         for name in ['Cumbres Elite', 'Valle', 'Swiss Lab Mty']:
             ConceptPriceReferenceFactory(catalogitemid=item, projectname=name)
         assert item.price_references.count() == 3
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_unitcostbreakdown_has_payment_lag_fields():
+    from apps.proyeccion.tests.factories import UnitCostBreakdownFactory
+    line = UnitCostBreakdownFactory()
+    assert line.paymentlagperiods is None
+    assert line.lineversion == 0
+    line.paymentlagperiods = 3
+    line.lineversion = 1
+    line.save()
+    line.refresh_from_db()
+    assert line.paymentlagperiods == 3
+    assert line.lineversion == 1
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_indirectcostdetail_has_payment_lag_fields():
+    from apps.proyeccion.tests.factories import IndirectCostDetailFactory
+    line = IndirectCostDetailFactory()
+    assert line.paymentlagperiods is None
+    assert line.lineversion == 0
+    line.paymentlagperiods = 5
+    line.lineversion = 1
+    line.save()
+    line.refresh_from_db()
+    assert line.paymentlagperiods == 5
+    assert line.lineversion == 1

@@ -309,46 +309,51 @@ class TestEstimationPNTCalculatorPagosYCaja:
         pagos_ind = next(r for r in report.rows if r.code == 'PAGOS_INDIRECTO').values
         assert all(v == Decimal('-50') for v in pagos_ind)
 
-    def test_pagos_directo_with_per_category_lag_override(self):
-        """category_lags override aplica un lag distinto por categoría sin tocar el global."""
+    def test_pagos_directo_with_per_line_lag(self):
+        """A breakdown with paymentlagperiods=2 lands its cost 2 periods later."""
+        from apps.proyeccion.models import UnitCostBreakdown, CostDistribution
         project, periods = build_pnt_ready_project(periods=4)
-        # _wire_costs crea 1 breakdown con categorycode=1 (MATERIALS) — $1000 distribuido 25%/periodo.
-        self._wire_costs(project, periods)
+        concept = make_concept_for_project(project)
+        breakdown = UnitCostBreakdown.objects.create(
+            conceptid=concept, categorycode=1, linenumber=1, description='Mat',
+            unit='kg', quantity=Decimal('1'), unitprice=Decimal('1000'),
+            yieldvalue=Decimal('1'), amount=Decimal('1000'),
+            paymentlagperiods=2,
+        )
+        n = len(periods)
+        frac = Decimal('1') / Decimal(n)
+        for p in periods:
+            CostDistribution.objects.create(
+                projectid=project, linetype=0, breakdownid=breakdown,
+                periodnumber=p.periodnumber, fraction=frac, isderived=True,
+            )
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
-            {
-                'directpaymentlag': 0,  # global = sin lag
-                'category_lags': {'direct': {'1': 2}},  # MATERIALS (cat 1) → lag 2
-            },
+            {'directpaymentlag': 0},
             user=None,
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
         pagos_dir = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
-        # Direct = -250 por periodo. Con lag 2 sobre cat 1: P1=0, P2=0, P3=-250, P4=-250
-        # (los costos de P1 y P2 caen al cap del horizonte: P1→P3, P2→P4. P3→P5 y P4→P6 quedan fuera)
+        # Direct = -250 per period. With per-line lag 2: P1→P3, P2→P4, P3 and P4 overflow.
         assert pagos_dir[0] == Decimal('0')
         assert pagos_dir[1] == Decimal('0')
         assert pagos_dir[2] == Decimal('-250')
         assert pagos_dir[3] == Decimal('-250')
 
-    def test_pagos_per_category_falls_back_to_global_when_category_missing(self):
-        """Si una categoría no tiene override, usa el lag global."""
+    def test_pagos_directo_uses_global_lag_when_line_lag_is_none(self):
+        """Lines with paymentlagperiods=None fall back to the global directpaymentlag."""
         project, periods = build_pnt_ready_project(periods=4)
         self._wire_costs(project, periods)
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
-            {
-                'directpaymentlag': 1,  # global
-                # category_lags vacío (default) → todas las cats usan global
-                'category_lags': {},
-            },
+            {'directpaymentlag': 1},
             user=None,
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
         pagos_dir = next(r for r in report.rows if r.code == 'PAGOS_DIRECTO').values
-        # Direct = -250 por periodo. Con lag global 1: P1=0, P2=-250, P3=-250, P4=-250
+        # Direct = -250 per period. Global lag 1: P1=0, P2=-250, P3=-250, P4=-250
         assert pagos_dir[0] == Decimal('0')
         assert pagos_dir[1] == Decimal('-250')
         assert pagos_dir[2] == Decimal('-250')
@@ -430,3 +435,66 @@ class TestEstimationPNTCalculatorPagosYCaja:
         }
         actual = {r.code for r in report.rows}
         assert actual == expected, f"Missing: {expected - actual}; Extra: {actual - expected}"
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_pagos_lag_uses_line_value_when_set():
+    """A line with paymentlagperiods=2 lands its cost 2 periods later."""
+    from apps.proyeccion.services import EstimationPNTCalculator
+    from decimal import Decimal
+    calc = EstimationPNTCalculator.__new__(EstimationPNTCalculator)
+    calc.N = 5
+    by_line = {'line-A': [Decimal('100'), Decimal('0'), Decimal('0'), Decimal('0'), Decimal('0')]}
+    lag_by_line = {'line-A': 2}
+    out, fuera = calc._apply_pagos_lag(by_line, lag_by_line, default_lag=0)
+    assert out == [Decimal('0'), Decimal('0'), Decimal('-100'), Decimal('0'), Decimal('0')]
+    assert fuera == Decimal('0')
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_pagos_lag_falls_back_to_default_when_line_lag_is_none():
+    """A line with paymentlagperiods=None uses the default_lag argument."""
+    from apps.proyeccion.services import EstimationPNTCalculator
+    from decimal import Decimal
+    calc = EstimationPNTCalculator.__new__(EstimationPNTCalculator)
+    calc.N = 4
+    by_line = {'line-A': [Decimal('200'), Decimal('0'), Decimal('0'), Decimal('0')]}
+    lag_by_line = {'line-A': None}
+    out, fuera = calc._apply_pagos_lag(by_line, lag_by_line, default_lag=1)
+    assert out == [Decimal('0'), Decimal('-200'), Decimal('0'), Decimal('0')]
+    assert fuera == Decimal('0')
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_pagos_lag_routes_overflow_to_fuera_horizonte():
+    """Lag that pushes a cost beyond the last period accumulates in fuera."""
+    from apps.proyeccion.services import EstimationPNTCalculator
+    from decimal import Decimal
+    calc = EstimationPNTCalculator.__new__(EstimationPNTCalculator)
+    calc.N = 3
+    by_line = {'line-A': [Decimal('0'), Decimal('0'), Decimal('50')]}
+    lag_by_line = {'line-A': 2}
+    out, fuera = calc._apply_pagos_lag(by_line, lag_by_line, default_lag=0)
+    assert out == [Decimal('0'), Decimal('0'), Decimal('0')]
+    assert fuera == Decimal('-50')
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_apply_pagos_lag_iterates_multiple_lines_with_different_lags():
+    """Two lines with different lags both land correctly."""
+    from apps.proyeccion.services import EstimationPNTCalculator
+    from decimal import Decimal
+    calc = EstimationPNTCalculator.__new__(EstimationPNTCalculator)
+    calc.N = 4
+    by_line = {
+        'line-A': [Decimal('100'), Decimal('0'), Decimal('0'), Decimal('0')],
+        'line-B': [Decimal('200'), Decimal('0'), Decimal('0'), Decimal('0')],
+    }
+    lag_by_line = {'line-A': 1, 'line-B': 3}
+    out, fuera = calc._apply_pagos_lag(by_line, lag_by_line, default_lag=0)
+    assert out == [Decimal('0'), Decimal('-100'), Decimal('0'), Decimal('-200')]
+    assert fuera == Decimal('0')

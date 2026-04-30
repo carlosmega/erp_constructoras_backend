@@ -478,6 +478,19 @@ class UnitCostBreakdown(models.Model):
         db_column='statecode'
     )
 
+    paymentlagperiods = models.IntegerField(
+        null=True,
+        blank=True,
+        db_column='paymentlagperiods',
+        help_text='Lag de pago en periodos del proyecto. NULL = usa el default global (directpaymentlag).',
+    )
+
+    lineversion = models.IntegerField(
+        default=0,
+        db_column='lineversion',
+        help_text='Optimistic lock para edits a nivel de línea (lag).',
+    )
+
     createdon = models.DateTimeField(
         auto_now_add=True,
         db_column='createdon'
@@ -586,6 +599,19 @@ class IndirectCostDetail(AuditMixin):
         default=0,
         choices=ProyeccionStateCode.choices,
         db_column='statecode'
+    )
+
+    paymentlagperiods = models.IntegerField(
+        null=True,
+        blank=True,
+        db_column='paymentlagperiods',
+        help_text='Lag de pago en periodos del proyecto. NULL = usa el default global (indirectpaymentlag).',
+    )
+
+    lineversion = models.IntegerField(
+        default=0,
+        db_column='lineversion',
+        help_text='Optimistic lock para edits a nivel de línea (lag).',
     )
 
     class Meta:
@@ -1666,17 +1692,6 @@ class EstimationFinancialSettings(AuditMixin):
     indirectpaymentlag = models.IntegerField(
         default=0,
         db_column='indirectpaymentlag',
-    )
-
-    # Overrides de lag por categoría. Cualquier categoría que no aparezca usa el lag global.
-    # Formato:
-    #   {"direct": {"1": 0, "4": 2}, "indirect": {"C1": 3, "C5": 1}}
-    # Las llaves son categorycode (int como string para directos 1-7, str para indirectos C1-C8).
-    # Los valores son enteros 0..120 (mismas reglas que los lags globales).
-    category_lags = models.JSONField(
-        default=dict,
-        blank=True,
-        db_column='category_lags',
     )
 
     # Costo financiero
