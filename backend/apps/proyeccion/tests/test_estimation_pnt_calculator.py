@@ -23,13 +23,14 @@ class TestEstimationPNTCalculatorInit:
         assert calc.N == 3
         assert [p.periodnumber for p in calc.periods] == [1, 2, 3]
 
-    def test_default_billing_rule_when_none_persisted(self):
+    def test_no_billing_rules_falls_back_to_immediate_billing(self):
+        """Without persisted billing rules the calculator returns an empty list.
+        ``_compute_cobro_facturacion`` interprets that as immediate billing
+        (cobro_fact[i] = produccion[i]) so calculations stay usable before
+        the user configures milestones."""
         project, _ = build_pnt_ready_project(periods=2)
         calc = EstimationPNTCalculator(project.estimationprojectid)
-        # Default implícito: 100%/lag 0
-        assert len(calc.billing_rules) == 1
-        assert calc.billing_rules[0].percent == Decimal('1')
-        assert calc.billing_rules[0].lagperiods == 0
+        assert calc.billing_rules == []
 
     def test_loads_persisted_billing_rules(self):
         project, _ = build_pnt_ready_project(periods=2)
@@ -94,12 +95,16 @@ class TestEstimationPNTCalculatorCobros:
         cobro_fact = next(r for r in report.rows if r.code == 'COBRO_FACTURACION').values
         assert cobro_fact == [Decimal('100'), Decimal('200'), Decimal('300'), Decimal('400')]
 
-    def test_cobro_facturacion_two_tranches_with_lag(self):
+    def test_cobro_facturacion_two_milestones(self):
+        """Milestone billing: each rule places ``percent × Σ produccion`` at
+        an absolute project period (1-indexed via ``lagperiods``)."""
         project, _ = build_pnt_ready_project(periods=4)
-        EstimationBillingRuleFactory(projectid=project, sequence=1, percent=Decimal('0.5'), lagperiods=0)
-        EstimationBillingRuleFactory(projectid=project, sequence=2, percent=Decimal('0.5'), lagperiods=1)
+        # Milestone 1: 50% at period 1; Milestone 2: 50% at period 2.
+        EstimationBillingRuleFactory(projectid=project, sequence=1, percent=Decimal('0.5'), lagperiods=1)
+        EstimationBillingRuleFactory(projectid=project, sequence=2, percent=Decimal('0.5'), lagperiods=2)
         from apps.proyeccion.models import WorkPlanEntry
         concept = make_concept_for_project(project)
+        # Total produccion = 1000 (regardless of which period(s) it's spread across).
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
             entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
@@ -107,8 +112,8 @@ class TestEstimationPNTCalculatorCobros:
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
         cobro_fact = next(r for r in report.rows if r.code == 'COBRO_FACTURACION').values
-        assert cobro_fact[0] == Decimal('500')
-        assert cobro_fact[1] == Decimal('500')
+        assert cobro_fact[0] == Decimal('500')   # period 1 milestone
+        assert cobro_fact[1] == Decimal('500')   # period 2 milestone
         assert cobro_fact[2] == Decimal('0')
         assert cobro_fact[3] == Decimal('0')
 

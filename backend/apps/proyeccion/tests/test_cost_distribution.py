@@ -113,9 +113,14 @@ from apps.proyeccion.services import CostDistributionService
 @pytest.mark.django_db
 @pytest.mark.unit
 def test_compute_rollups_direct_sumproduct():
-    """SUMPRODUCT across 2 breakdowns in 3 periods."""
+    """SUMPRODUCT across 2 breakdowns in 3 periods.
+
+    Uses ``concept.quantity = 1`` so ``breakdown.amount`` reads as the
+    project-level cost contribution. Multiplication by concept.quantity is
+    covered by ``test_compute_rollups_scales_by_concept_quantity``.
+    """
     project = EstimationProjectFactory(periodcount=3)
-    concept = BudgetConceptFactory(projectid=project)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
     bd1 = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
     bd2 = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("2000"))
 
@@ -145,25 +150,52 @@ def test_compute_rollups_direct_sumproduct():
 def test_compute_rollups_with_chosen_alternative_retiros():
     from apps.proyeccion.models import OfferAlternative
     project = EstimationProjectFactory(periodcount=2)
-    concept = BudgetConceptFactory(projectid=project)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
     bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
     for p, f in zip([1, 2], [Decimal("0.6"), Decimal("0.4")]):
         CostDistribution.objects.create(
             projectid=project, linetype=CostLineType.BREAKDOWN,
             breakdownid=bd, periodnumber=p, fraction=f,
         )
+    # Stored as raw percentages (5 = 5%), matching OfferAlternativeService.
     OfferAlternative.objects.create(
         projectid=project, alternativenumber=1, name="Base",
-        transversalpercent=Decimal("0.05"), profitpercent=Decimal("0.15"),
+        transversalpercent=Decimal("5"), profitpercent=Decimal("15"),
         ischosen=True,
     )
 
     rollups = CostDistributionService.compute_rollups(project)
     # direct_by_period = [600, 400]
-    # retiro_by_period = [600*0.05, 400*0.05] = [30, 20]
-    # utility_by_period = [600*0.15, 400*0.15] = [90, 60]
+    # retiro_by_period  = [600 * 5/100,  400 * 5/100]  = [30, 20]
+    # utility_by_period = [600 * 15/100, 400 * 15/100] = [90, 60]
     assert rollups['retiro_by_period'] == [Decimal("30.00"), Decimal("20.00")]
     assert rollups['utility_by_period'] == [Decimal("90.00"), Decimal("60.00")]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_compute_rollups_scales_by_concept_quantity():
+    """``UnitCostBreakdown.amount`` is per-unit-of-concept (Σ quantity × unitprice
+    × yieldvalue of an APU ingredient line). The project-level cost a breakdown
+    contributes is ``amount × concept.quantity`` — same scale used by
+    ``OfferAlternativeService.regenerate_alternatives``. ``compute_rollups``
+    must apply this multiplication so the PNT rollups match the alternative
+    totals that drive retiros and the financial summary.
+    """
+    project = EstimationProjectFactory(periodcount=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("200"))
+    # Per-unit cost = $50 → project-level cost = 200 × $50 = $10,000.
+    bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("50"))
+    for p, f in zip([1, 2], [Decimal("0.4"), Decimal("0.6")]):
+        CostDistribution.objects.create(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+            breakdownid=bd, periodnumber=p, fraction=f,
+        )
+
+    rollups = CostDistributionService.compute_rollups(project)
+    # P1: 0.4 × 10,000 = 4,000;  P2: 0.6 × 10,000 = 6,000.
+    assert rollups['direct_by_period'] == [Decimal("4000.0"), Decimal("6000.0")]
+    assert rollups['direct_total'] == Decimal("10000.0")
 
 
 @pytest.mark.django_db
@@ -322,7 +354,7 @@ def test_compute_rollups_emits_by_line_and_lag_by_line():
     ProjectionPeriodFactory(projectid=project, periodnumber=1)
     ProjectionPeriodFactory(projectid=project, periodnumber=2)
 
-    concept = BudgetConceptFactory(projectid=project)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
     breakdown = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal('1000.00'), paymentlagperiods=2)
     CostDistribution.objects.create(
         projectid=project, linetype=CostLineType.BREAKDOWN,

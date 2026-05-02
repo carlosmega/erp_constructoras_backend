@@ -24,6 +24,7 @@ from apps.proyeccion.models import (
     WorkPlanEntry,
     WorkPlanEntryType,
     BreakdownCategoryCode,
+    ChecklistStatusCode,
     ProjectSizeCode,
     ConceptPriceCatalogItem,
     ConceptPriceReference,
@@ -116,7 +117,11 @@ class EstimationProjectService:
 
     @staticmethod
     def update_project(project_id, dto, user):
-        """Update an estimation project. Cannot update if already converted."""
+        """Update an estimation project. Cannot update if already converted.
+
+        Changing ``profitpercent`` triggers a re-prorate of indirect costs so
+        every concept picks up the new utility rate.
+        """
         project = EstimationProjectService.get_project(project_id, user)
 
         if project.statecode == EstimationStateCode.CONVERTED:
@@ -125,8 +130,10 @@ class EstimationProjectService:
         update_fields = [
             'name', 'description', 'presentationdate', 'estimatedstartdate',
             'estimatedenddate', 'durationmonths', 'projecttype', 'biddingtype',
-            'periodtype', 'estimatedcontractamount', 'exchangerate_mxn_usd', 'statecode',
+            'periodtype', 'estimatedcontractamount', 'exchangerate_mxn_usd',
+            'profitpercent', 'statecode',
         ]
+        old_profitpercent = project.profitpercent
         for field in update_fields:
             value = getattr(dto, field, None)
             if value is not None:
@@ -140,6 +147,11 @@ class EstimationProjectService:
 
         project.modifiedby = user
         project.save()
+
+        # When profitpercent changes, re-prorate so utility ripples to every concept.
+        if project.profitpercent != old_profitpercent:
+            IndirectCostDetailService.prorate_to_concepts(project.estimationprojectid, user)
+
         return project
 
     @staticmethod
@@ -547,11 +559,14 @@ class ConceptCatalogService:
         """Recalculate concept costs from its unit cost breakdowns.
 
         Sums breakdown amounts by category to get directunitcost, then computes:
+        - utilityunitcost = (directunitcost + indirectunitcost) * project.profitpercent / 100
         - unitprice = directunitcost + indirectunitcost + utilityunitcost
         - totalamount = unitprice * quantity
+
+        Mirrors the Excel "E7 Fase Estudio" formulas K = (I+J)*K2, L = I+J+K, M = H*L.
         """
         try:
-            concept = BudgetConcept.objects.get(conceptid=concept_id)
+            concept = BudgetConcept.objects.select_related('projectid').get(conceptid=concept_id)
         except BudgetConcept.DoesNotExist:
             raise NotFound(f"BudgetConcept with ID {concept_id} not found")
 
@@ -566,6 +581,10 @@ class ConceptCatalogService:
         )['total'] or Decimal('0')
 
         concept.directunitcost = total_direct
+        profitpercent = concept.projectid.profitpercent or Decimal('0')
+        concept.utilityunitcost = (
+            (concept.directunitcost + concept.indirectunitcost) * profitpercent / Decimal('100')
+        )
         concept.unitprice = concept.directunitcost + concept.indirectunitcost + concept.utilityunitcost
         concept.totalamount = concept.unitprice * concept.quantity
 
@@ -579,13 +598,16 @@ class UnitCostBreakdownService:
 
     @staticmethod
     def _recalc_concept(concept_id: UUID, user) -> None:
-        """Recompute BudgetConcept.directunitcost/unitprice/totalamount from active breakdowns.
+        """Recompute concept totals after a breakdown mutation.
 
-        Called after any breakdown mutation so downstream progress indicators
-        (e.g. "X de Y conceptos costeados") update without a manual recalc call.
+        Mirrors the Excel "E7 Fase Estudio" cascade:
+            I = directunitcost (Σ breakdown amounts)
+            K = (I + J) * project.profitpercent / 100
+            L = I + J + K
+            M = H * L
         """
         try:
-            concept = BudgetConcept.objects.get(conceptid=concept_id)
+            concept = BudgetConcept.objects.select_related('projectid').get(conceptid=concept_id)
         except BudgetConcept.DoesNotExist:
             return
 
@@ -595,13 +617,18 @@ class UnitCostBreakdownService:
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         concept.directunitcost = total_direct
+        profitpercent = concept.projectid.profitpercent or Decimal('0')
+        concept.utilityunitcost = (
+            (concept.directunitcost + concept.indirectunitcost) * profitpercent / Decimal('100')
+        )
         concept.unitprice = (
             concept.directunitcost + concept.indirectunitcost + concept.utilityunitcost
         )
         concept.totalamount = concept.unitprice * concept.quantity
         concept.modifiedby = user
         concept.save(update_fields=[
-            'directunitcost', 'unitprice', 'totalamount', 'modifiedby', 'modifiedon',
+            'directunitcost', 'utilityunitcost', 'unitprice', 'totalamount',
+            'modifiedby', 'modifiedon',
         ])
 
     @staticmethod
@@ -1112,7 +1139,11 @@ class IndirectCostDetailService:
     @staticmethod
     @transaction.atomic
     def apply_template(project_id: UUID, projectsize: int, user) -> list[IndirectCostDetail]:
-        """Copy indirect cost lines from IndirectCostTemplate matching projectsize."""
+        """Replace project's indirect cost details with lines from the matching template.
+
+        Existing details (and their cascading CostDistribution cells) are deleted before
+        seeding to honor the UI contract that applying a template replaces current data.
+        """
         if projectsize not in [c.value for c in ProjectSizeCode]:
             raise ValidationError(f"Invalid project size: {projectsize}")
 
@@ -1124,17 +1155,10 @@ class IndirectCostDetailService:
         if not templates.exists():
             raise ValidationError(f"No templates found for project size {projectsize}")
 
+        IndirectCostDetail.objects.filter(projectid=project_id).delete()
+
         created = []
-        # Track linenumber per category
         line_counters = defaultdict(int)
-
-        # Get existing max linenumbers per category
-        existing_maxes = IndirectCostDetail.objects.filter(
-            projectid=project_id,
-        ).values('categorycode').annotate(max_line=Max('linenumber'))
-
-        for entry in existing_maxes:
-            line_counters[entry['categorycode']] = entry['max_line']
 
         for template in templates:
             line_counters[template.categorycode] += 1
@@ -1171,20 +1195,30 @@ class IndirectCostDetailService:
     def prorate_to_concepts(project_id: UUID, user) -> list[BudgetConcept]:
         """Distribute total indirect cost across concepts proportionally by direct cost.
 
-        Each concept gets: indirectunitcost = (concept.directunitcost / total_direct) * total_indirect
-        Then unitprice and totalamount are recalculated.
+        Each concept gets:
+            indirectunitcost = (directunitcost * quantity / Σ direct) * total_indirect / quantity
+            utilityunitcost  = (directunitcost + indirectunitcost) * project.profitpercent / 100
+            unitprice        = directunitcost + indirectunitcost + utilityunitcost
+            totalamount      = unitprice * quantity
         """
         total_indirect = IndirectCostDetailService.get_total(project_id, user)
+
+        try:
+            project = EstimationProject.objects.get(estimationprojectid=project_id)
+        except EstimationProject.DoesNotExist:
+            raise NotFound(f"EstimationProject {project_id} not found")
+        profitpercent = project.profitpercent or Decimal('0')
 
         concepts = BudgetConcept.objects.filter(
             projectid=project_id,
             statecode=0,
         )
 
-        # Calculate total direct cost across all concepts
-        total_direct = Decimal('0')
-        for concept in concepts:
-            total_direct += concept.directunitcost * concept.quantity
+        # Calculate total direct cost across all concepts (DB aggregation,
+        # avoids loading every concept into Python just to sum).
+        total_direct = concepts.aggregate(
+            total=Sum(F('directunitcost') * F('quantity'), output_field=models.DecimalField())
+        )['total'] or Decimal('0')
 
         if total_direct <= 0:
             return list(concepts)
@@ -1201,6 +1235,9 @@ class IndirectCostDetailService:
             else:
                 concept.indirectunitcost = Decimal('0')
 
+            concept.utilityunitcost = (
+                (concept.directunitcost + concept.indirectunitcost) * profitpercent / Decimal('100')
+            )
             concept.unitprice = concept.directunitcost + concept.indirectunitcost + concept.utilityunitcost
             concept.totalamount = concept.unitprice * concept.quantity
             concept.modifiedby = user
@@ -1208,7 +1245,8 @@ class IndirectCostDetailService:
 
         BudgetConcept.objects.bulk_update(
             updated,
-            ['indirectunitcost', 'unitprice', 'totalamount', 'modifiedby', 'modifiedon'],
+            ['indirectunitcost', 'utilityunitcost', 'unitprice', 'totalamount',
+             'modifiedby', 'modifiedon'],
         )
         return updated
 
@@ -1336,7 +1374,11 @@ class OfferAlternativeService:
     @staticmethod
     @transaction.atomic
     def choose_alternative(alternative_id: UUID, user) -> OfferAlternative:
-        """Set one alternative as chosen, unset all others for the same project."""
+        """Set one alternative as chosen, unset all others for the same project,
+        sync ``project.profitpercent`` to the chosen alternative's profitpercent
+        and re-prorate indirect costs so every concept's utilityunitcost picks
+        up the new rate (Excel "E7 Fase Estudio" K2 behavior).
+        """
         try:
             alternative = OfferAlternative.objects.get(alternativeid=alternative_id)
         except OfferAlternative.DoesNotExist:
@@ -1351,6 +1393,16 @@ class OfferAlternativeService:
         alternative.ischosen = True
         alternative.modifiedby = user
         alternative.save()
+
+        # Sync the project-level profit rate and recompute every concept so the
+        # CD / CI / Utilidad / P.U. / Importe columns stay consistent with the
+        # chosen offer (utility = (CD+CI) * profit% / 100).
+        project = alternative.projectid
+        project.profitpercent = alternative.profitpercent or Decimal('0')
+        project.modifiedby = user
+        project.save(update_fields=['profitpercent', 'modifiedby', 'modifiedon'])
+        IndirectCostDetailService.prorate_to_concepts(project.estimationprojectid, user)
+
         return alternative
 
 
@@ -1389,17 +1441,31 @@ class ExternalCostService:
 
     @staticmethod
     def update_cost(cost_id: UUID, dto: UpdateExternalCostItemDto, user) -> ExternalCostItem:
-        """Update an external cost item."""
+        """Update an external cost item.
+
+        ``amount`` is derived: when the item applies (Yes), it is recomputed as
+        ``(percentofsale / 100) * project.estimatedcontractamount``. When applies
+        is N/A or No, ``amount`` is forced to 0. Any client-supplied ``amount``
+        in the DTO is ignored.
+        """
         try:
-            cost = ExternalCostItem.objects.get(externalcostid=cost_id)
+            cost = ExternalCostItem.objects.select_related('projectid').get(externalcostid=cost_id)
         except ExternalCostItem.DoesNotExist:
             raise NotFound(f"ExternalCostItem with ID {cost_id} not found")
 
-        update_fields = ['applies', 'percentofsale', 'amount', 'statecode']
-        for field in update_fields:
-            value = getattr(dto, field, None)
-            if value is not None:
-                setattr(cost, field, value)
+        if dto.applies is not None:
+            cost.applies = dto.applies
+        if dto.percentofsale is not None:
+            cost.percentofsale = dto.percentofsale
+        if dto.statecode is not None:
+            cost.statecode = dto.statecode
+
+        if cost.applies == ChecklistStatusCode.YES:
+            contract_amount = cost.projectid.estimatedcontractamount or Decimal('0')
+            percent = cost.percentofsale or Decimal('0')
+            cost.amount = (percent / Decimal('100')) * contract_amount
+        else:
+            cost.amount = Decimal('0')
 
         cost.save()
         return cost
@@ -1426,6 +1492,7 @@ class SupplyExplosionService:
                 'conceptid': concept.conceptid,
                 'conceptcode': concept.code,
                 'conceptdescription': concept.description,
+                'conceptquantity': concept.quantity,
                 'categorycode': bd.categorycode,
                 'supplyid': bd.supplyid.supplyid if bd.supplyid else None,
                 'supplycode': bd.supplyid.code if bd.supplyid else None,
@@ -1442,13 +1509,20 @@ class SupplyExplosionService:
     def generate_consolidated(project_id: UUID, user) -> list[dict]:
         """Generate consolidated supply explosion grouped by supply code.
 
+        Aggregates each breakdown line by its supply (catalog item), scaling
+        ``quantity`` and ``amount`` by the parent concept's quantity. This
+        makes the totals reflect the **whole project** (e.g., total kg of
+        cement to buy, total cost of cement) rather than per-unit-of-concept,
+        so the consolidated total reconciles with ``Σ directunitcost × quantity``
+        used by the cuadre indicator.
+
         Returns a list of dicts matching SupplyExplosionConsolidatedSchema.
         """
         breakdowns = UnitCostBreakdown.objects.filter(
             conceptid__projectid=project_id,
             statecode=0,
             supplyid__isnull=False,
-        ).select_related('supplyid')
+        ).select_related('supplyid', 'conceptid')
 
         # Group by supply code
         groups = defaultdict(lambda: {
@@ -1462,13 +1536,14 @@ class SupplyExplosionService:
 
         for bd in breakdowns:
             supply = bd.supplyid
+            concept_qty = bd.conceptid.quantity or Decimal('0')
             key = supply.code
             group = groups[key]
             group['description'] = supply.description
             group['unit'] = supply.unit
             group['supplytype'] = supply.supplytype
-            group['totalquantity'] += bd.quantity
-            group['totalamount'] += bd.amount
+            group['totalquantity'] += bd.quantity * concept_qty
+            group['totalamount'] += bd.amount * concept_qty
             group['concepts'].add(bd.conceptid_id)
 
         results = []
@@ -2814,7 +2889,17 @@ class CostDistributionService:
         direct_by_period_by_line: dict[str, list[Decimal]] = {}
         lag_by_line: dict[str, int | None] = {}
 
-        breakdowns = UnitCostBreakdown.objects.filter(conceptid__projectid=project)
+        # ``UnitCostBreakdown.amount`` is per-unit-of-concept (Σ
+        # quantity*unitprice*yieldvalue of an APU ingredient line). The
+        # project-level cost a breakdown contributes is
+        # ``amount × concept.quantity``, matching the convention used by
+        # ``OfferAlternativeService.regenerate_alternatives`` and
+        # ``BudgetConceptService.recalculate_concept``. Multiply by
+        # ``conceptid.quantity`` here so the PNT rollups are at the same
+        # scale as the alternative totals.
+        breakdowns = UnitCostBreakdown.objects.filter(
+            conceptid__projectid=project,
+        ).select_related('conceptid')
         bd_dist_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.BREAKDOWN,
         ).values('breakdownid_id', 'periodnumber', 'fraction')
@@ -2826,9 +2911,11 @@ class CostDistributionService:
             bd_id = str(bd.breakdownid)
             line_vec = list(zeros)
             cells = bd_dist_by_id.get(bd_id, {})
+            concept_qty = bd.conceptid.quantity or Decimal('0')
+            line_total = (bd.amount or Decimal('0')) * concept_qty
             for i in range(N):
                 frac = cells.get(i + 1, Decimal('0'))
-                value = (bd.amount or Decimal('0')) * frac
+                value = line_total * frac
                 line_vec[i] = value
                 direct_by_period[i] += value
             direct_by_period_by_line[bd_id] = line_vec
@@ -2858,14 +2945,21 @@ class CostDistributionService:
             indirect_by_period_by_line[ind_id] = line_vec
             lag_by_line[ind_id] = ind.paymentlagperiods
 
-        # Retiros via chosen alternative
+        # Retiros via chosen alternative.
+        # transversalpercent / profitpercent are stored as RAW percentages
+        # (e.g. 30 means 30%), matching the form-to-DB convention used by
+        # OfferAlternativeService.create_alternative which also divides by 100
+        # to compute the coefficient. Without this division retiros and
+        # utility were inflated 100x in the PNT.
         chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
         trans_pct = chosen.transversalpercent if chosen else Decimal("0")
         prof_pct = chosen.profitpercent if chosen else Decimal("0")
+        trans_factor = trans_pct / Decimal("100")
+        prof_factor = prof_pct / Decimal("100")
 
         base_cost = [d + i for d, i in zip(direct_by_period, indirect_by_period)]
-        retiro_by_period = [_round2(c * trans_pct) for c in base_cost]
-        utility_by_period = [_round2(c * prof_pct) for c in base_cost]
+        retiro_by_period = [_round2(c * trans_factor) for c in base_cost]
+        utility_by_period = [_round2(c * prof_factor) for c in base_cost]
         total_cost_by_period = [b + r + u for b, r, u in zip(base_cost, retiro_by_period, utility_by_period)]
 
         # Sale from WorkPlanEntry (PLANNED)
@@ -2990,27 +3084,55 @@ class CostDistributionService:
 
     @staticmethod
     def _upsert_line_distribution(*, project, linetype, breakdownid, indirectcostid, fractions, only_empty) -> int:
-        """Return number of rows written/modified."""
+        """Return number of rows written/modified.
+
+        Performance: fetches existing distributions for this line in 1 query,
+        then issues at most 2 statements (1 bulk_update + 1 bulk_create).
+        Previously did 1 SELECT + 1 INSERT/UPDATE per period — for a 26-period
+        autofill across 551 lines that was ~28k queries.
+        """
+        base_lookup = {'projectid': project, 'linetype': linetype}
+        if breakdownid:
+            base_lookup['breakdownid_id'] = breakdownid
+        else:
+            base_lookup['indirectcostid_id'] = indirectcostid
+
+        existing_by_period = {
+            d.periodnumber: d
+            for d in CostDistribution.objects.filter(**base_lookup)
+        }
+
+        to_update = []
+        to_create = []
         affected = 0
+
         for idx, frac in enumerate(fractions):
             period = idx + 1
-            lookup = {'projectid': project, 'linetype': linetype, 'periodnumber': period}
-            if breakdownid:
-                lookup['breakdownid_id'] = breakdownid
-            else:
-                lookup['indirectcostid_id'] = indirectcostid
-            existing = CostDistribution.objects.filter(**lookup).first()
+            existing = existing_by_period.get(period)
             if only_empty and existing is not None:
                 continue  # preserve
-            defaults = {'fraction': frac.quantize(Decimal("0.00000001")), 'isderived': True}
-            if existing:
-                for k, v in defaults.items():
-                    setattr(existing, k, v)
+            frac_q = frac.quantize(Decimal("0.00000001"))
+            if existing is not None:
+                existing.fraction = frac_q
+                existing.isderived = True
                 existing.version = F('version') + 1
-                existing.save(update_fields=['fraction', 'isderived', 'version', 'modifiedon'])
+                to_update.append(existing)
             else:
-                CostDistribution.objects.create(**lookup, **defaults)
+                to_create.append(CostDistribution(
+                    **base_lookup,
+                    periodnumber=period,
+                    fraction=frac_q,
+                    isderived=True,
+                ))
             affected += 1
+
+        if to_update:
+            CostDistribution.objects.bulk_update(
+                to_update, ['fraction', 'isderived', 'version'],
+            )
+        if to_create:
+            CostDistribution.objects.bulk_create(to_create)
+
         return affected
 
     @staticmethod
@@ -3276,9 +3398,23 @@ class CostDistributionService:
         """Build families array: directs grouped by breakdown category (MATERIALES,
         MAQUINARIA, ...), indirects grouped by IndirectCostDetail.categorycode using
         the `area` field for the display name.
+
+        Performance: prefetches *all* CostDistribution rows for the project in one
+        query and groups them in Python. Previously each line + each family rollup
+        triggered its own filter, producing N+1 (~551 queries for a 56-concept
+        project). Now it's exactly 3 queries: breakdowns, indirects, distributions.
         """
         N = project.periodcount
         families = []
+
+        # Single fetch of CostDistribution rows for the whole project.
+        dists_by_breakdown: dict = defaultdict(list)
+        dists_by_indirect: dict = defaultdict(list)
+        for d in CostDistribution.objects.filter(projectid=project):
+            if d.breakdownid_id is not None:
+                dists_by_breakdown[d.breakdownid_id].append(d)
+            elif d.indirectcostid_id is not None:
+                dists_by_indirect[d.indirectcostid_id].append(d)
 
         # DIRECT: group UnitCostBreakdown by categorycode (not by concept family)
         bds_by_cat = defaultdict(list)
@@ -3292,8 +3428,11 @@ class CostDistributionService:
             bd_list = bds_by_cat.get(cat_value, [])
             if not bd_list:
                 continue  # omit empty categories so the UI stays tight
-            rollups_by_period = CostDistributionService._family_rollup(
-                bd_list, N, linetype='BREAKDOWN',
+            rollups_by_period = CostDistributionService._family_rollup_from_dict(
+                bd_list, N,
+                amounts_by_id={bd.breakdownid: bd.amount for bd in bd_list},
+                dists_by_id=dists_by_breakdown,
+                id_attr='breakdownid',
             )
             total_amount = sum((bd.amount for bd in bd_list), Decimal("0"))
             families.append({
@@ -3303,7 +3442,9 @@ class CostDistributionService:
                 'totalamount': float(total_amount),
                 'rollups_by_period': [float(x) for x in rollups_by_period],
                 'lines': [
-                    CostDistributionService._line_payload_breakdown(bd, N)
+                    CostDistributionService._line_payload_breakdown(
+                        bd, N, dists_by_breakdown.get(bd.breakdownid, []),
+                    )
                     for bd in bd_list
                 ],
             })
@@ -3314,8 +3455,11 @@ class CostDistributionService:
             ind_by_cat[ind.categorycode or 'OTHER'].append(ind)
         for cat in sorted(ind_by_cat.keys()):
             inds = ind_by_cat[cat]
-            rollups_by_period = CostDistributionService._family_rollup(
-                inds, N, linetype='INDIRECT',
+            rollups_by_period = CostDistributionService._family_rollup_from_dict(
+                inds, N,
+                amounts_by_id={ind.indirectcostid: ind.amount for ind in inds},
+                dists_by_id=dists_by_indirect,
+                id_attr='indirectcostid',
             )
             total_amount = sum((ind.amount for ind in inds), Decimal("0"))
             name = (inds[0].area or '').strip() or f'Indirecto {cat}'
@@ -3326,45 +3470,42 @@ class CostDistributionService:
                 'totalamount': float(total_amount),
                 'rollups_by_period': [float(x) for x in rollups_by_period],
                 'lines': [
-                    CostDistributionService._line_payload_indirect(ind, N)
+                    CostDistributionService._line_payload_indirect(
+                        ind, N, dists_by_indirect.get(ind.indirectcostid, []),
+                    )
                     for ind in inds
                 ],
             })
         return families
 
     @staticmethod
-    def _family_rollup(lines, N, *, linetype):
-        """SUMPRODUCT of given lines x fractions per period."""
+    def _family_rollup_from_dict(lines, N, *, amounts_by_id, dists_by_id, id_attr):
+        """SUMPRODUCT of given lines x fractions per period using a pre-fetched dict.
+
+        Replaces the legacy ``_family_rollup`` which queried CostDistribution per
+        family. ``id_attr`` is ``'breakdownid'`` or ``'indirectcostid'``.
+        """
         buckets = [Decimal("0")] * N
         if not lines:
             return buckets
-        if linetype == 'BREAKDOWN':
-            line_ids = [l.breakdownid for l in lines]
-            amounts = {l.breakdownid: l.amount for l in lines}
-            qs = CostDistribution.objects.filter(breakdownid_id__in=line_ids)
-            for d in qs:
-                amt = amounts.get(d.breakdownid_id, Decimal("0"))
-                if 1 <= d.periodnumber <= N:
-                    buckets[d.periodnumber - 1] += amt * d.fraction
-        else:
-            line_ids = [l.indirectcostid for l in lines]
-            amounts = {l.indirectcostid: l.amount for l in lines}
-            qs = CostDistribution.objects.filter(indirectcostid_id__in=line_ids)
-            for d in qs:
-                amt = amounts.get(d.indirectcostid_id, Decimal("0"))
+        for line in lines:
+            line_id = getattr(line, id_attr)
+            amt = amounts_by_id.get(line_id, Decimal("0"))
+            for d in dists_by_id.get(line_id, []):
                 if 1 <= d.periodnumber <= N:
                     buckets[d.periodnumber - 1] += amt * d.fraction
         return buckets
 
     @staticmethod
-    def _line_payload_breakdown(bd, N):
-        dists = list(CostDistribution.objects.filter(breakdownid=bd).order_by('periodnumber'))
+    def _line_payload_breakdown(bd, N, dists):
+        """``dists`` is the pre-fetched list of CostDistribution rows for this line."""
+        dists_sorted = sorted(dists, key=lambda d: d.periodnumber)
         cells = [
             {'periodnumber': d.periodnumber, 'fraction': float(d.fraction),
              'isderived': d.isderived, 'version': d.version}
-            for d in dists
+            for d in dists_sorted
         ]
-        checksum = sum((d.fraction for d in dists), Decimal("0"))
+        checksum = sum((d.fraction for d in dists_sorted), Decimal("0"))
         return {
             'lineid': str(bd.breakdownid),
             'linetype': 'BREAKDOWN',
@@ -3378,14 +3519,15 @@ class CostDistributionService:
         }
 
     @staticmethod
-    def _line_payload_indirect(ind, N):
-        dists = list(CostDistribution.objects.filter(indirectcostid=ind).order_by('periodnumber'))
+    def _line_payload_indirect(ind, N, dists):
+        """``dists`` is the pre-fetched list of CostDistribution rows for this line."""
+        dists_sorted = sorted(dists, key=lambda d: d.periodnumber)
         cells = [
             {'periodnumber': d.periodnumber, 'fraction': float(d.fraction),
              'isderived': d.isderived, 'version': d.version}
-            for d in dists
+            for d in dists_sorted
         ]
-        checksum = sum((d.fraction for d in dists), Decimal("0"))
+        checksum = sum((d.fraction for d in dists_sorted), Decimal("0"))
         return {
             'lineid': str(ind.indirectcostid),
             'linetype': 'INDIRECT',
@@ -3618,8 +3760,9 @@ class EstimationPNTCalculator:
                 _InlineBillingRule(sequence=r.sequence, percent=r.percent, lagperiods=r.lagperiods)
                 for r in persisted
             ]
-        # Default implícito: 100%/lag 0
-        return [_InlineBillingRule(sequence=1, percent=Decimal('1'), lagperiods=0)]
+        # Sin reglas configuradas → cobro inmediato (cobro_fact[i] = produccion[i]).
+        # _compute_cobro_facturacion detecta lista vacía y usa este fallback.
+        return []
 
     def _apply_overrides(self, overrides):
         """Mutate self.settings / self.billing_rules in-memory only."""
@@ -3850,18 +3993,37 @@ class EstimationPNTCalculator:
     # --- internals ---
 
     def _compute_cobro_facturacion(self, produccion):
+        """Milestone billing model — mirrors the Excel "PNT" sheet (R17-R19).
+
+        Each ``EstimationBillingRule`` represents a single project-level
+        milestone: ``percent × Σ produccion`` is collected at the absolute
+        period number indicated by ``lagperiods`` (1-indexed from project
+        start). Rules whose period falls outside the project horizon go to
+        the "fuera de horizonte" bucket.
+
+        When no rules are configured, falls back to immediate billing
+        (cobro_fact[i] = produccion[i]) so the calculator stays usable
+        before the user sets up the milestone schedule.
+
+        Excel formula reference (sheet "PNT"):
+            E17 = IF($D17 = E$5, $CQ$9 * $B17, 0)
+                       │            │           │
+                       periodo del  producción  porcentaje
+                       milestone    TOTAL       de la regla
+        """
+        if not self.billing_rules:
+            return list(produccion), ZERO
+
+        total_prod = sum(produccion, ZERO)
         out = [ZERO] * self.N
         fuera = ZERO
-        for i in range(self.N):
-            if produccion[i] == ZERO:
-                continue
-            for rule in self.billing_rules:
-                target = i + rule.lagperiods
-                amount = produccion[i] * rule.percent
-                if 0 <= target < self.N:
-                    out[target] += amount
-                else:
-                    fuera += amount
+        for rule in self.billing_rules:
+            amount = total_prod * rule.percent
+            target = int(rule.lagperiods) - 1  # 1-indexed absolute period -> 0-indexed bucket
+            if 0 <= target < self.N:
+                out[target] += amount
+            else:
+                fuera += amount
         return out, fuera
 
     def _compute_anticipo_amortizado(self, cobro_facturacion):

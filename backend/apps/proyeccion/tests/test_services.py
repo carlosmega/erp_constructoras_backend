@@ -713,6 +713,34 @@ class TestIndirectCostDetailService:
         assert created[0].amount == Decimal('5000') * Decimal('1') * Decimal('6')
         assert created[1].categorycode == 'C2'
 
+    def test_apply_template_replaces_existing_details(self):
+        project = EstimationProjectFactory()
+        user = project.ownerid
+
+        IndirectCostDetailFactory(
+            projectid=project, categorycode='C1',
+            description='Old detail', linenumber=1,
+        )
+        IndirectCostDetailFactory(
+            projectid=project, categorycode='C2',
+            description='Another old detail', linenumber=1,
+        )
+
+        IndirectCostTemplateFactory(
+            projectsize=1, categorycode='C1',
+            description='Template item 1',
+            monthlycost=Decimal('5000'), units=Decimal('1'), months=Decimal('6'),
+        )
+
+        created = IndirectCostDetailService.apply_template(
+            project.estimationprojectid, 1, user,
+        )
+
+        remaining = IndirectCostDetail.objects.filter(projectid=project)
+        assert remaining.count() == 1
+        assert remaining.first().description == 'Template item 1'
+        assert created[0].linenumber == 1
+
     def test_apply_template_invalid_size(self):
         project = EstimationProjectFactory()
         user = project.ownerid
@@ -928,19 +956,71 @@ class TestExternalCostService:
                 project.estimationprojectid, user,
             )
 
-    def test_update_cost(self):
-        item = ExternalCostItemFactory(amount=Decimal('0'))
+    def test_update_cost_recomputes_amount_from_percent(self):
+        """Amount = (percentofsale / 100) * project.estimatedcontractamount when applies=Yes."""
+        project = EstimationProjectFactory(estimatedcontractamount=Decimal('1000000'))
+        item = ExternalCostItemFactory(projectid=project, amount=Decimal('0'))
         user = SalespersonFactory()
 
         dto = UpdateExternalCostItemDto(
             applies=1,
-            amount=Decimal('50000'),
+            percentofsale=Decimal('5'),
         )
 
         updated = ExternalCostService.update_cost(item.externalcostid, dto, user)
 
         assert updated.applies == 1
-        assert updated.amount == Decimal('50000')
+        assert updated.percentofsale == Decimal('5')
+        assert updated.amount == Decimal('50000.00')
+
+    def test_update_cost_ignores_client_amount(self):
+        """Client-supplied amount is ignored; service always recomputes."""
+        project = EstimationProjectFactory(estimatedcontractamount=Decimal('1000000'))
+        item = ExternalCostItemFactory(projectid=project, amount=Decimal('0'))
+        user = SalespersonFactory()
+
+        dto = UpdateExternalCostItemDto(
+            applies=1,
+            percentofsale=Decimal('2'),
+            amount=Decimal('999999'),  # bogus value, should be ignored
+        )
+
+        updated = ExternalCostService.update_cost(item.externalcostid, dto, user)
+
+        assert updated.amount == Decimal('20000.00')
+
+    def test_update_cost_zeroes_amount_when_not_applies(self):
+        """When applies switches to No or N/A, amount is forced to 0."""
+        project = EstimationProjectFactory(estimatedcontractamount=Decimal('1000000'))
+        item = ExternalCostItemFactory(
+            projectid=project,
+            applies=1,
+            percentofsale=Decimal('5'),
+            amount=Decimal('50000'),
+        )
+        user = SalespersonFactory()
+
+        updated = ExternalCostService.update_cost(
+            item.externalcostid,
+            UpdateExternalCostItemDto(applies=2),  # No
+            user,
+        )
+
+        assert updated.amount == Decimal('0')
+
+    def test_update_cost_amount_zero_when_contract_amount_missing(self):
+        """If the project has no estimated contract amount, amount stays 0."""
+        project = EstimationProjectFactory(estimatedcontractamount=Decimal('0'))
+        item = ExternalCostItemFactory(projectid=project, amount=Decimal('0'))
+        user = SalespersonFactory()
+
+        updated = ExternalCostService.update_cost(
+            item.externalcostid,
+            UpdateExternalCostItemDto(applies=1, percentofsale=Decimal('5')),
+            user,
+        )
+
+        assert updated.amount == Decimal('0')
 
     def test_update_cost_not_found(self):
         user = SalespersonFactory()
@@ -948,6 +1028,82 @@ class TestExternalCostService:
 
         with pytest.raises(NotFound):
             ExternalCostService.update_cost(uuid4(), dto, user)
+
+
+# =============================================================================
+# SupplyExplosionService
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestSupplyExplosionService:
+    """Tests for SupplyExplosionService.generate_consolidated."""
+
+    def test_consolidated_scales_by_concept_quantity(self):
+        """Consolidated totals must multiply each line by parent concept.quantity
+        so the project-wide totals reconcile with Σ directunitcost × quantity.
+        """
+        from apps.proyeccion.services import SupplyExplosionService
+
+        project = EstimationProjectFactory()
+        # Two concepts with different quantities so we can detect the multiplier.
+        c1 = BudgetConceptFactory(projectid=project, quantity=Decimal('200'))
+        c2 = BudgetConceptFactory(projectid=project, quantity=Decimal('50'))
+
+        supply = SupplyCatalogItemFactory(code='MAT-X', description='Cemento', unit='kg')
+
+        # Each breakdown line consumes $50 per unit-of-concept.
+        UnitCostBreakdownFactory(
+            conceptid=c1, supplyid=supply,
+            quantity=Decimal('1'), unitprice=Decimal('50'), yieldvalue=Decimal('1'),
+            amount=Decimal('50'),
+        )
+        UnitCostBreakdownFactory(
+            conceptid=c2, supplyid=supply,
+            quantity=Decimal('1'), unitprice=Decimal('50'), yieldvalue=Decimal('1'),
+            amount=Decimal('50'),
+        )
+
+        result = SupplyExplosionService.generate_consolidated(
+            project.estimationprojectid, user=project.ownerid,
+        )
+
+        assert len(result) == 1
+        item = result[0]
+        # Total amount = 50 * 200 + 50 * 50 = 10,000 + 2,500 = 12,500
+        assert item['totalamount'] == Decimal('12500')
+        # Total quantity = 1 * 200 + 1 * 50 = 250
+        assert item['totalquantity'] == Decimal('250')
+        assert item['conceptcount'] == 2
+
+    def test_consolidated_excludes_lines_without_supplyid(self):
+        """Lines without supplyid (HM/EPP) must not appear in consolidated."""
+        from apps.proyeccion.services import SupplyExplosionService
+
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, quantity=Decimal('10'))
+
+        supply = SupplyCatalogItemFactory(code='MAT-Y')
+        UnitCostBreakdownFactory(
+            conceptid=concept, supplyid=supply,
+            quantity=Decimal('1'), unitprice=Decimal('100'), yieldvalue=Decimal('1'),
+            amount=Decimal('100'),
+        )
+        # Free-form line without supplyid (e.g., HM)
+        UnitCostBreakdownFactory(
+            conceptid=concept, supplyid=None,
+            quantity=Decimal('1'), unitprice=Decimal('5'), yieldvalue=Decimal('1'),
+            amount=Decimal('5'),
+        )
+
+        result = SupplyExplosionService.generate_consolidated(
+            project.estimationprojectid, user=project.ownerid,
+        )
+
+        assert len(result) == 1
+        assert result[0]['supplycode'] == 'MAT-Y'
+        assert result[0]['totalamount'] == Decimal('1000')  # 100 * 10
 
 
 # =============================================================================

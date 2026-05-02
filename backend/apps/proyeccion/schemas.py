@@ -68,6 +68,7 @@ class CreateEstimationProjectDto(Schema):
     periodtype: Optional[int] = 0
     estimatedcontractamount: Optional[Decimal] = Decimal('0')
     exchangerate_mxn_usd: Optional[Decimal] = None
+    profitpercent: Optional[Decimal] = Decimal('0')
 
 
 class UpdateEstimationProjectDto(Schema):
@@ -84,6 +85,7 @@ class UpdateEstimationProjectDto(Schema):
     periodtype: Optional[int] = None
     estimatedcontractamount: Optional[Decimal] = None
     exchangerate_mxn_usd: Optional[Decimal] = None
+    profitpercent: Optional[Decimal] = None
     statecode: Optional[int] = None
 
 
@@ -540,6 +542,7 @@ class SupplyExplosionItemSchema(Schema):
     conceptid: UUID
     conceptcode: str
     conceptdescription: str
+    conceptquantity: Decimal
     categorycode: int
     supplyid: Optional[UUID] = None
     supplycode: Optional[str] = None

@@ -70,7 +70,7 @@ class TestGetCostDistribution:
         )
         for i in range(1, 3):
             ProjectionPeriodFactory(projectid=project, periodnumber=i)
-        concept = BudgetConceptFactory(projectid=project)
+        concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
         bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
         CostDistribution.objects.create(
             projectid=project, linetype=CostLineType.BREAKDOWN,

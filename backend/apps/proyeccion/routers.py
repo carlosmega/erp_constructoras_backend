@@ -117,6 +117,32 @@ from core.exceptions import NotFound
 
 
 # =============================================================================
+# Pagination guard
+# =============================================================================
+
+# Hard upper bound to prevent ``?limit=999999`` style abuse. Existing callers
+# that don't pass any ``limit`` keep the legacy "return everything" behavior.
+MAX_LIMIT = 1000
+
+
+def _apply_limit(items, limit: Optional[int], offset: Optional[int]):
+    """Optionally slice an iterable for the heavy list endpoints.
+
+    Backwards-compatible: when ``limit`` is None, returns the full list (legacy
+    behavior). When provided, ``limit`` is clamped to ``MAX_LIMIT`` and an
+    optional ``offset`` is applied. Used as a defensive guard until proper
+    cursor pagination is rolled out (see docs/deuda/007).
+    """
+    if limit is None and offset is None:
+        return items if isinstance(items, list) else list(items)
+    start = max(0, offset or 0)
+    if limit is None:
+        return list(items[start:])
+    end = start + max(0, min(limit, MAX_LIMIT))
+    return list(items[start:end])
+
+
+# =============================================================================
 # 0. Estimation Projects Router
 # =============================================================================
 
@@ -263,10 +289,16 @@ def list_concepts(
     request: HttpRequest,
     project_id: UUID,
     subfamilyid: Optional[UUID] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
 ):
-    """List budget concepts for a project, optionally filtered by subfamily."""
+    """List budget concepts for a project, optionally filtered by subfamily.
+
+    ``limit`` and ``offset`` are optional defensive guards (max ``MAX_LIMIT``).
+    Omit both to keep the legacy "return everything" behavior consumers expect.
+    """
     concepts = ConceptCatalogService.list_concepts(project_id, request.user, subfamilyid=subfamilyid)
-    return list(concepts)
+    return _apply_limit(concepts, limit, offset)
 
 
 @budget_concepts_router.post(
@@ -330,10 +362,18 @@ def recalculate_concept(request: HttpRequest, concept_id: UUID):
     response=List[UnitCostBreakdownSchema],
 )
 # TODO: Add @require_permission decorator during integration
-def list_breakdowns(request: HttpRequest, concept_id: UUID):
-    """List all unit cost breakdown lines for a concept."""
+def list_breakdowns(
+    request: HttpRequest,
+    concept_id: UUID,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+):
+    """List all unit cost breakdown lines for a concept.
+
+    ``limit`` and ``offset`` are optional defensive guards (max ``MAX_LIMIT``).
+    """
     breakdowns = UnitCostBreakdownService.list_breakdowns(concept_id, request.user)
-    return list(breakdowns)
+    return _apply_limit(breakdowns, limit, offset)
 
 
 @budget_concepts_router.post(
@@ -847,10 +887,15 @@ def list_supply_catalog_items(
     request: HttpRequest,
     search: Optional[str] = None,
     supplytype: Optional[int] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
 ):
-    """List supply catalog items with optional search and type filter."""
+    """List supply catalog items with optional search and type filter.
+
+    ``limit`` and ``offset`` are optional defensive guards (max ``MAX_LIMIT``).
+    """
     items = SupplyCatalogService.list_items(request.user, search=search, supplytype=supplytype)
-    return list(items)
+    return _apply_limit(items, limit, offset)
 
 
 @supply_catalog_router.post(

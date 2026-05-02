@@ -443,9 +443,11 @@ def build_pnt_ready_project(*, periods=4, periodtype=0):
             periodtype=periodtype,
         )
         period_list.append(p)
+    # Stored as raw percentages (5 = 5%) to match the OfferAlternativeService
+    # convention used in production. compute_rollups divides by 100 internally.
     OfferAlternative.objects.create(
         projectid=project, alternativenumber=1, name='Base',
-        transversalpercent=Decimal('0.05'), profitpercent=Decimal('0.10'),
+        transversalpercent=Decimal('5'), profitpercent=Decimal('10'),
         coefficient=Decimal('1.15'),
         directcosttotal=Decimal('100000'), indirectcosttotal=Decimal('20000'),
         constructioncost=Decimal('120000'), salepricenet=Decimal('138000'),

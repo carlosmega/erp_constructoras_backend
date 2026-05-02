@@ -88,11 +88,11 @@ def test_golden_end_to_end():
         user=None,
     )
 
-    # 6. Billing rules: 60% lag 0, 40% lag 1
+    # 6. Billing rules: 60% milestone at period 1, 40% milestone at period 2
     EstimationBillingRuleService.replace(
         project.estimationprojectid,
-        [{'sequence': 1, 'percent': Decimal('0.6'), 'lagperiods': 0},
-         {'sequence': 2, 'percent': Decimal('0.4'), 'lagperiods': 1}],
+        [{'sequence': 1, 'percent': Decimal('0.6'), 'lagperiods': 1},
+         {'sequence': 2, 'percent': Decimal('0.4'), 'lagperiods': 2}],
         user=None,
     )
 
@@ -111,20 +111,19 @@ def test_golden_end_to_end():
     # Costo indirecto = -50 per period
     assert rows['COSTO_INDIRECTO'] == [Decimal('-50.0000')] * 4
 
-    # Period 1 production 345: rule1 (60%, lag 0) → P1=207; rule2 (40%, lag 1) → P2=138
-    # Period 2 production 345: rule1 → P2=207; rule2 → P3=138
-    # Period 3 production 345: rule1 → P3=207; rule2 → P4=138
-    # Period 4 production 345: rule1 → P4=207; rule2 → P5 (out of range, fuera_horizonte=138)
-    expected_fact = [Decimal('207'), Decimal('345'), Decimal('345'), Decimal('345')]
+    # Milestone billing: total producción = 4 × 345 = 1380.
+    #   rule1 (60%, period 1) → P1 = 0.6 × 1380 = 828
+    #   rule2 (40%, period 2) → P2 = 0.4 × 1380 = 552
+    expected_fact = [Decimal('828'), Decimal('552'), Decimal('0'), Decimal('0')]
     assert rows['COBRO_FACTURACION'] == expected_fact
-    assert report.stats['cobros_fuera_horizonte'] == Decimal('138')
+    assert report.stats['cobros_fuera_horizonte'] == Decimal('0')
 
     # Anticipo concedido en P1
     assert rows['ANTICIPO_CONCEDIDO'][0] == Decimal('100')
     assert sum(rows['ANTICIPO_CONCEDIDO'][1:]) == Decimal('0')
 
-    # Devolución IMSS en P4: total IMSS = -0.05 × sum(fact) = -0.05 × 1242 = -62.10 → devolución +62.10
-    assert rows['DEVOLUCION'][3] == Decimal('62.1000')
+    # Devolución IMSS en P4: total IMSS = -0.05 × sum(fact) = -0.05 × 1380 = -69.00 → devolución +69.00
+    assert rows['DEVOLUCION'][3] == Decimal('69.0000')
 
     # Caja acumulada terminal — verifica que computa y es Decimal
     assert isinstance(rows['CAJA_ACUMULADA'][-1], Decimal)
@@ -183,7 +182,7 @@ def test_pnt_golden_with_per_line_lag():
         financecostrate=Decimal('0'),
     )
 
-    concept = BudgetConceptFactory(projectid=project)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal('1'))
     line_a = UnitCostBreakdownFactory(conceptid=concept, paymentlagperiods=1)
     line_a.amount = Decimal('1000.00')
     line_a.save()

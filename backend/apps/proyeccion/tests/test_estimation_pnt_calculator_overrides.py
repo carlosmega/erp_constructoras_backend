@@ -39,8 +39,8 @@ class TestEstimationPNTCalculatorOverridesEffect:
         calc = EstimationPNTCalculator(project.estimationprojectid)
         sim = calc.compute(overrides={
             'billing_rules': [
-                {'sequence': 1, 'percent': '0.5', 'lagperiods': 0},
-                {'sequence': 2, 'percent': '0.5', 'lagperiods': 1},
+                {'sequence': 1, 'percent': '0.5', 'lagperiods': 1},
+                {'sequence': 2, 'percent': '0.5', 'lagperiods': 2},
             ],
         })
         cobro = next(r for r in sim.rows if r.code == 'COBRO_FACTURACION').values

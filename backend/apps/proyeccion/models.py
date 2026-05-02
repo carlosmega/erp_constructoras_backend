@@ -125,6 +125,14 @@ class EstimationProject(AuditMixin):
         max_digits=12, decimal_places=4, db_column='exchangerate_mxn_usd', blank=True, null=True
     )
 
+    # Utility / profit rate applied to every concept (Excel "E7 Fase Estudio" K2).
+    # Stored as a percentage (0..100). When an OfferAlternative is chosen this is
+    # synced to that alternative's profitpercent. Each concept's utilityunitcost
+    # is computed as (directunitcost + indirectunitcost) * profitpercent / 100.
+    profitpercent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0, db_column='profitpercent'
+    )
+
     # State
     statecode = models.IntegerField(
         choices=EstimationStateCode.choices,
@@ -1572,6 +1580,11 @@ class CostDistribution(models.Model):
         indexes = [
             models.Index(fields=['projectid', 'periodnumber']),
             models.Index(fields=['projectid', 'linetype']),
+            # Compound indexes for the matrix-build queries that filter
+            # CostDistribution rows by projectid + line FK (see
+            # CostDistributionService.build_payload).
+            models.Index(fields=['projectid', 'breakdownid']),
+            models.Index(fields=['projectid', 'indirectcostid']),
             models.Index(fields=['breakdownid']),
             models.Index(fields=['indirectcostid']),
         ]
