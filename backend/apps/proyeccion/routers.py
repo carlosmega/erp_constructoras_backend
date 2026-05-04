@@ -1431,8 +1431,13 @@ def _serialize_pnt_report(report) -> dict:
         'periods': report.periods,
         'rows': [
             {
-                'code': r.code, 'label': r.label, 'section': r.section,
-                'values': r.values, 'emphasis': r.emphasis,
+                'code': r.code,
+                'label': r.label,
+                'section': r.section,
+                'values': r.values,
+                'emphasis': r.emphasis,
+                'out_of_horizon': r.out_of_horizon,
+                'total': r.total,
             }
             for r in report.rows
         ],

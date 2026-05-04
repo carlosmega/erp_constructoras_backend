@@ -1057,6 +1057,8 @@ class PNTRowDto(Schema):
     section: str
     values: list[Decimal]
     emphasis: bool
+    out_of_horizon: Decimal
+    total: Decimal
 
 
 class PNTStatsDto(Schema):

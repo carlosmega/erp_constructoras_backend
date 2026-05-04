@@ -3701,6 +3701,15 @@ class _PNTRow:
     section: str  # 'RESULTADO' | 'COBROS' | 'PAGOS' | 'CAJA'
     values: list
     emphasis: bool = False
+    # Flow that was pushed past the project horizon by lag rules. Currently
+    # populated for COBRO_FACTURACION, ANTICIPO_CONCEDIDO, DEVOLUCION and the
+    # PAGOS_* family, plus aggregations (COBRO_TOTAL, PAGOS_TOTALES, CAJA_MES).
+    # Stays ZERO for devengado rows (RESULTADO section) and cumulative rows
+    # (CAJA_ACUMULADA, SALDO_ANTICIPO).
+    out_of_horizon: Decimal = ZERO
+    # sum(values) + out_of_horizon for flow rows; ZERO for cumulative rows
+    # (CAJA_ACUMULADA, SALDO_ANTICIPO) where summing a stock is meaningless.
+    total: Decimal = ZERO
 
 
 @dataclass
@@ -3799,7 +3808,7 @@ class EstimationPNTCalculator:
 
         # ---- COBROS ----
         cobro_facturacion, cobros_fuera = self._compute_cobro_facturacion(produccion)
-        anticipo_concedido = self._single_period_vector(
+        anticipo_concedido, anticipo_concedido_fuera = self._single_period_vector(
             self.settings.advanceamountnotax, self.settings.advanceentryperiod,
         )
         anticipo_amortizado, advance_fully_amortized_at = self._compute_anticipo_amortizado(
@@ -3807,13 +3816,14 @@ class EstimationPNTCalculator:
         )
         retencion_imss = [-self.settings.imssretentionrate * cf for cf in cobro_facturacion]
         otras_retencion = [-self.settings.otherretentionrate * cf for cf in cobro_facturacion]
-        devolucion = self._compute_devolucion(retencion_imss, otras_retencion)
+        devolucion, devolucion_fuera = self._compute_devolucion(retencion_imss, otras_retencion)
         saldo_anticipo = self._cumsum(anticipo_amortizado)
         cobro_total = [
             anticipo_concedido[i] + cobro_facturacion[i] + anticipo_amortizado[i]
             + retencion_imss[i] + otras_retencion[i] + devolucion[i]
             for i in range(self.N)
         ]
+        cobro_total_fuera = cobros_fuera + anticipo_concedido_fuera + devolucion_fuera
         # NOTE: SALDO_ANTICIPO is a cumulative running balance derived from
         # ANTICIPO_AMORT and is reported for visibility only. Including it in
         # COBRO_TOTAL would double-count amortization (this was the bug in the
@@ -3835,9 +3845,12 @@ class EstimationPNTCalculator:
             pagos_directo[i] + pagos_indirecto[i] + retiro_transv_neg[i] + retiro_util_neg[i]
             for i in range(self.N)
         ]
+        # Retiros are devengado (no lag) so their contribution to fuera is ZERO.
+        pagos_totales_fuera = pagos_dir_fuera + pagos_ind_fuera
 
         # ---- CAJA ----
         caja_mes = [cobro_total[i] + pagos_totales[i] for i in range(self.N)]
+        caja_mes_fuera = cobro_total_fuera + pagos_totales_fuera
         caja_acumulada = self._cumsum(caja_mes)
         costo_financiero = [
             ca * self.settings.financecostrate if ca < 0 else ZERO
@@ -3879,6 +3892,27 @@ class EstimationPNTCalculator:
             _PNTRow('CAJA_ACUMULADA', 'Caja Acumulada (PNT)', 'CAJA', caja_acumulada, emphasis=True),
             _PNTRow('COSTO_FINANCIERO', 'Costo Financiero', 'CAJA', costo_financiero),
         ]
+
+        # Per-row out-of-horizon mapping. Devengado rows (RESULTADO section), no-lag
+        # retiro rows in PAGOS, and rows derived purely from in-horizon flows have
+        # ZERO. Cumulative rows (handled below) are explicitly excluded from totals.
+        out_of_horizon_by_code = {
+            'COBRO_FACTURACION': cobros_fuera,
+            'ANTICIPO_CONCEDIDO': anticipo_concedido_fuera,
+            'DEVOLUCION': devolucion_fuera,
+            'COBRO_TOTAL': cobro_total_fuera,
+            'PAGOS_DIRECTO': pagos_dir_fuera,
+            'PAGOS_INDIRECTO': pagos_ind_fuera,
+            'PAGOS_TOTALES': pagos_totales_fuera,
+            'CAJA_MES': caja_mes_fuera,
+        }
+        for r in rows:
+            r.out_of_horizon = out_of_horizon_by_code.get(r.code, ZERO)
+            if r.code in self._CUMULATIVE_CODES:
+                # Stocks: total of a running balance is meaningless; leave ZERO.
+                r.total = ZERO
+            else:
+                r.total = sum(r.values, ZERO) + r.out_of_horizon
 
         chosen = self.rollups.get('chosen_alternative_id')
         advance_fully_amortized_period = (
@@ -3987,7 +4021,12 @@ class EstimationPNTCalculator:
                 agg = [r.values[g[-1]] for g in groups]
             else:
                 agg = [sum((r.values[i] for i in g), ZERO) for g in groups]
-            new_rows.append(_PNTRow(r.code, r.label, r.section, agg, emphasis=r.emphasis))
+            # out_of_horizon and total are granularity-invariant — they describe
+            # the row as a whole, not a particular time bucket.
+            new_rows.append(_PNTRow(
+                r.code, r.label, r.section, agg, emphasis=r.emphasis,
+                out_of_horizon=r.out_of_horizon, total=r.total,
+            ))
         return new_periods, new_rows
 
     # --- internals ---
@@ -4066,22 +4105,28 @@ class EstimationPNTCalculator:
         return out, fully_amortized_at
 
     def _single_period_vector(self, amount, period_1indexed):
+        """Returns (vector, fuera). If period_1indexed > N the amount falls fuera."""
         out = [ZERO] * self.N
         if not amount:
-            return out
+            return out, ZERO
         p = (period_1indexed or 1) - 1
+        amt = Decimal(amount)
         if 0 <= p < self.N:
-            out[p] = Decimal(amount)
-        return out
+            out[p] = amt
+            return out, ZERO
+        return out, amt
 
     def _compute_devolucion(self, imss, otras):
+        """Returns (vector, fuera). If retentionreturnperiod > N the return falls fuera."""
         out = [ZERO] * self.N
         if self.settings.retentionreturnperiod is None:
-            return out
+            return out, ZERO
+        amount = -sum(imss) - sum(otras)
         p = self.settings.retentionreturnperiod - 1
         if 0 <= p < self.N:
-            out[p] = -sum(imss) - sum(otras)
-        return out
+            out[p] = amount
+            return out, ZERO
+        return out, amount
 
     @staticmethod
     def _cumsum(values):
