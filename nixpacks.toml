@@ -1,0 +1,14 @@
+# Nixpacks configuration for Railway
+# Tells Railway how to build the Django backend
+
+[phases.setup]
+nixPkgs = ["python311", "postgresql.lib", "gcc"]
+
+[phases.install]
+cmds = ["pip install --upgrade pip", "pip install -r backend/requirements.txt"]
+
+[phases.build]
+cmds = ["cd backend && python manage.py collectstatic --noinput"]
+
+[start]
+cmd = "cd backend && python manage.py migrate --noinput && gunicorn crm.wsgi --bind 0.0.0.0:$PORT --workers 3 --access-logfile -"

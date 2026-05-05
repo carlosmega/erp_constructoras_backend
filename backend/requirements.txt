@@ -7,6 +7,7 @@ django-ninja==1.6.2
 
 # Database
 psycopg[binary]==3.1.18  # PostgreSQL adapter with binary dependencies
+dj-database-url==2.1.0   # Parse DATABASE_URL for Railway/Heroku-style configs
 
 # Configuration & Environment
 python-decouple==3.8
@@ -23,6 +24,12 @@ django-cors-headers==4.9.0
 # Production Servers
 gunicorn==21.2.0
 uvicorn[standard]==0.27.0
+
+# Static files in production (Whitenoise)
+whitenoise==6.6.0
+
+# Cache / Sessions backend (Redis)
+django-redis==5.4.0
 
 # Microsoft Graph Integration
 msal==1.31.0

@@ -271,8 +271,17 @@ api.add_router("/agents/config", agents_config_router)
 api.add_router("/agents", agents_run_router)
 api.add_router("/agents/suggestions", agents_suggestion_router)
 
+def health_check(request):
+    """Lightweight health endpoint for Railway/Load Balancer probes.
+
+    Does not query the DB to keep the check fast and resilient.
+    """
+    return JsonResponse({"status": "ok"})
+
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/health', health_check),  # Railway healthcheck
     path('api/', api.urls),  # All API endpoints under /api/
 ]
 

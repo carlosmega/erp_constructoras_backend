@@ -8,6 +8,7 @@ Following Microsoft Dynamics 365 CDS architecture patterns.
 import os
 from pathlib import Path
 from decouple import config, Csv
+import dj_database_url
 
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -64,6 +65,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Serve static files in production
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',  # CORS - Must be before CommonMiddleware
     'core.middleware.ApiTrailingSlashMiddleware',  # Rewrite mutation URLs for trailing slash
@@ -96,45 +98,61 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'crm.wsgi.application'
 
+# ============================================================================
 # Database
-# https://docs.djangoproject.com/en/5.0/ref/settings/#databases
-# Using SQLite for development (can switch to PostgreSQL later)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-        'ATOMIC_REQUESTS': True,  # Wrap each request in a transaction
-        'OPTIONS': {
-            'timeout': 30,  # Wait up to 30s for lock release
-            'check_same_thread': False,  # Allow multi-threaded access
+# ============================================================================
+# Priority order:
+#   1. DATABASE_URL (Railway/Heroku-style — auto-injected by Railway Postgres plugin)
+#   2. Individual DB_* env vars (local dev with PostgreSQL)
+#   3. SQLite fallback (local dev without Postgres installed)
+DATABASE_URL = config('DATABASE_URL', default='')
+
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=config('DB_SSL_REQUIRE', default=True, cast=bool),
+        )
+    }
+    DATABASES['default']['ATOMIC_REQUESTS'] = True
+elif config('DB_NAME', default=''):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER', default='postgres'),
+            'PASSWORD': config('DB_PASSWORD', default=''),
+            'HOST': config('DB_HOST', default='localhost'),
+            'PORT': config('DB_PORT', default='5432'),
+            'ATOMIC_REQUESTS': True,
+            'CONN_MAX_AGE': 600,
         }
     }
-}
+else:
+    # SQLite fallback for local dev without Postgres
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+            'ATOMIC_REQUESTS': True,
+            'OPTIONS': {
+                'timeout': 30,
+                'check_same_thread': False,
+            }
+        }
+    }
 
-# Enable WAL mode for SQLite — allows concurrent reads during writes
-from django.db.backends.signals import connection_created
+    # Enable WAL mode for SQLite — allows concurrent reads during writes
+    from django.db.backends.signals import connection_created
 
-def _enable_wal_mode(sender, connection, **kwargs):
-    if connection.vendor == 'sqlite':
-        cursor = connection.cursor()
-        cursor.execute('PRAGMA journal_mode=WAL;')
-        cursor.execute('PRAGMA busy_timeout=30000;')
+    def _enable_wal_mode(sender, connection, **kwargs):
+        if connection.vendor == 'sqlite':
+            cursor = connection.cursor()
+            cursor.execute('PRAGMA journal_mode=WAL;')
+            cursor.execute('PRAGMA busy_timeout=30000;')
 
-connection_created.connect(_enable_wal_mode)
-
-# To use PostgreSQL, uncomment and configure .env file:
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': config('DB_NAME', default='crm_backend'),
-#         'USER': config('DB_USER', default='postgres'),
-#         'PASSWORD': config('DB_PASSWORD', default=''),
-#         'HOST': config('DB_HOST', default='localhost'),
-#         'PORT': config('DB_PORT', default='5432'),
-#         'ATOMIC_REQUESTS': True,
-#         'CONN_MAX_AGE': 600,
-#     }
-# }
+    connection_created.connect(_enable_wal_mode)
 
 # Custom User Model (Dynamics CDS SystemUser)
 AUTH_USER_MODEL = 'users.SystemUser'  # Will be configured in Phase 3
@@ -173,7 +191,36 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_HTTPONLY = True  # Prevent JavaScript access
 SESSION_COOKIE_SAMESITE = 'Lax'  # CSRF protection
 SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)  # HTTPS only in production
-SESSION_ENGINE = 'django.contrib.sessions.backends.db'  # Store in database
+
+# ============================================================================
+# Cache (Redis) + Sessions backend
+# ============================================================================
+REDIS_URL = config('REDIS_URL', default='')
+
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'IGNORE_EXCEPTIONS': True,  # Fail open on Redis outage
+            },
+            'KEY_PREFIX': 'crm',
+        }
+    }
+    SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db'
+    SESSION_CACHE_ALIAS = 'default'
+    DJANGO_REDIS_IGNORE_EXCEPTIONS = True
+else:
+    # In-memory cache for local dev when Redis is not running
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'crm-default',
+        }
+    }
+    SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.0/topics/i18n/
@@ -186,6 +233,16 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Whitenoise — compressed + hashed static files in production
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Media files (user uploads)
 MEDIA_URL = 'media/'
@@ -203,6 +260,9 @@ CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
 SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False, cast=bool)
 SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+
+# Trust the X-Forwarded-Proto header from Railway's edge proxy (HTTPS termination)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # ============================================================================
 # CORS Configuration for Frontend Integration (Next.js, React, etc.)
