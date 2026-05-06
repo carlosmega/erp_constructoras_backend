@@ -65,7 +65,7 @@ dmypy.json
 .ipynb_checkpoints
 
 # pyenv
-.python-version
+# .python-version is intentionally tracked to pin Python version on Railway
 
 # Celery
 celerybeat-schedule
