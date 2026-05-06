@@ -1,6 +1,8 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "deploy": {
+    "preDeployCommand": "python manage.py migrate --noinput && python manage.py collectstatic --noinput",
+    "startCommand": "gunicorn crm.wsgi --bind 0.0.0.0:$PORT --workers 3 --access-logfile -",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
