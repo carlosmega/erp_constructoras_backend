@@ -9,7 +9,8 @@ Uso:
     python manage.py setup_e2e_user --reset-password
 """
 
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 
 from apps.users.models import SecurityRole, SystemUser
 
@@ -30,6 +31,14 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if not settings.DEBUG:
+            raise CommandError(
+                'setup_e2e_user está deshabilitado cuando DEBUG=False. '
+                'Este comando es exclusivo para entornos de desarrollo y CI. '
+                'En producción usa `python manage.py createsuperuser` con un '
+                'email real y una contraseña fuerte.'
+            )
+
         admin_role, _ = SecurityRole.objects.get_or_create(
             name='System Administrator',
             defaults={'description': 'Full access to all entities and operations'},
