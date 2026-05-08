@@ -316,9 +316,21 @@ CSRF_TRUSTED_ORIGINS = config(
 # Exempt Django Ninja API routes from CSRF (API uses session auth instead)
 CSRF_EXEMPT_URLS = ['/api/']
 
-# Cookie settings for cross-origin requests
-SESSION_COOKIE_SAMESITE = 'Lax'  # 'None' if frontend and backend on different domains in production
-CSRF_COOKIE_SAMESITE = 'Lax'
+# Cookie settings for cross-origin requests.
+# When frontend and backend are on different sites (e.g. sibling subdomains under
+# *.up.railway.app, which is on the Public Suffix List), the browser treats fetch
+# requests as cross-site and refuses to attach SameSite=Lax cookies — Django then
+# sees an anonymous user and returns 403. Set CROSS_SITE_COOKIES=True in that case;
+# the browser also requires Secure=True when SameSite=None.
+_CROSS_SITE_COOKIES = config('CROSS_SITE_COOKIES', default=False, cast=bool)
+
+SESSION_COOKIE_SAMESITE = 'None' if _CROSS_SITE_COOKIES else 'Lax'
+CSRF_COOKIE_SAMESITE = 'None' if _CROSS_SITE_COOKIES else 'Lax'
+
+if _CROSS_SITE_COOKIES:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 CSRF_COOKIE_HTTPONLY = False  # Must be False so JavaScript can read it
 
 # Logging Configuration
