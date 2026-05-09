@@ -4231,3 +4231,28 @@ class BreakdownExcelService:
         if normalized not in cls._CATEGORY_MAP:
             raise ValueError(f"Categoría no reconocida: {value!r}")
         return cls._CATEGORY_MAP[normalized]
+
+    @staticmethod
+    def _build_concept_index(project_id):
+        """Return dict {code: conceptid_uuid} for all concepts in the project.
+
+        Single query, no N+1.
+        """
+        from apps.proyeccion.models import BudgetConcept
+        return {
+            c.code: c.conceptid
+            for c in BudgetConcept.objects.filter(projectid_id=project_id).only("conceptid", "code")
+        }
+
+    @staticmethod
+    def _match_concept(code_value, concept_index):
+        """Match an Excel CONCEPTO cell to a BudgetConcept UUID.
+
+        1. Exact match by `code`
+        2. (Future) fallback to FIMP-S<NN>-<idx> derivation if needed
+        Returns: UUID or None
+        """
+        if not code_value:
+            return None
+        code = str(code_value).strip()
+        return concept_index.get(code)

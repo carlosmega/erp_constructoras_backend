@@ -131,3 +131,28 @@ class TestCategoryMapping:
     def test_normalize_category_rejects_unknown(self):
         with _pytest.raises(ValueError, match="Categoría no reconocida"):
             BreakdownExcelService.normalize_category("DESCONOCIDO")
+
+
+class TestConceptMatching:
+    @_pytest.mark.django_db
+    @_pytest.mark.unit
+    def test_match_concept_by_exact_code(self, db):
+        concept = BudgetConceptFactory(code="EXC-100")
+        index = BreakdownExcelService._build_concept_index(concept.projectid_id)
+        assert BreakdownExcelService._match_concept("EXC-100", index) == concept.conceptid
+
+    @_pytest.mark.django_db
+    @_pytest.mark.unit
+    def test_match_concept_via_fimp_derivation(self, db):
+        # `seed_cdu_carretera.py` creates concepts with codes like FIMP-S03-12
+        concept = BudgetConceptFactory(code="FIMP-S03-12")
+        index = BreakdownExcelService._build_concept_index(concept.projectid_id)
+        # Excel may store the friendly subfamily reference
+        assert BreakdownExcelService._match_concept("FIMP-S03-12", index) == concept.conceptid
+
+    @_pytest.mark.django_db
+    @_pytest.mark.unit
+    def test_match_concept_returns_none_when_not_found(self, db):
+        concept = BudgetConceptFactory(code="EXC-100")
+        index = BreakdownExcelService._build_concept_index(concept.projectid_id)
+        assert BreakdownExcelService._match_concept("NOPE-999", index) is None
