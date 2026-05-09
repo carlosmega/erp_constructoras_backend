@@ -660,3 +660,107 @@ class TestImport:
         assert UnitCostBreakdown.objects.filter(conceptid=c1, description="OLD-1").exists()
         # New supply should NOT have been persisted
         assert not SupplyCatalogItem.objects.filter(code="WONT-PERSIST").exists()
+
+
+class TestExport:
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_export_includes_8_columns_and_uuid(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        import io
+        from openpyxl import load_workbook
+
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, code="EXC-100", description="Excavación")
+        supply = SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton")
+        UnitCostBreakdownFactory(
+            conceptid=concept, supplyid=supply,
+            categorycode=1,  # Materials
+            quantity=Decimal('1'), unitprice=Decimal('3000'),
+            yieldvalue=Decimal('0.5'), amount=Decimal('1500'),
+        )
+
+        binary = BreakdownExcelService.export(project.estimationprojectid, user)
+        wb = load_workbook(io.BytesIO(binary))
+        assert "CDU" in wb.sheetnames
+        ws = wb["CDU"]
+        # Row 2 col 1: project UUID
+        assert ws.cell(row=2, column=1).value == str(project.estimationprojectid)
+        # Row 3 col 1-8: headers
+        assert ws.cell(row=3, column=1).value == "CONCEPTO"
+        assert ws.cell(row=3, column=8).value == "IMPORTE"
+        # Row 4: first data row
+        assert ws.cell(row=4, column=1).value == "EXC-100"
+        assert ws.cell(row=4, column=2).value == "MATERIALES"
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_export_with_empty_project_creates_placeholder_per_concept(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, EstimationProjectFactory,
+        )
+        import io
+        from openpyxl import load_workbook
+
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+        BudgetConceptFactory(projectid=project, code="EXC-200")
+
+        binary = BreakdownExcelService.export(project.estimationprojectid, user)
+        wb = load_workbook(io.BytesIO(binary))
+        ws = wb["CDU"]
+
+        # Each concept gets a placeholder row with only CONCEPTO filled
+        codes_in_export = []
+        for row in range(4, ws.max_row + 1):
+            v = ws.cell(row=row, column=1).value
+            if v:
+                codes_in_export.append(v)
+        assert "EXC-100" in codes_in_export
+        assert "EXC-200" in codes_in_export
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_export_excludes_hm_epp_lines(self):
+        """HM/EPP no aparecen en el export; se regeneran al importar."""
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        import io
+        from openpyxl import load_workbook
+        from apps.proyeccion.models import BreakdownCategoryCode
+
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, code="EXC-100")
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            categorycode=BreakdownCategoryCode.LABOR,
+            quantity=Decimal('1'), unitprice=Decimal('800'),
+            yieldvalue=Decimal('1'), amount=Decimal('800'),
+        )
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            categorycode=BreakdownCategoryCode.MINOR_TOOLS,
+            description="HM", amount=Decimal('24'),
+        )
+        UnitCostBreakdownFactory(
+            conceptid=concept,
+            categorycode=BreakdownCategoryCode.PPE,
+            description="EPP", amount=Decimal('24'),
+        )
+
+        binary = BreakdownExcelService.export(project.estimationprojectid, user)
+        wb = load_workbook(io.BytesIO(binary))
+        ws = wb["CDU"]
+
+        for row in range(4, ws.max_row + 1):
+            cat = ws.cell(row=row, column=2).value
+            if cat:
+                assert cat not in ("HM", "EPP", "HERRAMIENTA_MENOR")

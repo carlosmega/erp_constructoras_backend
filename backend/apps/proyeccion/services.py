@@ -4680,3 +4680,111 @@ class BreakdownExcelService:
             hm_epp_regenerated=hm_epp_count,
             prorate_triggered=prorate_triggered,
         )
+
+    # BreakdownCategoryCode integer → Excel CATEGORIA label (excludes HM/EPP)
+    _CATEGORY_TO_EXCEL = {
+        1: "MATERIALES",     # Materials
+        2: "ACARREOS",       # Hauling
+        3: "MAQUINARIA",     # Machinery
+        4: "MANO_OBRA",      # Labor
+        5: "SUBCONTRATOS",   # Subcontracts
+    }
+
+    @classmethod
+    def export(cls, project_id, user) -> bytes:
+        """Export the project's CDU to an .xlsx file (bytes).
+
+        Excludes HM/EPP categories (auto-regenerated on import). For empty
+        concepts (no breakdowns yet), emits one placeholder row per concept.
+        """
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        from apps.proyeccion.models import (
+            BudgetConcept, UnitCostBreakdown, EstimationProject,
+        )
+
+        project = EstimationProject.objects.filter(pk=project_id).first()
+        project_name = getattr(project, "name", "") if project else ""
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "CDU"
+
+        # Row 1: title
+        ws.cell(row=1, column=1, value=f"Proyecto: {project_name}")
+        ws.cell(row=1, column=1).font = Font(bold=True, size=12)
+
+        # Row 2: UUID (for round-trip identification)
+        ws.cell(row=2, column=1, value=str(project_id))
+        ws.cell(row=2, column=1).font = Font(italic=True, color="888888")
+
+        # Row 3: column headers
+        headers = [
+            "CONCEPTO", "CATEGORIA", "INSUMO_CODIGO",
+            "INSUMO_DESCRIPCION", "UNIDAD", "RENDIMIENTO",
+            "PRECIO_UNITARIO", "IMPORTE",
+        ]
+        for i, h in enumerate(headers, start=1):
+            c = ws.cell(row=3, column=i, value=h)
+            c.font = Font(bold=True)
+            c.fill = PatternFill("solid", fgColor="DDDDDD")
+
+        ws.freeze_panes = "A4"
+
+        widths = [14, 14, 16, 35, 10, 12, 15, 14]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+        # Fetch concepts ordered alphabetically
+        concepts = list(
+            BudgetConcept.objects.filter(projectid_id=project_id).order_by("code")
+        )
+
+        # Fetch all breakdowns for this project, excluding HM (6) and EPP (7)
+        breakdowns_by_concept = {}
+        for b in (
+            UnitCostBreakdown.objects
+            .filter(conceptid__projectid_id=project_id)
+            .exclude(categorycode__in=(
+                BreakdownCategoryCode.MINOR_TOOLS,
+                BreakdownCategoryCode.PPE,
+            ))
+            .select_related("conceptid", "supplyid")
+            .order_by("conceptid__code", "categorycode", "linenumber")
+        ):
+            breakdowns_by_concept.setdefault(b.conceptid.code, []).append(b)
+
+        excel_row = 4
+        for concept in concepts:
+            lines = breakdowns_by_concept.get(concept.code, [])
+            if not lines:
+                # Placeholder row: only CONCEPTO filled (concept has no breakdowns yet)
+                ws.cell(row=excel_row, column=1, value=concept.code)
+                excel_row += 1
+                continue
+            for idx, line in enumerate(lines):
+                ws.cell(row=excel_row, column=1, value=concept.code if idx == 0 else "")
+                ws.cell(row=excel_row, column=2, value=cls._CATEGORY_TO_EXCEL.get(line.categorycode, ""))
+                ws.cell(row=excel_row, column=3, value=getattr(line.supplyid, "code", "") if line.supplyid else "")
+                ws.cell(row=excel_row, column=4, value=line.description or "")
+                ws.cell(row=excel_row, column=5, value=line.unit or "")
+                ws.cell(row=excel_row, column=6, value=float(line.yieldvalue))
+                ws.cell(row=excel_row, column=7, value=float(line.unitprice))
+                ws.cell(row=excel_row, column=8, value=float(line.amount))
+                excel_row += 1
+
+        # CATEGORIA dropdown validation
+        from openpyxl.worksheet.datavalidation import DataValidation
+        dv = DataValidation(
+            type="list",
+            formula1='"MATERIALES,MANO_OBRA,MAQUINARIA,ACARREOS,SUBCONTRATOS"',
+            allow_blank=True,
+        )
+        dv.add(f"B4:B{max(excel_row - 1, 4)}")
+        ws.add_data_validation(dv)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
