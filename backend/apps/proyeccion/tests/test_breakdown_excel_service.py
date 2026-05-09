@@ -602,3 +602,61 @@ class TestImport:
         )
         with _pytest.raises(ValueError, match="UUID"):
             BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_import_rollback_when_concept_fails_midway(self):
+        """Si un concepto falla, los cambios anteriores se revierten."""
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        from apps.proyeccion.models import UnitCostBreakdown, SupplyCatalogItem
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+            ImportBreakdownsLineDto, BreakdownExcelNewSupplySchema,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        c1 = BudgetConceptFactory(projectid=project, code="EXC-100")
+        UnitCostBreakdownFactory(conceptid=c1, description="OLD-1")
+        SupplyCatalogItemFactory(code="MAT-001", referenceprice=3000)
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=[
+                ImportBreakdownsConceptDto(
+                    code="EXC-100",
+                    lines=[
+                        ImportBreakdownsLineDto(
+                            category="MATERIALES", supply_code="MAT-001",
+                            yield_value=Decimal("0.5"), unit_price=Decimal("3000"),
+                        ),
+                    ],
+                ),
+                ImportBreakdownsConceptDto(
+                    code="DOES-NOT-EXIST",  # forces a mid-transaction failure
+                    lines=[
+                        ImportBreakdownsLineDto(
+                            category="MATERIALES", supply_code="MAT-001",
+                            yield_value=Decimal("0.5"), unit_price=Decimal("3000"),
+                        ),
+                    ],
+                ),
+            ],
+            new_supplies=[
+                BreakdownExcelNewSupplySchema(
+                    code="WONT-PERSIST", name="X", unit="kg",
+                    supplytype=0, reference_price=Decimal("100"),
+                    appears_in_concepts=["EXC-100"],
+                ),
+            ],
+            uploaded_uuid=str(project.estimationprojectid),
+        )
+
+        with _pytest.raises(ValueError, match="DOES-NOT-EXIST"):
+            BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+
+        # First concept's old breakdown should still exist (rollback)
+        assert UnitCostBreakdown.objects.filter(conceptid=c1, description="OLD-1").exists()
+        # New supply should NOT have been persisted
+        assert not SupplyCatalogItem.objects.filter(code="WONT-PERSIST").exists()
