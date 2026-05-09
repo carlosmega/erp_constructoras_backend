@@ -310,3 +310,123 @@ class TestAnalyze:
         # total preview = lines + HM + EPP = 1500 + 800 + 24 + 24 = 2348
         assert result.concepts[0].total_preview == Decimal('2348.00')
         assert result.project_uuid_match is True
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_concept_not_found(self):
+        from apps.proyeccion.tests.factories import EstimationProjectFactory
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+
+        f = TestExcelParsing._make_xlsx([
+            ("NOPE-999", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+        assert result.summary.errors_count == 1
+        assert "Concepto no encontrado" in result.errors[0].message
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_detects_new_supply(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "NEW-MAT", "Insumo Nuevo", "ton", 0.5, 1000, 500),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+        assert result.summary.errors_count == 0
+        assert result.summary.new_supplies_count == 1
+        ns = result.new_supplies[0]
+        assert ns.code == "NEW-MAT"
+        assert ns.supplytype == 0  # Material
+        assert ns.reference_price == Decimal('1000')
+        assert "EXC-100" in ns.appears_in_concepts
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_rejects_hm_epp_categories(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "HM", "X", "X", "%", 0.03, 100, 3),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+        assert result.summary.errors_count == 1
+        assert "HM/EPP" in result.errors[0].message
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_uuid_mismatch(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+        SupplyCatalogItemFactory(code="MAT-001", referenceprice=3000)
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+        ], project_uuid="11111111-1111-1111-1111-111111111111")
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+        assert result.project_uuid_match is False
+        assert result.uploaded_uuid == "11111111-1111-1111-1111-111111111111"
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_sums_duplicate_supplies_in_same_concept(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+        SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton", referenceprice=3000)
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.3, 3000, 900),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+        assert result.summary.errors_count == 0
+        assert len(result.concepts[0].lines) == 1
+        assert result.concepts[0].lines[0].yield_value == Decimal('0.8')
+        assert result.concepts[0].lines[0].amount == Decimal('2400.00')
+        assert any("duplicado" in w for w in result.concepts[0].lines[0].warnings)
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_existing_supply_uses_referenceprice_when_blank(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+        SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton", referenceprice=2500)
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, "", ""),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+        assert result.summary.errors_count == 0
+        assert result.concepts[0].lines[0].unit_price == Decimal('2500')
