@@ -4202,6 +4202,24 @@ class _NormalizedCategory:
     category_code: int  # BreakdownCategoryCode value
 
 
+@dataclass
+class _ParsedRow:
+    row_num: int
+    concepto: str
+    categoria: str
+    insumo_codigo: str
+    insumo_descripcion: str
+    unidad: str
+    rendimiento: Optional[Decimal]
+    precio_unitario: Optional[Decimal]
+
+
+@dataclass
+class _ParsedExcel:
+    rows: list  # list[_ParsedRow]
+    uploaded_uuid: Optional[str]
+
+
 class BreakdownExcelService:
     """Round-trip Excel import/export for Unit Cost Breakdowns (CDU)."""
 
@@ -4275,3 +4293,70 @@ class BreakdownExcelService:
         if not code_value:
             return None
         return supply_index.get(str(code_value).strip())
+
+    @staticmethod
+    def _parse_excel(file_or_buffer) -> _ParsedExcel:
+        """Parse the CDU sheet from an .xlsx file.
+
+        Returns _ParsedExcel with rows and the uploaded UUID from row 2 col 1.
+        Raises ValueError if sheet 'CDU' missing or no data rows.
+        """
+        from decimal import Decimal as D
+        from openpyxl import load_workbook
+
+        wb = load_workbook(file_or_buffer, data_only=True)
+        if "CDU" not in wb.sheetnames:
+            raise ValueError("El archivo no contiene la hoja 'CDU' esperada")
+        ws = wb["CDU"]
+
+        uploaded_uuid = ws.cell(row=2, column=1).value
+        if uploaded_uuid is not None:
+            uploaded_uuid = str(uploaded_uuid).strip() or None
+
+        rows = []
+        last_concepto = ""
+        for excel_row in range(4, ws.max_row + 1):
+            cells = [ws.cell(row=excel_row, column=c).value for c in range(1, 9)]
+            # Skip fully empty rows
+            if all(v is None or str(v).strip() == "" for v in cells):
+                continue
+
+            concepto_raw = cells[0]
+            if concepto_raw is None or str(concepto_raw).strip() == "":
+                concepto = last_concepto
+            else:
+                concepto = str(concepto_raw).strip()
+                last_concepto = concepto
+
+            categoria = (str(cells[1]).strip() if cells[1] is not None else "")
+            insumo_codigo = (str(cells[2]).strip() if cells[2] is not None else "")
+            insumo_descripcion = (str(cells[3]).strip() if cells[3] is not None else "")
+            unidad = (str(cells[4]).strip() if cells[4] is not None else "")
+
+            # Skip rows that are only a CONCEPTO marker (visual header)
+            if not categoria and not insumo_codigo and not unidad:
+                continue
+
+            def to_decimal(v):
+                if v is None or str(v).strip() == "":
+                    return None
+                try:
+                    return D(str(v))
+                except Exception:
+                    return None
+
+            rows.append(_ParsedRow(
+                row_num=excel_row,
+                concepto=concepto,
+                categoria=categoria,
+                insumo_codigo=insumo_codigo,
+                insumo_descripcion=insumo_descripcion,
+                unidad=unidad,
+                rendimiento=to_decimal(cells[5]),
+                precio_unitario=to_decimal(cells[6]),
+            ))
+
+        if not rows:
+            raise ValueError("Excel vacío: no se encontraron filas de datos")
+
+        return _ParsedExcel(rows=rows, uploaded_uuid=uploaded_uuid)

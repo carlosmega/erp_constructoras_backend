@@ -182,3 +182,95 @@ class TestSupplyMatching:
         SupplyCatalogItemFactory(code="MAT-001")
         index = BreakdownExcelService._build_supply_index()
         assert BreakdownExcelService._match_supply("mat-001", index) is None
+
+
+class TestExcelParsing:
+    @staticmethod
+    def _make_xlsx(rows, project_uuid="00000000-0000-0000-0000-000000000000"):
+        """Build an in-memory xlsx file with the CDU sheet.
+
+        rows: list of 8-tuples (CONCEPTO, CATEGORIA, INSUMO_CODIGO,
+              INSUMO_DESCRIPCION, UNIDAD, RENDIMIENTO, PRECIO_UNITARIO, IMPORTE)
+        """
+        import io
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "CDU"
+        ws.cell(row=1, column=1, value="Proyecto")
+        ws.cell(row=2, column=1, value=project_uuid)
+        ws.cell(row=3, column=1, value="CONCEPTO")
+        ws.cell(row=3, column=2, value="CATEGORIA")
+        ws.cell(row=3, column=3, value="INSUMO_CODIGO")
+        ws.cell(row=3, column=4, value="INSUMO_DESCRIPCION")
+        ws.cell(row=3, column=5, value="UNIDAD")
+        ws.cell(row=3, column=6, value="RENDIMIENTO")
+        ws.cell(row=3, column=7, value="PRECIO_UNITARIO")
+        ws.cell(row=3, column=8, value="IMPORTE")
+        for i, row in enumerate(rows, start=4):
+            for j, val in enumerate(row, start=1):
+                ws.cell(row=i, column=j, value=val)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    @_pytest.mark.unit
+    def test_parse_extracts_data_rows(self):
+        f = self._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+            ("EXC-100", "MANO_OBRA", "MO-001", "Albañil", "jornal", 1, 800, 800),
+        ])
+        result = BreakdownExcelService._parse_excel(f)
+        assert len(result.rows) == 2
+        assert result.rows[0].concepto == "EXC-100"
+        assert result.rows[0].categoria == "MATERIALES"
+        assert result.rows[0].rendimiento == _pytest.approx(0.5)
+        assert result.uploaded_uuid == "00000000-0000-0000-0000-000000000000"
+
+    @_pytest.mark.unit
+    def test_parse_inherits_concepto_when_blank(self):
+        f = self._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+            ("",        "MANO_OBRA",  "MO-001",  "Albañil", "jornal", 1, 800, 800),
+        ])
+        result = BreakdownExcelService._parse_excel(f)
+        assert result.rows[1].concepto == "EXC-100"
+
+    @_pytest.mark.unit
+    def test_parse_skips_fully_empty_rows(self):
+        f = self._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+            ("", "", "", "", "", "", "", ""),
+            ("EXC-100", "MANO_OBRA",  "MO-001",  "Albañil", "jornal", 1, 800, 800),
+        ])
+        result = BreakdownExcelService._parse_excel(f)
+        assert len(result.rows) == 2
+
+    @_pytest.mark.unit
+    def test_parse_skips_concepto_only_rows(self):
+        """Filas con solo CONCEPTO (header visual) son saltadas."""
+        f = self._make_xlsx([
+            ("EXC-100", "", "", "", "", "", "", ""),
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+        ])
+        result = BreakdownExcelService._parse_excel(f)
+        assert len(result.rows) == 1
+
+    @_pytest.mark.unit
+    def test_parse_raises_when_sheet_missing(self):
+        import io
+        from openpyxl import Workbook
+        wb = Workbook()
+        wb.active.title = "Hoja1"
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        with _pytest.raises(ValueError, match="hoja 'CDU'"):
+            BreakdownExcelService._parse_excel(buf)
+
+    @_pytest.mark.unit
+    def test_parse_raises_when_only_headers(self):
+        f = self._make_xlsx([])
+        with _pytest.raises(ValueError, match="Excel vacío"):
+            BreakdownExcelService._parse_excel(f)
