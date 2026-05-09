@@ -430,3 +430,175 @@ class TestAnalyze:
         result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
         assert result.summary.errors_count == 0
         assert result.concepts[0].lines[0].unit_price == Decimal('2500')
+
+
+class TestImport:
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_import_replaces_breakdowns_per_concept(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        from apps.proyeccion.models import UnitCostBreakdown
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+            ImportBreakdownsLineDto,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, code="EXC-100")
+        UnitCostBreakdownFactory(conceptid=concept, description="VIEJO")
+        SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton", referenceprice=3000)
+        SupplyCatalogItemFactory(code="MO-001", description="Albañil", unit="jornal", referenceprice=800)
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=[
+                ImportBreakdownsConceptDto(
+                    code="EXC-100",
+                    lines=[
+                        ImportBreakdownsLineDto(
+                            category="MATERIALES", supply_code="MAT-001",
+                            yield_value=Decimal("0.5"), unit_price=Decimal("3000"),
+                        ),
+                        ImportBreakdownsLineDto(
+                            category="MANO_OBRA", supply_code="MO-001",
+                            yield_value=Decimal("1"), unit_price=Decimal("800"),
+                        ),
+                    ],
+                ),
+            ],
+            new_supplies=[],
+            override_uuid_mismatch=False,
+            uploaded_uuid=str(project.estimationprojectid),
+        )
+
+        result = BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+
+        assert result.concepts_replaced == 1
+        assert result.lines_created == 2
+        assert result.supplies_created == 0
+        assert result.hm_epp_regenerated == 1
+
+        lines = list(UnitCostBreakdown.objects.filter(conceptid=concept))
+        # 2 manual + HM + EPP = 4
+        assert len(lines) == 4
+        assert not any(l.description == "VIEJO" for l in lines)
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_import_creates_new_supplies_with_supplytype(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, EstimationProjectFactory,
+        )
+        from apps.proyeccion.models import SupplyCatalogItem
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+            ImportBreakdownsLineDto, BreakdownExcelNewSupplySchema,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=[
+                ImportBreakdownsConceptDto(
+                    code="EXC-100",
+                    lines=[
+                        ImportBreakdownsLineDto(
+                            category="MATERIALES", supply_code="NEW-MAT",
+                            supply_name="Insumo Nuevo", unit="ton",
+                            yield_value=Decimal("0.5"), unit_price=Decimal("1000"),
+                        ),
+                    ],
+                ),
+            ],
+            new_supplies=[
+                BreakdownExcelNewSupplySchema(
+                    code="NEW-MAT", name="Insumo Nuevo", unit="ton",
+                    supplytype=0, reference_price=Decimal("1000"),
+                    appears_in_concepts=["EXC-100"],
+                ),
+            ],
+            override_uuid_mismatch=False,
+            uploaded_uuid=str(project.estimationprojectid),
+        )
+
+        result = BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+        assert result.supplies_created == 1
+        s = SupplyCatalogItem.objects.get(code="NEW-MAT")
+        assert s.supplytype == 0
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_import_does_not_touch_other_concepts(self):
+        """Conceptos no listados en el Excel quedan intactos."""
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        from apps.proyeccion.models import UnitCostBreakdown
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+            ImportBreakdownsLineDto,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        c1 = BudgetConceptFactory(projectid=project, code="EXC-100")
+        c2 = BudgetConceptFactory(projectid=project, code="OTHER-200")
+        UnitCostBreakdownFactory(conceptid=c2, description="OTHER-LINE")
+        SupplyCatalogItemFactory(code="MAT-001", referenceprice=3000)
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=[
+                ImportBreakdownsConceptDto(
+                    code="EXC-100",
+                    lines=[
+                        ImportBreakdownsLineDto(
+                            category="MATERIALES", supply_code="MAT-001",
+                            yield_value=Decimal("0.5"), unit_price=Decimal("3000"),
+                        ),
+                    ],
+                ),
+            ],
+            uploaded_uuid=str(project.estimationprojectid),
+        )
+        BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+
+        other_lines = UnitCostBreakdown.objects.filter(conceptid=c2)
+        assert other_lines.count() == 1
+        assert other_lines.first().description == "OTHER-LINE"
+
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_import_uuid_mismatch_blocks_without_override(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+            ImportBreakdownsLineDto,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+        SupplyCatalogItemFactory(code="MAT-001", referenceprice=3000)
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=[
+                ImportBreakdownsConceptDto(
+                    code="EXC-100",
+                    lines=[
+                        ImportBreakdownsLineDto(
+                            category="MATERIALES", supply_code="MAT-001",
+                            yield_value=Decimal("0.5"), unit_price=Decimal("3000"),
+                        ),
+                    ],
+                ),
+            ],
+            uploaded_uuid="11111111-1111-1111-1111-111111111111",
+            override_uuid_mismatch=False,
+        )
+        with _pytest.raises(ValueError, match="UUID"):
+            BreakdownExcelService.import_(project.estimationprojectid, payload, user)

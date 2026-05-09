@@ -4576,3 +4576,107 @@ class BreakdownExcelService:
             project_uuid_match=uuid_match,
             uploaded_uuid=parsed.uploaded_uuid,
         )
+
+    @classmethod
+    def import_(cls, project_id, payload, user):
+        """Persist a previously analyzed import payload.
+
+        Atomic: if any concept fails, the whole transaction rolls back.
+        """
+        from decimal import Decimal as D, ROUND_HALF_UP
+        from django.db import transaction
+        from apps.proyeccion.models import (
+            BudgetConcept, SupplyCatalogItem, UnitCostBreakdown,
+        )
+        from apps.proyeccion.schemas import ImportBreakdownsResponseSchema
+
+        # UUID gate
+        if (
+            payload.uploaded_uuid
+            and payload.uploaded_uuid != str(project_id)
+            and not payload.override_uuid_mismatch
+        ):
+            raise ValueError("UUID del proyecto no coincide; marcar override_uuid_mismatch para forzar.")
+
+        with transaction.atomic():
+            # 1. Auto-create new supplies (idempotent: get_or_create)
+            supplies_created = 0
+            for ns in payload.new_supplies:
+                _, created = SupplyCatalogItem.objects.get_or_create(
+                    code=ns.code,
+                    defaults={
+                        "description": ns.name,
+                        "unit": ns.unit,
+                        "supplytype": ns.supplytype,
+                        "referenceprice": ns.reference_price,
+                    },
+                )
+                if created:
+                    supplies_created += 1
+
+            supply_index = cls._build_supply_index()
+            concept_index = cls._build_concept_index(project_id)
+
+            concepts_replaced = 0
+            lines_created = 0
+            hm_epp_count = 0
+
+            for cdto in payload.concepts:
+                concept_uuid = concept_index.get(cdto.code)
+                if concept_uuid is None:
+                    raise ValueError(f"Concepto no encontrado durante import: {cdto.code}")
+
+                # Delete existing breakdowns (HM/EPP included; will be regenerated)
+                UnitCostBreakdown.objects.filter(conceptid_id=concept_uuid).delete()
+
+                new_lines = []
+                for idx, ldto in enumerate(cdto.lines, start=1):
+                    cat = cls.normalize_category(ldto.category)
+                    supply = supply_index.get(ldto.supply_code)
+                    if supply is None:
+                        raise ValueError(
+                            f"Insumo no encontrado durante import: {ldto.supply_code} "
+                            f"(concepto {cdto.code})"
+                        )
+                    amount = (D('1') * ldto.unit_price * ldto.yield_value).quantize(
+                        D('0.01'), ROUND_HALF_UP
+                    )
+                    new_lines.append(UnitCostBreakdown(
+                        conceptid_id=concept_uuid,
+                        categorycode=cat.category_code,
+                        linenumber=idx,
+                        description=ldto.supply_name or supply.description,
+                        unit=ldto.unit or supply.unit,
+                        quantity=D('1'),
+                        unitprice=ldto.unit_price,
+                        yieldvalue=ldto.yield_value,
+                        amount=amount,
+                        supplyid=supply,
+                    ))
+                UnitCostBreakdown.objects.bulk_create(new_lines)
+                lines_created += len(new_lines)
+
+                hm_created, epp_created = UnitCostBreakdownService.regenerate_hm_epp(
+                    concept_uuid, user
+                )
+                if hm_created and epp_created:
+                    hm_epp_count += 1
+
+                UnitCostBreakdownService._recalc_concept(concept_uuid, user)
+                concepts_replaced += 1
+
+            # 3. Re-prorate indirect costs across all active concepts
+            prorate_triggered = False
+            try:
+                IndirectCostDetailService.prorate_to_concepts(project_id, user)
+                prorate_triggered = True
+            except Exception:
+                prorate_triggered = False
+
+        return ImportBreakdownsResponseSchema(
+            concepts_replaced=concepts_replaced,
+            lines_created=lines_created,
+            supplies_created=supplies_created,
+            hm_epp_regenerated=hm_epp_count,
+            prorate_triggered=prorate_triggered,
+        )
