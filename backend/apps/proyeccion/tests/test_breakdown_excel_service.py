@@ -156,3 +156,29 @@ class TestConceptMatching:
         concept = BudgetConceptFactory(code="EXC-100")
         index = BreakdownExcelService._build_concept_index(concept.projectid_id)
         assert BreakdownExcelService._match_concept("NOPE-999", index) is None
+
+
+class TestSupplyMatching:
+    @_pytest.mark.django_db
+    @_pytest.mark.unit
+    def test_match_supply_by_exact_code(self, db):
+        from apps.proyeccion.tests.factories import SupplyCatalogItemFactory
+        supply = SupplyCatalogItemFactory(code="MAT-CEM-001")
+        index = BreakdownExcelService._build_supply_index()
+        result = BreakdownExcelService._match_supply("MAT-CEM-001", index)
+        assert result is not None
+        assert result.supplyid == supply.supplyid
+
+    @_pytest.mark.django_db
+    @_pytest.mark.unit
+    def test_match_supply_returns_none_when_not_found(self, db):
+        index = BreakdownExcelService._build_supply_index()
+        assert BreakdownExcelService._match_supply("NOPE", index) is None
+
+    @_pytest.mark.django_db
+    @_pytest.mark.unit
+    def test_match_supply_is_case_sensitive(self, db):
+        from apps.proyeccion.tests.factories import SupplyCatalogItemFactory
+        SupplyCatalogItemFactory(code="MAT-001")
+        index = BreakdownExcelService._build_supply_index()
+        assert BreakdownExcelService._match_supply("mat-001", index) is None

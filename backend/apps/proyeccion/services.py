@@ -4256,3 +4256,22 @@ class BreakdownExcelService:
             return None
         code = str(code_value).strip()
         return concept_index.get(code)
+
+    @staticmethod
+    def _build_supply_index():
+        """Return dict {code: SupplyCatalogItem} for all catalog items.
+
+        SupplyCatalogItem is global (not per project).
+        """
+        from apps.proyeccion.models import SupplyCatalogItem
+        return {s.code: s for s in SupplyCatalogItem.objects.all()}
+
+    @staticmethod
+    def _match_supply(code_value, supply_index):
+        """Match Excel INSUMO_CODIGO to a SupplyCatalogItem.
+
+        Case-sensitive (codes are canonical).
+        """
+        if not code_value:
+            return None
+        return supply_index.get(str(code_value).strip())
