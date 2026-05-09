@@ -819,6 +819,60 @@ class UnitCostBreakdownService:
         UnitCostBreakdownService._recalc_concept(concept_id, user)
         return created
 
+    @staticmethod
+    def regenerate_hm_epp(concept_id, user):
+        """Regenerate Herramienta Menor (3% labor) and EPP (3% labor) lines.
+
+        Deletes any existing HM/EPP lines for the concept and creates fresh ones
+        based on the current labor total. If labor amount is 0, no HM/EPP is
+        created (and any existing HM/EPP are still deleted).
+
+        Returns: tuple (hm_created: bool, epp_created: bool)
+        """
+        from decimal import Decimal as D, ROUND_HALF_UP
+
+        UnitCostBreakdown.objects.filter(
+            conceptid_id=concept_id,
+            categorycode__in=[
+                BreakdownCategoryCode.MINOR_TOOLS,
+                BreakdownCategoryCode.PPE,
+            ],
+        ).delete()
+
+        labor_amount = sum(
+            (b.amount for b in UnitCostBreakdown.objects.filter(
+                conceptid_id=concept_id,
+                categorycode=BreakdownCategoryCode.LABOR,
+            )),
+            D('0'),
+        )
+
+        if labor_amount <= 0:
+            return (False, False)
+
+        quantity = D('0.03')
+        unitprice = labor_amount.quantize(D('0.01'), ROUND_HALF_UP)
+        yieldvalue = D('1')
+        amount = (quantity * unitprice * yieldvalue).quantize(D('0.01'), ROUND_HALF_UP)
+
+        for category, desc in [
+            (BreakdownCategoryCode.MINOR_TOOLS, 'HERRAMIENTA MENOR'),
+            (BreakdownCategoryCode.PPE, 'EPP'),
+        ]:
+            UnitCostBreakdown.objects.create(
+                conceptid_id=concept_id,
+                categorycode=category,
+                linenumber=1,
+                description=desc,
+                unit='%',
+                quantity=quantity,
+                unitprice=unitprice,
+                yieldvalue=yieldvalue,
+                amount=amount,
+            )
+
+        return (True, True)
+
     # -------------------------------------------------------------------------
     # Skeleton generation rules (hardcoded, mirrors frontend config)
     # -------------------------------------------------------------------------
