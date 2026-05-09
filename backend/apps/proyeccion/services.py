@@ -4303,8 +4303,12 @@ class BreakdownExcelService:
         """
         from decimal import Decimal as D
         from openpyxl import load_workbook
+        from zipfile import BadZipFile
 
-        wb = load_workbook(file_or_buffer, data_only=True)
+        try:
+            wb = load_workbook(file_or_buffer, data_only=True)
+        except BadZipFile:
+            raise ValueError("El archivo no es un .xlsx válido (formato ZIP corrupto o incorrecto)")
         if "CDU" not in wb.sheetnames:
             raise ValueError("El archivo no contiene la hoja 'CDU' esperada")
         ws = wb["CDU"]
