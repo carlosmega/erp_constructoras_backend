@@ -4189,4 +4189,46 @@ class EstimationPNTCalculator:
         for v in values:
             acc += v
             out.append(acc)
+
+
+# =============================================================================
+# Breakdown Excel Import / Export Service
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class _NormalizedCategory:
+    supplytype: int
+    category_code: int  # BreakdownCategoryCode value
+
+
+class BreakdownExcelService:
+    """Round-trip Excel import/export for Unit Cost Breakdowns (CDU)."""
+
+    # Excel CATEGORIA → (SupplyType, BreakdownCategoryCode)
+    _CATEGORY_MAP = {
+        "MATERIALES":   _NormalizedCategory(supplytype=0, category_code=1),  # Materials
+        "MANO_OBRA":    _NormalizedCategory(supplytype=1, category_code=4),  # Labor
+        "MAQUINARIA":   _NormalizedCategory(supplytype=2, category_code=3),  # Machinery
+        "ACARREOS":     _NormalizedCategory(supplytype=4, category_code=2),  # Hauling
+        "SUBCONTRATOS": _NormalizedCategory(supplytype=3, category_code=5),  # Subcontracts
+    }
+
+    _REJECTED_CATEGORIES = {"HM", "EPP", "HERRAMIENTA_MENOR", "HERRAMIENTAMENOR", "PPE"}
+
+    @classmethod
+    def normalize_category(cls, value: str) -> _NormalizedCategory:
+        """Normalize Excel CATEGORIA cell to (supplytype, breakdown category_code).
+
+        Handles case-insensitive comparison, trim, and space/underscore variants.
+        Raises ValueError for HM/EPP (auto-generated) or unknown values.
+        """
+        if not value:
+            raise ValueError("Categoría vacía")
+        normalized = value.strip().upper().replace(" ", "_")
+        if normalized in cls._REJECTED_CATEGORIES:
+            raise ValueError("HM/EPP se calculan automáticamente, no incluir en Excel")
+        if normalized not in cls._CATEGORY_MAP:
+            raise ValueError(f"Categoría no reconocida: {value!r}")
+        return cls._CATEGORY_MAP[normalized]
         return out

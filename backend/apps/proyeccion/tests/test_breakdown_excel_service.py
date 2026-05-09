@@ -97,3 +97,37 @@ def test_regenerate_hm_epp_replaces_existing_lines():
     )
     assert hm_lines.count() == 1
     assert hm_lines.first().amount == Decimal('60.00')
+
+
+import pytest as _pytest
+
+from apps.proyeccion.services import BreakdownExcelService
+
+
+class TestCategoryMapping:
+    @_pytest.mark.unit
+    @_pytest.mark.parametrize("excel_cat,expected_supplytype,expected_categorycode", [
+        ("MATERIALES", 0, 1),       # Material → Materials
+        ("MANO_OBRA", 1, 4),         # Labor → Labor
+        ("MAQUINARIA", 2, 3),        # Machinery → Machinery
+        ("ACARREOS", 4, 2),          # Hauling → Hauling
+        ("SUBCONTRATOS", 3, 5),      # Subcontract → Subcontracts
+        ("materiales", 0, 1),        # case-insensitive
+        ("Mano Obra", 1, 4),         # spaces and case
+        ("  MANO_OBRA  ", 1, 4),     # trim
+    ])
+    def test_normalize_category_supplytype(self, excel_cat, expected_supplytype, expected_categorycode):
+        result = BreakdownExcelService.normalize_category(excel_cat)
+        assert result.supplytype == expected_supplytype
+        assert result.category_code == expected_categorycode
+
+    @_pytest.mark.unit
+    @_pytest.mark.parametrize("rejected", ["HM", "EPP", "HERRAMIENTA_MENOR", "PPE"])
+    def test_normalize_category_rejects_hm_epp(self, rejected):
+        with _pytest.raises(ValueError, match="HM/EPP se calculan automáticamente"):
+            BreakdownExcelService.normalize_category(rejected)
+
+    @_pytest.mark.unit
+    def test_normalize_category_rejects_unknown(self):
+        with _pytest.raises(ValueError, match="Categoría no reconocida"):
+            BreakdownExcelService.normalize_category("DESCONOCIDO")
