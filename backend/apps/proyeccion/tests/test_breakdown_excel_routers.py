@@ -116,3 +116,46 @@ def test_import_excel_returns_summary(authed_client):
     body = r.json()
     assert body["concepts_replaced"] == 1
     assert body["lines_created"] == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.permissions
+@pytest.mark.xfail(
+    reason=(
+        "Auth not yet enforced on breakdown excel endpoints — all proyeccion routers "
+        "carry '# TODO: Add @require_permission decorator during integration'. "
+        "NinjaAPI is instantiated without global auth=, so anonymous requests reach "
+        "the handler and return 200. This test documents the gap; remove xfail once "
+        "RBAC is wired in routers.py."
+    ),
+    strict=True,
+)
+def test_import_excel_requires_auth_anonymous_blocked(db):
+    """Anonymous users MUST be blocked from POST breakdowns/import-excel/.
+
+    Current state (2026-05-09): endpoints have no auth decorator → anonymous
+    callers receive 200.  Mark xfail(strict=True) so CI fails if the gap is
+    accidentally closed without updating this test, and fails explicitly when
+    it remains open.
+    """
+    from django.test import Client
+
+    project = EstimationProjectFactory()
+    anon_client = Client()
+    payload = {
+        "concepts": [],
+        "new_supplies": [],
+        "override_uuid_mismatch": False,
+        "uploaded_uuid": str(project.estimationprojectid),
+    }
+    url = (
+        f"/api/proyeccion/projects/{project.estimationprojectid}"
+        "/breakdowns/import-excel/"
+    )
+    r = anon_client.post(url, payload, content_type="application/json")
+    # This assertion SHOULD pass once RBAC is wired; until then it fails
+    # (anonymous gets 200) and xfail absorbs the failure.
+    assert r.status_code in (401, 403, 302), (
+        f"Expected auth block on breakdown import-excel, got {r.status_code}. "
+        "Remove xfail and add @require_permission decorator to the endpoint."
+    )
