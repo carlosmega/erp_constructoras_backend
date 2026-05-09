@@ -4231,4 +4231,3 @@ class BreakdownExcelService:
         if normalized not in cls._CATEGORY_MAP:
             raise ValueError(f"Categoría no reconocida: {value!r}")
         return cls._CATEGORY_MAP[normalized]
-        return out
