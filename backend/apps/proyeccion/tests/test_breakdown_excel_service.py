@@ -662,6 +662,59 @@ class TestImport:
         assert not SupplyCatalogItem.objects.filter(code="WONT-PERSIST").exists()
 
 
+class TestPerformance:
+    @_pytest.mark.django_db
+    @_pytest.mark.slow
+    def test_import_500_concepts_8_lines_under_60s(self):
+        import time
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+            ImportBreakdownsLineDto,
+        )
+
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+
+        # 500 concepts
+        for i in range(500):
+            BudgetConceptFactory(projectid=project, code=f"C-{i:04d}")
+        # 8 supplies
+        for i in range(8):
+            SupplyCatalogItemFactory(code=f"S-{i:02d}", referenceprice=100 * (i + 1))
+
+        concepts_payload = []
+        for i in range(500):
+            lines = [
+                ImportBreakdownsLineDto(
+                    category="MATERIALES" if j % 2 == 0 else "MANO_OBRA",
+                    supply_code=f"S-{j:02d}",
+                    yield_value=Decimal("0.5"),
+                    unit_price=Decimal(str(100 * (j + 1))),
+                )
+                for j in range(8)
+            ]
+            concepts_payload.append(
+                ImportBreakdownsConceptDto(code=f"C-{i:04d}", lines=lines)
+            )
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=concepts_payload,
+            uploaded_uuid=str(project.estimationprojectid),
+        )
+
+        start = time.monotonic()
+        result = BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+        elapsed = time.monotonic() - start
+
+        assert result.concepts_replaced == 500
+        assert result.lines_created == 4000
+        assert elapsed < 60.0, f"Import took {elapsed:.1f}s (target < 60s)"
+
+
 class TestExport:
     @_pytest.mark.django_db
     @_pytest.mark.integration
