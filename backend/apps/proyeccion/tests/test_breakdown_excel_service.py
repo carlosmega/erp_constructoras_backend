@@ -661,6 +661,34 @@ class TestImport:
         # New supply should NOT have been persisted
         assert not SupplyCatalogItem.objects.filter(code="WONT-PERSIST").exists()
 
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_import_rejects_concept_with_empty_lines(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        from apps.proyeccion.models import UnitCostBreakdown
+        from apps.proyeccion.schemas import (
+            ImportBreakdownsRequestDto, ImportBreakdownsConceptDto,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, code="EXC-100")
+        UnitCostBreakdownFactory(conceptid=concept, description="EXISTING")
+
+        payload = ImportBreakdownsRequestDto(
+            concepts=[
+                ImportBreakdownsConceptDto(code="EXC-100", lines=[]),
+            ],
+            uploaded_uuid=str(project.estimationprojectid),
+        )
+
+        with _pytest.raises(ValueError, match="no tiene líneas"):
+            BreakdownExcelService.import_(project.estimationprojectid, payload, user)
+
+        # Existing breakdown should be preserved (rollback)
+        assert UnitCostBreakdown.objects.filter(conceptid=concept, description="EXISTING").exists()
+
 
 class TestPerformance:
     @_pytest.mark.django_db

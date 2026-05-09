@@ -4626,6 +4626,10 @@ class BreakdownExcelService:
             hm_epp_count = 0
 
             for cdto in payload.concepts:
+                if not cdto.lines:
+                    raise ValueError(
+                        f"Concepto {cdto.code} no tiene líneas en el payload — no se puede vaciar el CDU desde Excel"
+                    )
                 concept_uuid = concept_index.get(cdto.code)
                 if concept_uuid is None:
                     raise ValueError(f"Concepto no encontrado durante import: {cdto.code}")
@@ -4669,13 +4673,12 @@ class BreakdownExcelService:
                 UnitCostBreakdownService._recalc_concept(concept_uuid, user)
                 concepts_replaced += 1
 
-            # 3. Re-prorate indirect costs across all active concepts
-            prorate_triggered = False
-            try:
-                IndirectCostDetailService.prorate_to_concepts(project_id, user)
-                prorate_triggered = True
-            except Exception:
-                prorate_triggered = False
+            # 3. Re-prorate indirect costs across all active concepts.
+            # prorate_to_concepts() is a no-op when total_direct == 0 (returns early);
+            # it never raises for the empty-data case, so no try/except is needed.
+            # Any real exception (DB error, programming bug) must propagate to roll back.
+            IndirectCostDetailService.prorate_to_concepts(project_id, user)
+            prorate_triggered = True
 
         return ImportBreakdownsResponseSchema(
             concepts_replaced=concepts_replaced,
