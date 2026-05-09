@@ -274,3 +274,39 @@ class TestExcelParsing:
         f = self._make_xlsx([])
         with _pytest.raises(ValueError, match="Excel vacío"):
             BreakdownExcelService._parse_excel(f)
+
+
+class TestAnalyze:
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_happy_path_existing_concept_and_supplies(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, code="EXC-100", description="Excavación")
+        SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton", referenceprice=3000)
+        SupplyCatalogItemFactory(code="MO-001", description="Albañil", unit="jornal", referenceprice=800)
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+            ("EXC-100", "MANO_OBRA",  "MO-001",  "Albañil",  "jornal", 1, 800, 800),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+
+        assert result.summary.concepts_count == 1
+        assert result.summary.lines_count == 2
+        assert result.summary.new_supplies_count == 0
+        assert result.summary.errors_count == 0
+        assert len(result.concepts) == 1
+        assert result.concepts[0].code == "EXC-100"
+        assert len(result.concepts[0].lines) == 2
+        # HM/EPP preview = 3% of labor (800)
+        assert result.concepts[0].hm_preview == Decimal('24.00')
+        assert result.concepts[0].epp_preview == Decimal('24.00')
+        # total preview = lines + HM + EPP = 1500 + 800 + 24 + 24 = 2348
+        assert result.concepts[0].total_preview == Decimal('2348.00')
+        assert result.project_uuid_match is True
