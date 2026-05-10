@@ -1139,6 +1139,8 @@ class AnalyzeBreakdownsResponseSchema(Schema):
     errors: List[BreakdownExcelErrorSchema]
     project_uuid_match: bool
     uploaded_uuid: Optional[str] = None
+    affected_distributions_count: int = 0
+    affected_concepts_with_distributions: List[str] = []
 
 
 class ImportBreakdownsLineDto(Schema):
