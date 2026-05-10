@@ -469,6 +469,27 @@ class TestAnalyze:
         assert result.affected_distributions_count == 3
         assert result.affected_concepts_with_distributions == ["EXC-100"]
 
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_zero_when_no_distributions(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory,
+        )
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        BudgetConceptFactory(projectid=project, code="EXC-100")
+        SupplyCatalogItemFactory(code="MAT-001", referenceprice=3000)
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+
+        assert result.affected_distributions_count == 0
+        assert result.affected_concepts_with_distributions == []
+
 
 class TestImport:
     @_pytest.mark.django_db
