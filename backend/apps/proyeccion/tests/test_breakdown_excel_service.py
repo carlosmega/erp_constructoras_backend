@@ -490,6 +490,39 @@ class TestAnalyze:
         assert result.affected_distributions_count == 0
         assert result.affected_concepts_with_distributions == []
 
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_excludes_concepts_not_in_excel(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        from apps.proyeccion.models import CostDistribution
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        c1 = BudgetConceptFactory(projectid=project, code="EXC-100")
+        c2 = BudgetConceptFactory(projectid=project, code="OTHER-200")
+        supply = SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton", referenceprice=3000)
+        b1 = UnitCostBreakdownFactory(conceptid=c1, supplyid=supply, categorycode=1)
+        b2 = UnitCostBreakdownFactory(conceptid=c2, supplyid=supply, categorycode=1)
+        CostDistribution.objects.create(
+            projectid=project, breakdownid=b1,
+            periodnumber=1, fraction=Decimal('1'), isderived=False, linetype=0,
+        )
+        CostDistribution.objects.create(
+            projectid=project, breakdownid=b2,
+            periodnumber=1, fraction=Decimal('1'), isderived=False, linetype=0,
+        )
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+
+        assert result.affected_distributions_count == 1
+        assert result.affected_concepts_with_distributions == ["EXC-100"]
+
 
 class TestImport:
     @_pytest.mark.django_db
