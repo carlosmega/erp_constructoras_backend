@@ -431,6 +431,44 @@ class TestAnalyze:
         assert result.summary.errors_count == 0
         assert result.concepts[0].lines[0].unit_price == Decimal('2500')
 
+    @_pytest.mark.django_db
+    @_pytest.mark.integration
+    def test_analyze_reports_affected_distributions_count(self):
+        from apps.proyeccion.tests.factories import (
+            BudgetConceptFactory, SupplyCatalogItemFactory,
+            EstimationProjectFactory, UnitCostBreakdownFactory,
+        )
+        from apps.proyeccion.models import CostDistribution
+        user = SystemUserFactory()
+        project = EstimationProjectFactory()
+        concept = BudgetConceptFactory(projectid=project, code="EXC-100")
+        supply = SupplyCatalogItemFactory(code="MAT-001", description="Cemento", unit="ton", referenceprice=3000)
+        breakdown = UnitCostBreakdownFactory(
+            conceptid=concept, supplyid=supply,
+            categorycode=1,
+            quantity=Decimal('1'), unitprice=Decimal('3000'),
+            yieldvalue=Decimal('0.5'), amount=Decimal('1500'),
+        )
+        # Create 3 CostDistribution rows on this breakdown (linetype=0 = BREAKDOWN)
+        for i in range(3):
+            CostDistribution.objects.create(
+                projectid=project,
+                breakdownid=breakdown,
+                periodnumber=i + 1,
+                fraction=Decimal('0.333'),
+                isderived=False,
+                linetype=0,
+            )
+
+        f = TestExcelParsing._make_xlsx([
+            ("EXC-100", "MATERIALES", "MAT-001", "Cemento", "ton", 0.5, 3000, 1500),
+        ], project_uuid=str(project.estimationprojectid))
+
+        result = BreakdownExcelService.analyze(project.estimationprojectid, f, user)
+
+        assert result.affected_distributions_count == 3
+        assert result.affected_concepts_with_distributions == ["EXC-100"]
+
 
 class TestImport:
     @_pytest.mark.django_db

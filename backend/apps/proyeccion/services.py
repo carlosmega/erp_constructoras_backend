@@ -4567,6 +4567,31 @@ class BreakdownExcelService:
             and parsed.uploaded_uuid == str(project_id)
         )
 
+        # Compute CostDistribution rows that will be deleted by cascade.
+        # Single aggregated query using related_name="period_distributions"
+        # on CostDistribution.breakdownid.
+        from django.db.models import Count
+        from apps.proyeccion.models import UnitCostBreakdown as _UCB
+
+        concept_uuids = [
+            entry["_concept_uuid"] for entry in concepts_map.values()
+        ]
+        if concept_uuids:
+            affected_per_concept = list(
+                _UCB.objects
+                .filter(conceptid_id__in=concept_uuids)
+                .values("conceptid__code")
+                .annotate(dist_count=Count("period_distributions"))
+                .filter(dist_count__gt=0)
+            )
+            affected_count = sum(row["dist_count"] for row in affected_per_concept)
+            affected_concept_codes = sorted(
+                row["conceptid__code"] for row in affected_per_concept
+            )
+        else:
+            affected_count = 0
+            affected_concept_codes = []
+
         return AnalyzeBreakdownsResponseSchema(
             summary=BreakdownExcelSummarySchema(
                 concepts_count=len(out_concepts),
@@ -4579,6 +4604,8 @@ class BreakdownExcelService:
             errors=errors,
             project_uuid_match=uuid_match,
             uploaded_uuid=parsed.uploaded_uuid,
+            affected_distributions_count=affected_count,
+            affected_concepts_with_distributions=affected_concept_codes,
         )
 
     @classmethod
