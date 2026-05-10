@@ -1081,3 +1081,91 @@ class PNTReportDto(Schema):
     rows: list[PNTRowDto]
     stats: PNTStatsDto
     generated_at: datetime
+
+
+# =============================================================================
+# CDU Excel Import / Export Schemas
+# =============================================================================
+
+class BreakdownExcelLineSchema(Schema):
+    row: int
+    category: str
+    supply_code: str
+    supply_name: str
+    unit: str
+    yield_value: Decimal
+    unit_price: Decimal
+    amount: Decimal
+    is_new_supply: bool
+    warnings: List[str] = []
+
+
+class BreakdownExcelConceptSchema(Schema):
+    code: str
+    name: str
+    lines: List[BreakdownExcelLineSchema]
+    hm_preview: Decimal
+    epp_preview: Decimal
+    total_preview: Decimal
+
+
+class BreakdownExcelNewSupplySchema(Schema):
+    code: str
+    name: str
+    unit: str
+    supplytype: int
+    reference_price: Decimal
+    appears_in_concepts: List[str]
+
+
+class BreakdownExcelErrorSchema(Schema):
+    row: int
+    concept_code: str = ""
+    supply_code: str = ""
+    message: str
+
+
+class BreakdownExcelSummarySchema(Schema):
+    concepts_count: int
+    lines_count: int
+    new_supplies_count: int
+    errors_count: int
+
+
+class AnalyzeBreakdownsResponseSchema(Schema):
+    summary: BreakdownExcelSummarySchema
+    concepts: List[BreakdownExcelConceptSchema]
+    new_supplies: List[BreakdownExcelNewSupplySchema]
+    errors: List[BreakdownExcelErrorSchema]
+    project_uuid_match: bool
+    uploaded_uuid: Optional[str] = None
+
+
+class ImportBreakdownsLineDto(Schema):
+    """Una línea para reimportar (post-analyze, sin warnings/match flags)."""
+    category: str
+    supply_code: str
+    supply_name: str = ""
+    unit: str = ""
+    yield_value: Decimal
+    unit_price: Decimal
+
+
+class ImportBreakdownsConceptDto(Schema):
+    code: str
+    lines: List[ImportBreakdownsLineDto]
+
+
+class ImportBreakdownsRequestDto(Schema):
+    concepts: List[ImportBreakdownsConceptDto]
+    new_supplies: List[BreakdownExcelNewSupplySchema] = []
+    override_uuid_mismatch: bool = False
+    uploaded_uuid: Optional[str] = None
+
+
+class ImportBreakdownsResponseSchema(Schema):
+    concepts_replaced: int
+    lines_created: int
+    supplies_created: int
+    hm_epp_regenerated: int
+    prorate_triggered: bool

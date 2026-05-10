@@ -819,6 +819,60 @@ class UnitCostBreakdownService:
         UnitCostBreakdownService._recalc_concept(concept_id, user)
         return created
 
+    @staticmethod
+    def regenerate_hm_epp(concept_id, user):
+        """Regenerate Herramienta Menor (3% labor) and EPP (3% labor) lines.
+
+        Deletes any existing HM/EPP lines for the concept and creates fresh ones
+        based on the current labor total. If labor amount is 0, no HM/EPP is
+        created (and any existing HM/EPP are still deleted).
+
+        Returns: tuple (hm_created: bool, epp_created: bool)
+        """
+        from decimal import Decimal as D, ROUND_HALF_UP
+
+        UnitCostBreakdown.objects.filter(
+            conceptid_id=concept_id,
+            categorycode__in=[
+                BreakdownCategoryCode.MINOR_TOOLS,
+                BreakdownCategoryCode.PPE,
+            ],
+        ).delete()
+
+        labor_amount = sum(
+            (b.amount for b in UnitCostBreakdown.objects.filter(
+                conceptid_id=concept_id,
+                categorycode=BreakdownCategoryCode.LABOR,
+            )),
+            D('0'),
+        )
+
+        if labor_amount <= 0:
+            return (False, False)
+
+        quantity = D('0.03')
+        unitprice = labor_amount.quantize(D('0.01'), ROUND_HALF_UP)
+        yieldvalue = D('1')
+        amount = (quantity * unitprice * yieldvalue).quantize(D('0.01'), ROUND_HALF_UP)
+
+        for category, desc in [
+            (BreakdownCategoryCode.MINOR_TOOLS, 'HERRAMIENTA MENOR'),
+            (BreakdownCategoryCode.PPE, 'EPP'),
+        ]:
+            UnitCostBreakdown.objects.create(
+                conceptid_id=concept_id,
+                categorycode=category,
+                linenumber=1,
+                description=desc,
+                unit='%',
+                quantity=quantity,
+                unitprice=unitprice,
+                yieldvalue=yieldvalue,
+                amount=amount,
+            )
+
+        return (True, True)
+
     # -------------------------------------------------------------------------
     # Skeleton generation rules (hardcoded, mirrors frontend config)
     # -------------------------------------------------------------------------
@@ -4135,4 +4189,609 @@ class EstimationPNTCalculator:
         for v in values:
             acc += v
             out.append(acc)
-        return out
+
+
+# =============================================================================
+# Breakdown Excel Import / Export Service
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class _NormalizedCategory:
+    supplytype: int
+    category_code: int  # BreakdownCategoryCode value
+
+
+@dataclass
+class _ParsedRow:
+    row_num: int
+    concepto: str
+    categoria: str
+    insumo_codigo: str
+    insumo_descripcion: str
+    unidad: str
+    rendimiento: Optional[Decimal]
+    precio_unitario: Optional[Decimal]
+
+
+@dataclass
+class _ParsedExcel:
+    rows: list  # list[_ParsedRow]
+    uploaded_uuid: Optional[str]
+
+
+class BreakdownExcelService:
+    """Round-trip Excel import/export for Unit Cost Breakdowns (CDU)."""
+
+    # Excel CATEGORIA → (SupplyType, BreakdownCategoryCode)
+    _CATEGORY_MAP = {
+        "MATERIALES":   _NormalizedCategory(supplytype=0, category_code=1),  # Materials
+        "MANO_OBRA":    _NormalizedCategory(supplytype=1, category_code=4),  # Labor
+        "MAQUINARIA":   _NormalizedCategory(supplytype=2, category_code=3),  # Machinery
+        "ACARREOS":     _NormalizedCategory(supplytype=4, category_code=2),  # Hauling
+        "SUBCONTRATOS": _NormalizedCategory(supplytype=3, category_code=5),  # Subcontracts
+    }
+
+    _REJECTED_CATEGORIES = {"HM", "EPP", "HERRAMIENTA_MENOR", "HERRAMIENTAMENOR", "PPE"}
+
+    @classmethod
+    def normalize_category(cls, value: str) -> _NormalizedCategory:
+        """Normalize Excel CATEGORIA cell to (supplytype, breakdown category_code).
+
+        Handles case-insensitive comparison, trim, and space/underscore variants.
+        Raises ValueError for HM/EPP (auto-generated) or unknown values.
+        """
+        if not value:
+            raise ValueError("Categoría vacía")
+        normalized = value.strip().upper().replace(" ", "_")
+        if normalized in cls._REJECTED_CATEGORIES:
+            raise ValueError("HM/EPP se calculan automáticamente, no incluir en Excel")
+        if normalized not in cls._CATEGORY_MAP:
+            raise ValueError(f"Categoría no reconocida: {value!r}")
+        return cls._CATEGORY_MAP[normalized]
+
+    @staticmethod
+    def _build_concept_index(project_id):
+        """Return dict {code: conceptid_uuid} for all concepts in the project.
+
+        Single query, no N+1.
+        """
+        from apps.proyeccion.models import BudgetConcept
+        return {
+            c.code: c.conceptid
+            for c in BudgetConcept.objects.filter(projectid_id=project_id).only("conceptid", "code")
+        }
+
+    @staticmethod
+    def _match_concept(code_value, concept_index):
+        """Match an Excel CONCEPTO cell to a BudgetConcept UUID.
+
+        1. Exact match by `code`
+        2. (Future) fallback to FIMP-S<NN>-<idx> derivation if needed
+        Returns: UUID or None
+        """
+        if not code_value:
+            return None
+        code = str(code_value).strip()
+        return concept_index.get(code)
+
+    @staticmethod
+    def _build_supply_index():
+        """Return dict {code: SupplyCatalogItem} for all catalog items.
+
+        SupplyCatalogItem is global (not per project).
+        """
+        from apps.proyeccion.models import SupplyCatalogItem
+        return {s.code: s for s in SupplyCatalogItem.objects.all()}
+
+    @staticmethod
+    def _match_supply(code_value, supply_index):
+        """Match Excel INSUMO_CODIGO to a SupplyCatalogItem.
+
+        Case-sensitive (codes are canonical).
+        """
+        if not code_value:
+            return None
+        return supply_index.get(str(code_value).strip())
+
+    @staticmethod
+    def _parse_excel(file_or_buffer) -> _ParsedExcel:
+        """Parse the CDU sheet from an .xlsx file.
+
+        Returns _ParsedExcel with rows and the uploaded UUID from row 2 col 1.
+        Raises ValueError if sheet 'CDU' missing or no data rows.
+        """
+        from decimal import Decimal as D
+        from openpyxl import load_workbook
+        from zipfile import BadZipFile
+
+        try:
+            wb = load_workbook(file_or_buffer, data_only=True)
+        except BadZipFile:
+            raise ValueError("El archivo no es un .xlsx válido (formato ZIP corrupto o incorrecto)")
+        if "CDU" not in wb.sheetnames:
+            raise ValueError("El archivo no contiene la hoja 'CDU' esperada")
+        ws = wb["CDU"]
+
+        uploaded_uuid = ws.cell(row=2, column=1).value
+        if uploaded_uuid is not None:
+            uploaded_uuid = str(uploaded_uuid).strip() or None
+
+        rows = []
+        last_concepto = ""
+        for excel_row in range(4, ws.max_row + 1):
+            cells = [ws.cell(row=excel_row, column=c).value for c in range(1, 9)]
+            # Skip fully empty rows
+            if all(v is None or str(v).strip() == "" for v in cells):
+                continue
+
+            concepto_raw = cells[0]
+            if concepto_raw is None or str(concepto_raw).strip() == "":
+                concepto = last_concepto
+            else:
+                concepto = str(concepto_raw).strip()
+                last_concepto = concepto
+
+            categoria = (str(cells[1]).strip() if cells[1] is not None else "")
+            insumo_codigo = (str(cells[2]).strip() if cells[2] is not None else "")
+            insumo_descripcion = (str(cells[3]).strip() if cells[3] is not None else "")
+            unidad = (str(cells[4]).strip() if cells[4] is not None else "")
+
+            # Skip rows that are only a CONCEPTO marker (visual header)
+            if not categoria and not insumo_codigo and not unidad:
+                continue
+
+            def to_decimal(v):
+                if v is None or str(v).strip() == "":
+                    return None
+                try:
+                    return D(str(v))
+                except Exception:
+                    return None
+
+            rows.append(_ParsedRow(
+                row_num=excel_row,
+                concepto=concepto,
+                categoria=categoria,
+                insumo_codigo=insumo_codigo,
+                insumo_descripcion=insumo_descripcion,
+                unidad=unidad,
+                rendimiento=to_decimal(cells[5]),
+                precio_unitario=to_decimal(cells[6]),
+            ))
+
+        if not rows:
+            raise ValueError("Excel vacío: no se encontraron filas de datos")
+
+        return _ParsedExcel(rows=rows, uploaded_uuid=uploaded_uuid)
+
+    @classmethod
+    def analyze(cls, project_id, file, user):
+        """Analyze an uploaded CDU Excel file without persisting changes.
+
+        Returns AnalyzeBreakdownsResponseSchema-compatible object.
+        """
+        from decimal import Decimal as D, ROUND_HALF_UP
+        from apps.proyeccion.schemas import (
+            AnalyzeBreakdownsResponseSchema,
+            BreakdownExcelSummarySchema,
+            BreakdownExcelConceptSchema,
+            BreakdownExcelLineSchema,
+            BreakdownExcelNewSupplySchema,
+            BreakdownExcelErrorSchema,
+        )
+
+        try:
+            parsed = cls._parse_excel(file)
+        except ValueError as e:
+            return AnalyzeBreakdownsResponseSchema(
+                summary=BreakdownExcelSummarySchema(
+                    concepts_count=0, lines_count=0, new_supplies_count=0, errors_count=1,
+                ),
+                concepts=[], new_supplies=[],
+                errors=[BreakdownExcelErrorSchema(row=0, message=str(e))],
+                project_uuid_match=False,
+                uploaded_uuid=None,
+            )
+
+        concept_index = cls._build_concept_index(project_id)
+        supply_index = cls._build_supply_index()
+
+        concepts_map = {}     # concept_code → dict with lines, etc.
+        new_supplies_map = {} # supply_code → new supply data
+        errors = []
+
+        for prow in parsed.rows:
+            try:
+                cat = cls.normalize_category(prow.categoria)
+            except ValueError as e:
+                errors.append(BreakdownExcelErrorSchema(
+                    row=prow.row_num, concept_code=prow.concepto,
+                    supply_code=prow.insumo_codigo, message=str(e),
+                ))
+                continue
+
+            concept_uuid = cls._match_concept(prow.concepto, concept_index)
+            if concept_uuid is None:
+                errors.append(BreakdownExcelErrorSchema(
+                    row=prow.row_num, concept_code=prow.concepto,
+                    supply_code=prow.insumo_codigo,
+                    message=f"Concepto no encontrado: {prow.concepto}",
+                ))
+                continue
+
+            if prow.rendimiento is None or prow.rendimiento <= 0:
+                errors.append(BreakdownExcelErrorSchema(
+                    row=prow.row_num, concept_code=prow.concepto,
+                    supply_code=prow.insumo_codigo,
+                    message="Rendimiento debe ser > 0",
+                ))
+                continue
+
+            supply = cls._match_supply(prow.insumo_codigo, supply_index)
+            is_new = supply is None
+            warnings_for_line = []
+
+            if is_new:
+                if not prow.insumo_descripcion:
+                    errors.append(BreakdownExcelErrorSchema(
+                        row=prow.row_num, concept_code=prow.concepto,
+                        supply_code=prow.insumo_codigo,
+                        message="Insumo nuevo requiere INSUMO_DESCRIPCION",
+                    ))
+                    continue
+                if not prow.unidad:
+                    errors.append(BreakdownExcelErrorSchema(
+                        row=prow.row_num, concept_code=prow.concepto,
+                        supply_code=prow.insumo_codigo,
+                        message="Insumo nuevo requiere UNIDAD",
+                    ))
+                    continue
+                if prow.precio_unitario is None or prow.precio_unitario <= 0:
+                    errors.append(BreakdownExcelErrorSchema(
+                        row=prow.row_num, concept_code=prow.concepto,
+                        supply_code=prow.insumo_codigo,
+                        message="Insumo nuevo requiere PRECIO_UNITARIO > 0",
+                    ))
+                    continue
+                effective_unit = prow.unidad
+                effective_name = prow.insumo_descripcion
+                effective_price = prow.precio_unitario
+                if prow.insumo_codigo in new_supplies_map:
+                    nsm = new_supplies_map[prow.insumo_codigo]
+                    if prow.concepto not in nsm["appears_in_concepts"]:
+                        nsm["appears_in_concepts"].append(prow.concepto)
+                else:
+                    new_supplies_map[prow.insumo_codigo] = {
+                        "code": prow.insumo_codigo,
+                        "name": effective_name,
+                        "unit": effective_unit,
+                        "supplytype": cat.supplytype,
+                        "reference_price": effective_price,
+                        "appears_in_concepts": [prow.concepto],
+                    }
+            else:
+                effective_unit = supply.unit
+                effective_name = supply.description
+                if prow.precio_unitario is not None and prow.precio_unitario > 0:
+                    effective_price = prow.precio_unitario
+                elif supply.referenceprice and supply.referenceprice > 0:
+                    effective_price = D(str(supply.referenceprice))
+                else:
+                    errors.append(BreakdownExcelErrorSchema(
+                        row=prow.row_num, concept_code=prow.concepto,
+                        supply_code=prow.insumo_codigo,
+                        message="Insumo sin precio de referencia, especifica PRECIO_UNITARIO",
+                    ))
+                    continue
+
+            amount = (D('1') * effective_price * prow.rendimiento).quantize(D('0.01'), ROUND_HALF_UP)
+            line_dict = {
+                "row": prow.row_num,
+                "category": prow.categoria.strip().upper().replace(" ", "_"),
+                "supply_code": prow.insumo_codigo,
+                "supply_name": effective_name,
+                "unit": effective_unit,
+                "yield_value": prow.rendimiento,
+                "unit_price": effective_price,
+                "amount": amount,
+                "is_new_supply": is_new,
+                "warnings": warnings_for_line,
+                "_categorycode": cat.category_code,  # internal, not in schema
+            }
+
+            if prow.concepto not in concepts_map:
+                concepts_map[prow.concepto] = {
+                    "code": prow.concepto,
+                    "name": "",
+                    "lines": [],
+                    "_concept_uuid": concept_uuid,
+                }
+            entry = concepts_map[prow.concepto]
+
+            existing_line = next(
+                (l for l in entry["lines"] if l["supply_code"] == line_dict["supply_code"]),
+                None,
+            )
+            if existing_line is not None:
+                existing_line["yield_value"] = existing_line["yield_value"] + prow.rendimiento
+                existing_line["amount"] = (
+                    D('1') * existing_line["unit_price"] * existing_line["yield_value"]
+                ).quantize(D('0.01'), ROUND_HALF_UP)
+                existing_line["warnings"].append(
+                    f"Insumo duplicado en concepto, rendimientos sumados (fila {prow.row_num})"
+                )
+            else:
+                entry["lines"].append(line_dict)
+
+        from apps.proyeccion.models import BudgetConcept
+        concept_codes = list(concepts_map.keys())
+        name_lookup = {
+            c.code: c.description
+            for c in BudgetConcept.objects.filter(
+                projectid_id=project_id, code__in=concept_codes
+            ).only("code", "description")
+        }
+
+        out_concepts = []
+        total_lines = 0
+        for code, entry in concepts_map.items():
+            entry["name"] = name_lookup.get(code, "")
+            labor_total = sum(
+                (D(str(l["amount"])) for l in entry["lines"] if l["_categorycode"] == 4),
+                D('0'),
+            )
+            hm_preview = (D('0.03') * labor_total).quantize(D('0.01'), ROUND_HALF_UP) if labor_total > 0 else D('0.00')
+            epp_preview = hm_preview
+            lines_total = sum((D(str(l["amount"])) for l in entry["lines"]), D('0'))
+            total_preview = (lines_total + hm_preview + epp_preview).quantize(D('0.01'), ROUND_HALF_UP)
+
+            schema_lines = [
+                BreakdownExcelLineSchema(**{k: v for k, v in l.items() if not k.startswith("_")})
+                for l in entry["lines"]
+            ]
+            out_concepts.append(BreakdownExcelConceptSchema(
+                code=entry["code"],
+                name=entry["name"],
+                lines=schema_lines,
+                hm_preview=hm_preview,
+                epp_preview=epp_preview,
+                total_preview=total_preview,
+            ))
+            total_lines += len(schema_lines)
+
+        new_supplies_list = [BreakdownExcelNewSupplySchema(**v) for v in new_supplies_map.values()]
+
+        uuid_match = (
+            parsed.uploaded_uuid is not None
+            and parsed.uploaded_uuid == str(project_id)
+        )
+
+        return AnalyzeBreakdownsResponseSchema(
+            summary=BreakdownExcelSummarySchema(
+                concepts_count=len(out_concepts),
+                lines_count=total_lines,
+                new_supplies_count=len(new_supplies_list),
+                errors_count=len(errors),
+            ),
+            concepts=out_concepts,
+            new_supplies=new_supplies_list,
+            errors=errors,
+            project_uuid_match=uuid_match,
+            uploaded_uuid=parsed.uploaded_uuid,
+        )
+
+    @classmethod
+    def import_(cls, project_id, payload, user):
+        """Persist a previously analyzed import payload.
+
+        Atomic: if any concept fails, the whole transaction rolls back.
+        """
+        from decimal import Decimal as D, ROUND_HALF_UP
+        from django.db import transaction
+        from apps.proyeccion.models import (
+            BudgetConcept, SupplyCatalogItem, UnitCostBreakdown,
+        )
+        from apps.proyeccion.schemas import ImportBreakdownsResponseSchema
+
+        # UUID gate
+        if (
+            payload.uploaded_uuid
+            and payload.uploaded_uuid != str(project_id)
+            and not payload.override_uuid_mismatch
+        ):
+            raise ValueError("UUID del proyecto no coincide; marcar override_uuid_mismatch para forzar.")
+
+        with transaction.atomic():
+            # 1. Auto-create new supplies (idempotent: get_or_create)
+            supplies_created = 0
+            for ns in payload.new_supplies:
+                _, created = SupplyCatalogItem.objects.get_or_create(
+                    code=ns.code,
+                    defaults={
+                        "description": ns.name,
+                        "unit": ns.unit,
+                        "supplytype": ns.supplytype,
+                        "referenceprice": ns.reference_price,
+                    },
+                )
+                if created:
+                    supplies_created += 1
+
+            supply_index = cls._build_supply_index()
+            concept_index = cls._build_concept_index(project_id)
+
+            concepts_replaced = 0
+            lines_created = 0
+            hm_epp_count = 0
+
+            for cdto in payload.concepts:
+                if not cdto.lines:
+                    raise ValueError(
+                        f"Concepto {cdto.code} no tiene líneas en el payload — no se puede vaciar el CDU desde Excel"
+                    )
+                concept_uuid = concept_index.get(cdto.code)
+                if concept_uuid is None:
+                    raise ValueError(f"Concepto no encontrado durante import: {cdto.code}")
+
+                # Delete existing breakdowns (HM/EPP included; will be regenerated)
+                UnitCostBreakdown.objects.filter(conceptid_id=concept_uuid).delete()
+
+                new_lines = []
+                for idx, ldto in enumerate(cdto.lines, start=1):
+                    cat = cls.normalize_category(ldto.category)
+                    supply = supply_index.get(ldto.supply_code)
+                    if supply is None:
+                        raise ValueError(
+                            f"Insumo no encontrado durante import: {ldto.supply_code} "
+                            f"(concepto {cdto.code})"
+                        )
+                    amount = (D('1') * ldto.unit_price * ldto.yield_value).quantize(
+                        D('0.01'), ROUND_HALF_UP
+                    )
+                    new_lines.append(UnitCostBreakdown(
+                        conceptid_id=concept_uuid,
+                        categorycode=cat.category_code,
+                        linenumber=idx,
+                        description=ldto.supply_name or supply.description,
+                        unit=ldto.unit or supply.unit,
+                        quantity=D('1'),
+                        unitprice=ldto.unit_price,
+                        yieldvalue=ldto.yield_value,
+                        amount=amount,
+                        supplyid=supply,
+                    ))
+                UnitCostBreakdown.objects.bulk_create(new_lines)
+                lines_created += len(new_lines)
+
+                hm_created, epp_created = UnitCostBreakdownService.regenerate_hm_epp(
+                    concept_uuid, user
+                )
+                if hm_created and epp_created:
+                    hm_epp_count += 1
+
+                UnitCostBreakdownService._recalc_concept(concept_uuid, user)
+                concepts_replaced += 1
+
+            # 3. Re-prorate indirect costs across all active concepts.
+            # prorate_to_concepts() is a no-op when total_direct == 0 (returns early);
+            # it never raises for the empty-data case, so no try/except is needed.
+            # Any real exception (DB error, programming bug) must propagate to roll back.
+            IndirectCostDetailService.prorate_to_concepts(project_id, user)
+            prorate_triggered = True
+
+        return ImportBreakdownsResponseSchema(
+            concepts_replaced=concepts_replaced,
+            lines_created=lines_created,
+            supplies_created=supplies_created,
+            hm_epp_regenerated=hm_epp_count,
+            prorate_triggered=prorate_triggered,
+        )
+
+    # BreakdownCategoryCode integer → Excel CATEGORIA label (excludes HM/EPP)
+    _CATEGORY_TO_EXCEL = {
+        1: "MATERIALES",     # Materials
+        2: "ACARREOS",       # Hauling
+        3: "MAQUINARIA",     # Machinery
+        4: "MANO_OBRA",      # Labor
+        5: "SUBCONTRATOS",   # Subcontracts
+    }
+
+    @classmethod
+    def export(cls, project_id, user) -> bytes:
+        """Export the project's CDU to an .xlsx file (bytes).
+
+        Excludes HM/EPP categories (auto-regenerated on import). For empty
+        concepts (no breakdowns yet), emits one placeholder row per concept.
+        """
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        from apps.proyeccion.models import (
+            BudgetConcept, UnitCostBreakdown, EstimationProject,
+        )
+
+        project = EstimationProject.objects.filter(pk=project_id).first()
+        project_name = getattr(project, "name", "") if project else ""
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "CDU"
+
+        # Row 1: title
+        ws.cell(row=1, column=1, value=f"Proyecto: {project_name}")
+        ws.cell(row=1, column=1).font = Font(bold=True, size=12)
+
+        # Row 2: UUID (for round-trip identification)
+        ws.cell(row=2, column=1, value=str(project_id))
+        ws.cell(row=2, column=1).font = Font(italic=True, color="888888")
+
+        # Row 3: column headers
+        headers = [
+            "CONCEPTO", "CATEGORIA", "INSUMO_CODIGO",
+            "INSUMO_DESCRIPCION", "UNIDAD", "RENDIMIENTO",
+            "PRECIO_UNITARIO", "IMPORTE",
+        ]
+        for i, h in enumerate(headers, start=1):
+            c = ws.cell(row=3, column=i, value=h)
+            c.font = Font(bold=True)
+            c.fill = PatternFill("solid", fgColor="DDDDDD")
+
+        ws.freeze_panes = "A4"
+
+        widths = [14, 14, 16, 35, 10, 12, 15, 14]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+        # Fetch concepts ordered alphabetically
+        concepts = list(
+            BudgetConcept.objects.filter(projectid_id=project_id).order_by("code")
+        )
+
+        # Fetch all breakdowns for this project, excluding HM (6) and EPP (7)
+        breakdowns_by_concept = {}
+        for b in (
+            UnitCostBreakdown.objects
+            .filter(conceptid__projectid_id=project_id)
+            .exclude(categorycode__in=(
+                BreakdownCategoryCode.MINOR_TOOLS,
+                BreakdownCategoryCode.PPE,
+            ))
+            .select_related("conceptid", "supplyid")
+            .order_by("conceptid__code", "categorycode", "linenumber")
+        ):
+            breakdowns_by_concept.setdefault(b.conceptid.code, []).append(b)
+
+        excel_row = 4
+        for concept in concepts:
+            lines = breakdowns_by_concept.get(concept.code, [])
+            if not lines:
+                # Placeholder row: only CONCEPTO filled (concept has no breakdowns yet)
+                ws.cell(row=excel_row, column=1, value=concept.code)
+                excel_row += 1
+                continue
+            for idx, line in enumerate(lines):
+                ws.cell(row=excel_row, column=1, value=concept.code if idx == 0 else "")
+                ws.cell(row=excel_row, column=2, value=cls._CATEGORY_TO_EXCEL.get(line.categorycode, ""))
+                ws.cell(row=excel_row, column=3, value=getattr(line.supplyid, "code", "") if line.supplyid else "")
+                ws.cell(row=excel_row, column=4, value=line.description or "")
+                ws.cell(row=excel_row, column=5, value=line.unit or "")
+                ws.cell(row=excel_row, column=6, value=float(line.yieldvalue))
+                ws.cell(row=excel_row, column=7, value=float(line.unitprice))
+                ws.cell(row=excel_row, column=8, value=float(line.amount))
+                excel_row += 1
+
+        # CATEGORIA dropdown validation
+        from openpyxl.worksheet.datavalidation import DataValidation
+        dv = DataValidation(
+            type="list",
+            formula1='"MATERIALES,MANO_OBRA,MAQUINARIA,ACARREOS,SUBCONTRATOS"',
+            allow_blank=True,
+        )
+        dv.add(f"B4:B{max(excel_row - 1, 4)}")
+        ws.add_data_validation(dv)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()

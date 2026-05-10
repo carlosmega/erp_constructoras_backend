@@ -242,31 +242,13 @@ class Command(BaseCommand):
                     labor_amount += amount
                 created += 1
 
-        # HM = 3% labor, EPP = 3% labor (Excel convention; no catalog mapping).
-        if labor_amount > 0:
-            for category, desc in [
-                (BreakdownCategoryCode.MINOR_TOOLS, 'HERRAMIENTA MENOR'),
-                (BreakdownCategoryCode.PPE, 'EPP'),
-            ]:
-                quantity = D('0.03')
-                unitprice = labor_amount.quantize(D('0.01'), ROUND_HALF_UP)
-                yieldvalue = D('1')
-                amount = (quantity * unitprice * yieldvalue).quantize(D('0.01'), ROUND_HALF_UP)
-
-                UnitCostBreakdown.objects.create(
-                    conceptid=concept,
-                    categorycode=category,
-                    linenumber=1,
-                    description=desc,
-                    unit='%',
-                    quantity=quantity,
-                    unitprice=unitprice,
-                    yieldvalue=yieldvalue,
-                    amount=amount,
-                )
-                created += 1
-
+        # HM = 3% labor, EPP = 3% labor (delegated to service for reuse)
         from apps.proyeccion.services import UnitCostBreakdownService
+        hm_created, epp_created = UnitCostBreakdownService.regenerate_hm_epp(concept.conceptid, user)
+        if hm_created:
+            created += 1
+        if epp_created:
+            created += 1
         UnitCostBreakdownService._recalc_concept(concept.conceptid, user)
         concept.refresh_from_db()
         return created

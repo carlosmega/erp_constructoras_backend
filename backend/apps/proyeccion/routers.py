@@ -67,6 +67,9 @@ from apps.proyeccion.schemas import (
     AnalyzeExcelResponseSchema,
     ImportExcelRequestDto,
     ImportExcelResponseSchema,
+    AnalyzeBreakdownsResponseSchema,
+    ImportBreakdownsRequestDto,
+    ImportBreakdownsResponseSchema,
     AutoGenerateSkeletonDto,
     FinancialSettingsDto,
     UpdateFinancialSettingsDto,
@@ -492,6 +495,57 @@ def import_excel(request: HttpRequest, project_id: UUID, payload: ImportExcelReq
     """Import concepts from a previously analyzed Excel file."""
     from apps.proyeccion.services import ExcelImportService
     return ExcelImportService.do_import(project_id, payload, request.user)
+
+
+# --- CDU (Unit Cost Breakdown) Excel Endpoints ---
+
+@budget_concepts_router.get(
+    "/projects/{project_id}/breakdowns/export-excel/",
+)
+def export_breakdown_excel(request: HttpRequest, project_id: UUID):
+    """Export the project's CDU (unit cost breakdowns) to an .xlsx file."""
+    from django.http import HttpResponse
+    from apps.proyeccion.services import BreakdownExcelService
+    binary = BreakdownExcelService.export(project_id, request.user)
+    response = HttpResponse(
+        binary,
+        content_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="cdu-{project_id}.xlsx"'
+    )
+    return response
+
+
+@budget_concepts_router.post(
+    "/projects/{project_id}/breakdowns/analyze-excel/",
+    response=AnalyzeBreakdownsResponseSchema,
+)
+def analyze_breakdown_excel(
+    request: HttpRequest,
+    project_id: UUID,
+    file: UploadedFile = File(...),
+):
+    """Analyze a CDU Excel file and return a preview without persisting."""
+    from apps.proyeccion.services import BreakdownExcelService
+    return BreakdownExcelService.analyze(project_id, file, request.user)
+
+
+@budget_concepts_router.post(
+    "/projects/{project_id}/breakdowns/import-excel/",
+    response=ImportBreakdownsResponseSchema,
+)
+def import_breakdown_excel(
+    request: HttpRequest,
+    project_id: UUID,
+    payload: ImportBreakdownsRequestDto,
+):
+    """Persist a previously analyzed CDU Excel import."""
+    from apps.proyeccion.services import BreakdownExcelService
+    return BreakdownExcelService.import_(project_id, payload, request.user)
 
 
 # =============================================================================
