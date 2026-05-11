@@ -31,7 +31,10 @@ class EmployeeFactory(DjangoModelFactory):
     rfc = factory.Sequence(lambda n: f'RFC{n:010d}')
     nss = factory.Sequence(lambda n: f'{n:011d}')
     emailaddress = factory.Faker('email')
-    phonenumber = factory.Faker('phone_number')
+    # Use a fixed-length MX phone format (16 chars) to respect
+    # Employee.phonenumber max_length=20. Faker('phone_number') can produce
+    # values up to ~24 chars with extensions, causing flaky test failures.
+    phonenumber = factory.Faker('numerify', text='+52 ###-###-####')
     dateofbirth = factory.LazyFunction(lambda: date(1990, 1, 15))
     hiredate = factory.LazyFunction(lambda: date.today() - timedelta(days=180))
     position = 'Obrero General'
