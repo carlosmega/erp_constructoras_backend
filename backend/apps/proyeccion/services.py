@@ -4189,6 +4189,7 @@ class EstimationPNTCalculator:
         for v in values:
             acc += v
             out.append(acc)
+        return out
 
 
 # =============================================================================
