@@ -70,6 +70,9 @@ from apps.proyeccion.schemas import (
     AnalyzeBreakdownsResponseSchema,
     ImportBreakdownsRequestDto,
     ImportBreakdownsResponseSchema,
+    AnalyzeIndirectsResponseSchema,
+    ImportIndirectsRequestDto,
+    ImportIndirectsResponseSchema,
     AutoGenerateSkeletonDto,
     FinancialSettingsDto,
     UpdateFinancialSettingsDto,
@@ -637,6 +640,58 @@ def get_indirect_cost_total(request: HttpRequest, project_id: UUID):
     return total
 
 
+# --- Indirect Costs Excel Round-Trip Endpoints ---
+
+
+@indirect_cost_details_router.get(
+    "/projects/{project_id}/indirect-cost-details/export-excel/",
+)
+def export_indirect_excel(request: HttpRequest, project_id: UUID):
+    """Export the project's indirect costs to an .xlsx file."""
+    from django.http import HttpResponse
+    from apps.proyeccion.services import IndirectExcelService
+    binary = IndirectExcelService.export(project_id, request.user)
+    response = HttpResponse(
+        binary,
+        content_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="indirectos-{project_id}.xlsx"'
+    )
+    return response
+
+
+@indirect_cost_details_router.post(
+    "/projects/{project_id}/indirect-cost-details/analyze-excel/",
+    response=AnalyzeIndirectsResponseSchema,
+)
+def analyze_indirect_excel(
+    request: HttpRequest,
+    project_id: UUID,
+    file: UploadedFile = File(...),
+):
+    """Analyze an indirect costs Excel file and return a preview without persisting."""
+    from apps.proyeccion.services import IndirectExcelService
+    return IndirectExcelService.analyze(project_id, file, request.user)
+
+
+@indirect_cost_details_router.post(
+    "/projects/{project_id}/indirect-cost-details/import-excel/",
+    response=ImportIndirectsResponseSchema,
+)
+def import_indirect_excel(
+    request: HttpRequest,
+    project_id: UUID,
+    payload: ImportIndirectsRequestDto,
+):
+    """Persist a previously analyzed indirect costs Excel import (REPLACE strategy)."""
+    from apps.proyeccion.services import IndirectExcelService
+    return IndirectExcelService.import_(project_id, payload, request.user)
+
+
 # =============================================================================
 # 4. Offer Alternatives Router
 # =============================================================================
@@ -767,6 +822,31 @@ def get_consolidated_supply_explosion(request: HttpRequest, project_id: UUID):
     """Get consolidated supply explosion grouped by supply code."""
     lines = SupplyExplosionService.generate_consolidated(project_id, request.user)
     return lines
+
+
+@supply_explosion_router.get(
+    "/projects/{project_id}/supply-explosion/export-excel/",
+)
+def export_supply_explosion_excel(request: HttpRequest, project_id: UUID):
+    """Export both Auxiliar and Consolidado supply explosion views to an .xlsx file.
+
+    Returns a workbook with two sheets:
+      - 'Auxiliar': per-concept supply breakdown with full context.
+      - 'Consolidado': aggregated supplies with totals and incidence %.
+    """
+    from django.http import HttpResponse
+    binary = SupplyExplosionService.export_excel(project_id, request.user)
+    response = HttpResponse(
+        binary,
+        content_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="explosion-insumos-{project_id}.xlsx"'
+    )
+    return response
 
 
 # =============================================================================

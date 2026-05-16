@@ -1619,6 +1619,140 @@ class SupplyExplosionService:
 
         return results
 
+    # Labels for human-readable export — single source of truth.
+    _CATEGORY_LABELS = {
+        1: 'Materiales',
+        2: 'Acarreos',
+        3: 'Maquinaria',
+        4: 'Mano de Obra',
+        5: 'Subcontratos',
+        6: 'Herramienta Menor',
+        7: 'EPP',
+    }
+    _SUPPLY_TYPE_LABELS = {
+        0: 'Material',
+        1: 'Mano de Obra',
+        2: 'Maquinaria',
+        3: 'Subcontrato',
+        4: 'Acarreo',
+    }
+
+    @classmethod
+    def export_excel(cls, project_id: UUID, user) -> bytes:
+        """Export the supply explosion to an .xlsx with two sheets.
+
+        Sheet 1 'Auxiliar': one row per UnitCostBreakdown line, with full
+        concept + supply context (cod, descripción, unidad, qty, PU, importe).
+        Sheet 2 'Consolidado': aggregated by supply code (totales del proyecto).
+
+        Includes a header row 1 with the project name and row 2 with the
+        project UUID (informativo; no se re-importa, este export es read-only).
+        """
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        project = EstimationProject.objects.filter(pk=project_id).first()
+        project_name = getattr(project, 'name', '') if project else ''
+
+        aux_data = cls.generate_auxiliary(project_id, user)
+        cons_data = cls.generate_consolidated(project_id, user)
+
+        wb = Workbook()
+
+        # ---------- Sheet 1: Auxiliar ----------
+        ws_aux = wb.active
+        ws_aux.title = 'Auxiliar'
+
+        ws_aux.cell(row=1, column=1, value=f'Proyecto: {project_name}').font = Font(bold=True, size=12)
+        ws_aux.cell(row=2, column=1, value=str(project_id)).font = Font(italic=True, color='888888')
+
+        aux_headers = [
+            'COD. CONCEPTO', 'DESCRIPCION CONCEPTO', 'CANTIDAD CONCEPTO',
+            'CATEGORIA', 'COD. INSUMO', 'DESCRIPCION INSUMO', 'UNIDAD',
+            'CANTIDAD', 'P. UNITARIO', 'IMPORTE U.', 'IMPORTE TOTAL',
+        ]
+        header_fill = PatternFill('solid', fgColor='DDDDDD')
+        for i, h in enumerate(aux_headers, start=1):
+            cell = ws_aux.cell(row=3, column=i, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+
+        ws_aux.freeze_panes = 'A4'
+        aux_widths = [14, 50, 16, 14, 14, 50, 10, 12, 14, 14, 16]
+        for i, w in enumerate(aux_widths, start=1):
+            ws_aux.column_dimensions[get_column_letter(i)].width = w
+
+        row = 4
+        for item in aux_data:
+            concept_qty = item['conceptquantity'] or Decimal('0')
+            line_amount = item['amount'] or Decimal('0')
+            total_amount = line_amount * concept_qty
+            ws_aux.cell(row=row, column=1, value=item['conceptcode'])
+            ws_aux.cell(row=row, column=2, value=item['conceptdescription'])
+            ws_aux.cell(row=row, column=3, value=float(concept_qty))
+            ws_aux.cell(
+                row=row, column=4,
+                value=cls._CATEGORY_LABELS.get(item['categorycode'], f"Cat {item['categorycode']}"),
+            )
+            ws_aux.cell(row=row, column=5, value=item['supplycode'] or '')
+            ws_aux.cell(row=row, column=6, value=item['description'])
+            ws_aux.cell(row=row, column=7, value=item['unit'])
+            ws_aux.cell(row=row, column=8, value=float(item['quantity']))
+            ws_aux.cell(row=row, column=9, value=float(item['unitprice']))
+            ws_aux.cell(row=row, column=10, value=float(line_amount))
+            ws_aux.cell(row=row, column=11, value=float(total_amount))
+            row += 1
+
+        # ---------- Sheet 2: Consolidado ----------
+        ws_cons = wb.create_sheet('Consolidado')
+
+        ws_cons.cell(row=1, column=1, value=f'Proyecto: {project_name}').font = Font(bold=True, size=12)
+        ws_cons.cell(row=2, column=1, value=str(project_id)).font = Font(italic=True, color='888888')
+
+        cons_headers = [
+            'COD. INSUMO', 'DESCRIPCION', 'UNIDAD', 'TIPO',
+            'CANTIDAD TOTAL', 'PRECIO PROMEDIO', 'IMPORTE TOTAL',
+            '% INCIDENCIA', '# CONCEPTOS',
+        ]
+        for i, h in enumerate(cons_headers, start=1):
+            cell = ws_cons.cell(row=3, column=i, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+
+        ws_cons.freeze_panes = 'A4'
+        cons_widths = [14, 50, 10, 16, 16, 16, 16, 14, 12]
+        for i, w in enumerate(cons_widths, start=1):
+            ws_cons.column_dimensions[get_column_letter(i)].width = w
+
+        project_total = sum(
+            (Decimal(str(r['totalamount'])) for r in cons_data),
+            Decimal('0'),
+        )
+
+        row = 4
+        for item in cons_data:
+            total_amt = item['totalamount'] or Decimal('0')
+            pct = (total_amt / project_total * Decimal('100')) if project_total > 0 else Decimal('0')
+            ws_cons.cell(row=row, column=1, value=item['supplycode'])
+            ws_cons.cell(row=row, column=2, value=item['description'])
+            ws_cons.cell(row=row, column=3, value=item['unit'])
+            ws_cons.cell(
+                row=row, column=4,
+                value=cls._SUPPLY_TYPE_LABELS.get(item['supplytype'], f"Tipo {item['supplytype']}"),
+            )
+            ws_cons.cell(row=row, column=5, value=float(item['totalquantity']))
+            ws_cons.cell(row=row, column=6, value=float(item['averageprice']))
+            ws_cons.cell(row=row, column=7, value=float(total_amt))
+            ws_cons.cell(row=row, column=8, value=float(pct))
+            ws_cons.cell(row=row, column=9, value=item['conceptcount'])
+            row += 1
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
 
 class WorkPlanService:
     """Service class for WorkPlanEntry business logic."""
@@ -3067,13 +3201,27 @@ class CostDistributionService:
         warnings = []
 
         # Gather lines to process
+        # NOTE: `family:<CODE>` scope refers to a BreakdownCategoryCode pseudo-family
+        # as exposed in `build_payload._build_families_hierarchy` (MATERIALS, HAULING,
+        # MACHINERY, LABOR, SUBCONTRACTS, MINOR_TOOLS, PPE), NOT a ConceptFamily.code.
+        # The frontend dropdown lists these categories, so the filter must match.
         breakdowns = []
         indirects = []
         if scope in ('all', 'direct_only') or scope.startswith('family:'):
             bq = UnitCostBreakdown.objects.filter(conceptid__projectid=project).select_related('conceptid')
             if scope.startswith('family:'):
                 fam_code = scope.split(':', 1)[1]
-                bq = bq.filter(conceptid__subfamilyid__familyid__code=fam_code)
+                category_value = next(
+                    (value for value, code, _name in CostDistributionService._DIRECT_CATEGORIES
+                     if code == fam_code),
+                    None,
+                )
+                if category_value is None:
+                    raise ValueError(
+                        f"family scope {fam_code!r} no es una categoría direct reconocida "
+                        f"(esperado: MATERIALS, HAULING, MACHINERY, LABOR, SUBCONTRACTS, MINOR_TOOLS, PPE)"
+                    )
+                bq = bq.filter(categorycode=category_value)
             breakdowns = list(bq)
         if scope in ('all', 'indirect_only'):
             indirects = list(IndirectCostDetail.objects.filter(projectid=project))
@@ -3482,13 +3630,20 @@ class CostDistributionService:
             bd_list = bds_by_cat.get(cat_value, [])
             if not bd_list:
                 continue  # omit empty categories so the UI stays tight
+            # bd.amount is per-unit-of-concept; project-level = bd.amount × concept.quantity.
+            # Same convention used by compute_rollups so the family/line totals reconcile
+            # with the project-wide direct_total.
+            project_amounts_by_id = {
+                bd.breakdownid: (bd.amount or Decimal('0')) * (bd.conceptid.quantity or Decimal('0'))
+                for bd in bd_list
+            }
             rollups_by_period = CostDistributionService._family_rollup_from_dict(
                 bd_list, N,
-                amounts_by_id={bd.breakdownid: bd.amount for bd in bd_list},
+                amounts_by_id=project_amounts_by_id,
                 dists_by_id=dists_by_breakdown,
                 id_attr='breakdownid',
             )
-            total_amount = sum((bd.amount for bd in bd_list), Decimal("0"))
+            total_amount = sum(project_amounts_by_id.values(), Decimal("0"))
             families.append({
                 'code': cat_code,
                 'name': cat_name,
@@ -3552,7 +3707,12 @@ class CostDistributionService:
 
     @staticmethod
     def _line_payload_breakdown(bd, N, dists):
-        """``dists`` is the pre-fetched list of CostDistribution rows for this line."""
+        """``dists`` is the pre-fetched list of CostDistribution rows for this line.
+
+        ``totalamount`` is project-level: ``bd.amount × concept.quantity``. Matches
+        the convention used by compute_rollups so the cell $ values rendered by the
+        frontend (lineTotal × fraction) reconcile with the project's direct_total.
+        """
         dists_sorted = sorted(dists, key=lambda d: d.periodnumber)
         cells = [
             {'periodnumber': d.periodnumber, 'fraction': float(d.fraction),
@@ -3560,12 +3720,13 @@ class CostDistributionService:
             for d in dists_sorted
         ]
         checksum = sum((d.fraction for d in dists_sorted), Decimal("0"))
+        project_amount = (bd.amount or Decimal('0')) * (bd.conceptid.quantity or Decimal('0'))
         return {
             'lineid': str(bd.breakdownid),
             'linetype': 'BREAKDOWN',
             'description': bd.description,
             'unit': bd.unit,
-            'totalamount': float(bd.amount),
+            'totalamount': float(project_amount),
             'paymentlagperiods': bd.paymentlagperiods,
             'lineversion': bd.lineversion,
             'distribution': cells,
@@ -4818,6 +4979,345 @@ class BreakdownExcelService:
             allow_blank=True,
         )
         dv.add(f"B4:B{max(excel_row - 1, 4)}")
+        ws.add_data_validation(dv)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+
+# =============================================================================
+# Indirect Cost Excel Import / Export Service
+# =============================================================================
+
+
+@dataclass
+class _ParsedIndirectRow:
+    row_num: int
+    categoria: str
+    codigo: str
+    area: str
+    descripcion: str
+    costo_mensual: Optional[Decimal]
+    unidades: Optional[Decimal]
+    meses: Optional[Decimal]
+    mes_inicio: Optional[int]
+    mes_fin: Optional[int]
+    lag_pago: Optional[int]
+
+
+@dataclass
+class _ParsedIndirectExcel:
+    rows: list
+    uploaded_uuid: Optional[str]
+
+
+class IndirectExcelService:
+    """Round-trip Excel import/export for Indirect Cost Details (C1-C8).
+
+    Mirror of BreakdownExcelService for the indirect-costs domain. The import
+    strategy is REPLACE: all existing IndirectCostDetail records for the project
+    are deleted, then bulk-created from the payload, and prorate_to_concepts is
+    triggered to cascade indirect costs to BudgetConcept.indirectunitcost.
+    """
+
+    _VALID_CATEGORIES = {f'C{i}' for i in range(1, 9)}
+    _SHEET_NAME_CANDIDATES = ("Costos Indirectos", "IndirectCosts", "Indirectos")
+
+    @classmethod
+    def _parse_excel(cls, file_or_buffer) -> _ParsedIndirectExcel:
+        from decimal import Decimal as D
+        from openpyxl import load_workbook
+        from zipfile import BadZipFile
+
+        try:
+            wb = load_workbook(file_or_buffer, data_only=True)
+        except BadZipFile:
+            raise ValueError("El archivo no es un .xlsx válido (formato ZIP corrupto o incorrecto)")
+
+        sheet_name = next(
+            (s for s in cls._SHEET_NAME_CANDIDATES if s in wb.sheetnames),
+            None,
+        )
+        if sheet_name is None:
+            raise ValueError(
+                "El archivo no contiene la hoja 'Costos Indirectos' esperada"
+            )
+        ws = wb[sheet_name]
+
+        uploaded_uuid = ws.cell(row=2, column=1).value
+        if uploaded_uuid is not None:
+            uploaded_uuid = str(uploaded_uuid).strip() or None
+
+        def to_decimal(v):
+            if v is None or str(v).strip() == "":
+                return None
+            try:
+                return D(str(v))
+            except Exception:
+                return None
+
+        def to_int(v):
+            if v is None or str(v).strip() == "":
+                return None
+            try:
+                return int(D(str(v)))
+            except Exception:
+                return None
+
+        rows = []
+        for excel_row in range(4, ws.max_row + 1):
+            cells = [ws.cell(row=excel_row, column=c).value for c in range(1, 12)]
+            if all(v is None or str(v).strip() == "" for v in cells):
+                continue
+
+            categoria = (str(cells[0]).strip().upper() if cells[0] is not None else "")
+            codigo = (str(cells[1]).strip() if cells[1] is not None else "")
+            area = (str(cells[2]).strip() if cells[2] is not None else "")
+            descripcion = (str(cells[3]).strip() if cells[3] is not None else "")
+
+            if not descripcion:
+                continue
+
+            rows.append(_ParsedIndirectRow(
+                row_num=excel_row,
+                categoria=categoria,
+                codigo=codigo,
+                area=area,
+                descripcion=descripcion,
+                costo_mensual=to_decimal(cells[4]),
+                unidades=to_decimal(cells[5]),
+                meses=to_decimal(cells[6]),
+                mes_inicio=to_int(cells[7]),
+                mes_fin=to_int(cells[8]),
+                lag_pago=to_int(cells[9]),
+            ))
+
+        if not rows:
+            raise ValueError("Excel vacío: no se encontraron filas de datos")
+
+        return _ParsedIndirectExcel(rows=rows, uploaded_uuid=uploaded_uuid)
+
+    @classmethod
+    def analyze(cls, project_id, file, user):
+        from decimal import Decimal as D, ROUND_HALF_UP
+        from apps.proyeccion.schemas import (
+            AnalyzeIndirectsResponseSchema,
+            IndirectExcelSummarySchema,
+            IndirectExcelLineSchema,
+            IndirectExcelErrorSchema,
+        )
+
+        try:
+            parsed = cls._parse_excel(file)
+        except ValueError as e:
+            return AnalyzeIndirectsResponseSchema(
+                summary=IndirectExcelSummarySchema(
+                    lines_count=0,
+                    total_amount=Decimal('0'),
+                    errors_count=1,
+                ),
+                lines=[],
+                errors=[IndirectExcelErrorSchema(row=0, message=str(e))],
+                project_uuid_match=False,
+                uploaded_uuid=None,
+            )
+
+        errors = []
+        valid_lines = []
+        total_amount = D('0')
+
+        for prow in parsed.rows:
+            if not prow.categoria:
+                errors.append(IndirectExcelErrorSchema(
+                    row=prow.row_num,
+                    description=prow.descripcion,
+                    message="Categoría vacía",
+                ))
+                continue
+            if prow.categoria not in cls._VALID_CATEGORIES:
+                errors.append(IndirectExcelErrorSchema(
+                    row=prow.row_num,
+                    category=prow.categoria,
+                    description=prow.descripcion,
+                    message=f"Categoría no reconocida: {prow.categoria} (esperado C1-C8)",
+                ))
+                continue
+
+            costo = prow.costo_mensual if prow.costo_mensual is not None else D('0')
+            unidades = prow.unidades if prow.unidades is not None else D('1')
+            meses = prow.meses if prow.meses is not None else D('0')
+
+            if costo < 0 or unidades < 0 or meses < 0:
+                errors.append(IndirectExcelErrorSchema(
+                    row=prow.row_num,
+                    category=prow.categoria,
+                    description=prow.descripcion,
+                    message="Valores numéricos no pueden ser negativos",
+                ))
+                continue
+
+            amount = (costo * unidades * meses).quantize(D('0.01'), ROUND_HALF_UP)
+            total_amount += amount
+
+            valid_lines.append(IndirectExcelLineSchema(
+                row=prow.row_num,
+                category=prow.categoria,
+                code=prow.codigo,
+                area=prow.area,
+                description=prow.descripcion,
+                monthly_cost=costo,
+                units=unidades,
+                months=meses,
+                start_month=prow.mes_inicio,
+                end_month=prow.mes_fin,
+                payment_lag=prow.lag_pago,
+                amount=amount,
+            ))
+
+        uuid_match = (
+            parsed.uploaded_uuid is not None
+            and parsed.uploaded_uuid == str(project_id)
+        )
+
+        return AnalyzeIndirectsResponseSchema(
+            summary=IndirectExcelSummarySchema(
+                lines_count=len(valid_lines),
+                total_amount=total_amount,
+                errors_count=len(errors),
+            ),
+            lines=valid_lines,
+            errors=errors,
+            project_uuid_match=uuid_match,
+            uploaded_uuid=parsed.uploaded_uuid,
+        )
+
+    @classmethod
+    def import_(cls, project_id, payload, user):
+        """Replace all IndirectCostDetail records for the project from payload.
+
+        Atomic: any failure rolls back. Triggers prorate_to_concepts after the
+        bulk_create so BudgetConcept.indirectunitcost / unitprice / totalamount
+        reflect the new indirect totals.
+        """
+        from django.db import transaction
+        from apps.proyeccion.schemas import ImportIndirectsResponseSchema
+
+        if (
+            payload.uploaded_uuid
+            and payload.uploaded_uuid != str(project_id)
+            and not payload.override_uuid_mismatch
+        ):
+            raise ValueError(
+                "UUID del proyecto no coincide; marcar override_uuid_mismatch para forzar."
+            )
+
+        if not payload.lines:
+            raise ValueError(
+                "Payload vacío: no se puede importar 0 líneas (usa la UI para eliminar todas)"
+            )
+
+        with transaction.atomic():
+            deleted_count = IndirectCostDetail.objects.filter(
+                projectid_id=project_id,
+            ).count()
+            IndirectCostDetail.objects.filter(projectid_id=project_id).delete()
+
+            cat_counters = {f'C{i}': 0 for i in range(1, 9)}
+            new_details = []
+            for ldto in payload.lines:
+                cat_counters[ldto.category] = cat_counters.get(ldto.category, 0) + 1
+                line_num = cat_counters[ldto.category]
+                new_details.append(IndirectCostDetail(
+                    projectid_id=project_id,
+                    categorycode=ldto.category,
+                    linenumber=line_num,
+                    imputationcode=(ldto.code or '')[:10],
+                    area=(ldto.area or '')[:100],
+                    description=ldto.description[:500],
+                    monthlycost=ldto.monthly_cost,
+                    units=ldto.units,
+                    months=ldto.months,
+                    startmonth=ldto.start_month,
+                    endmonth=ldto.end_month,
+                    paymentlagperiods=ldto.payment_lag,
+                    amount=ldto.amount,
+                    statecode=0,
+                    createdby=user,
+                    modifiedby=user,
+                ))
+            IndirectCostDetail.objects.bulk_create(new_details)
+
+            IndirectCostDetailService.prorate_to_concepts(project_id, user)
+            prorate_triggered = True
+
+        return ImportIndirectsResponseSchema(
+            details_deleted=deleted_count,
+            details_created=len(new_details),
+            prorate_triggered=prorate_triggered,
+        )
+
+    @classmethod
+    def export(cls, project_id, user) -> bytes:
+        """Export the project's indirect costs to an .xlsx file (bytes)."""
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.datavalidation import DataValidation
+
+        project = EstimationProject.objects.filter(pk=project_id).first()
+        project_name = getattr(project, "name", "") if project else ""
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Costos Indirectos"
+
+        ws.cell(row=1, column=1, value=f"Proyecto: {project_name}").font = Font(bold=True, size=12)
+        ws.cell(row=2, column=1, value=str(project_id)).font = Font(italic=True, color="888888")
+
+        headers = [
+            "CATEGORIA", "CODIGO", "AREA", "DESCRIPCION",
+            "COSTO_MENSUAL", "UNIDADES", "MESES",
+            "MES_INICIO", "MES_FIN", "LAG_PAGO", "IMPORTE",
+        ]
+        for i, h in enumerate(headers, start=1):
+            cell = ws.cell(row=3, column=i, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="DDDDDD")
+
+        ws.freeze_panes = "A4"
+        widths = [12, 10, 18, 50, 14, 10, 10, 11, 11, 11, 14]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+        details = list(
+            IndirectCostDetail.objects
+            .filter(projectid_id=project_id, statecode=0)
+            .order_by('categorycode', 'linenumber')
+        )
+
+        excel_row = 4
+        for d in details:
+            ws.cell(row=excel_row, column=1, value=d.categorycode)
+            ws.cell(row=excel_row, column=2, value=d.imputationcode or "")
+            ws.cell(row=excel_row, column=3, value=d.area or "")
+            ws.cell(row=excel_row, column=4, value=d.description)
+            ws.cell(row=excel_row, column=5, value=float(d.monthlycost))
+            ws.cell(row=excel_row, column=6, value=float(d.units))
+            ws.cell(row=excel_row, column=7, value=float(d.months))
+            ws.cell(row=excel_row, column=8, value=d.startmonth)
+            ws.cell(row=excel_row, column=9, value=d.endmonth)
+            ws.cell(row=excel_row, column=10, value=d.paymentlagperiods)
+            ws.cell(row=excel_row, column=11, value=float(d.amount))
+            excel_row += 1
+
+        dv = DataValidation(
+            type="list",
+            formula1='"C1,C2,C3,C4,C5,C6,C7,C8"',
+            allow_blank=False,
+        )
+        dv.add(f"A4:A{max(excel_row - 1, 4)}")
         ws.add_data_validation(dv)
 
         buf = io.BytesIO()

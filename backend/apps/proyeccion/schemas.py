@@ -1171,3 +1171,71 @@ class ImportBreakdownsResponseSchema(Schema):
     supplies_created: int
     hm_epp_regenerated: int
     prorate_triggered: bool
+
+
+# =============================================================================
+# Indirect Costs Excel Import / Export Schemas
+# =============================================================================
+
+
+class IndirectExcelLineSchema(Schema):
+    row: int
+    category: str  # C1-C8
+    code: str = ""
+    area: str = ""
+    description: str
+    monthly_cost: Decimal
+    units: Decimal
+    months: Decimal
+    start_month: Optional[int] = None
+    end_month: Optional[int] = None
+    payment_lag: Optional[int] = None
+    amount: Decimal
+
+
+class IndirectExcelErrorSchema(Schema):
+    row: int
+    category: str = ""
+    description: str = ""
+    message: str
+
+
+class IndirectExcelSummarySchema(Schema):
+    lines_count: int
+    total_amount: Decimal
+    errors_count: int
+
+
+class AnalyzeIndirectsResponseSchema(Schema):
+    summary: IndirectExcelSummarySchema
+    lines: List[IndirectExcelLineSchema]
+    errors: List[IndirectExcelErrorSchema]
+    project_uuid_match: bool
+    uploaded_uuid: Optional[str] = None
+
+
+class ImportIndirectsLineDto(Schema):
+    """Línea lista para persistir (post-analyze, importe ya calculado)."""
+    category: str
+    code: str = ""
+    area: str = ""
+    description: str
+    monthly_cost: Decimal
+    units: Decimal
+    months: Decimal
+    start_month: Optional[int] = None
+    end_month: Optional[int] = None
+    payment_lag: Optional[int] = None
+    amount: Decimal
+
+
+class ImportIndirectsRequestDto(Schema):
+    lines: List[ImportIndirectsLineDto]
+    override_uuid_mismatch: bool = False
+    uploaded_uuid: Optional[str] = None
+
+
+class ImportIndirectsResponseSchema(Schema):
+    details_deleted: int
+    details_created: int
+    prorate_triggered: bool
