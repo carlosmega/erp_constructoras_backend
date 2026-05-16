@@ -331,6 +331,7 @@ DEFAULT_EXTERNAL_COSTS = [
     'Supervision externa',
     'Laboratorio de control de calidad',
     'Gastos financieros',
+    'Impuestos (ISR provisional)',
 ]
 
 
@@ -1473,7 +1474,7 @@ class ExternalCostService:
     @staticmethod
     @transaction.atomic
     def initialize_checklist(project_id: UUID, user) -> list[ExternalCostItem]:
-        """Create default external cost checklist items (~20 items)."""
+        """Create default external cost checklist items (~21 items)."""
         existing = ExternalCostItem.objects.filter(projectid=project_id).exists()
         if existing:
             raise ValidationError("External cost checklist already initialized for this project")
