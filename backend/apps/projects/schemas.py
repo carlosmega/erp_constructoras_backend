@@ -7,6 +7,8 @@ from decimal import Decimal
 from datetime import date
 from apps.projects.models import (
     ConstructionProject, ProjectTeamMember, ProjectZone, ProjectSupplier,
+    ProjectRisk, RiskStatusCode,
+    ProjectAssetUsage, AssetCategoryCode,
 )
 
 
@@ -142,6 +144,8 @@ class ConstructionProjectSchema(ModelSchema):
     advancebond: Optional[ProjectBondSchema] = None
     completionbond: Optional[ProjectBondSchema] = None
     defectsbond: Optional[ProjectBondSchema] = None
+    carinsurance: Optional[ProjectBondSchema] = None
+    liabilityinsurance: Optional[ProjectBondSchema] = None
 
     class Meta:
         model = ConstructionProject
@@ -228,6 +232,28 @@ class ConstructionProjectSchema(ModelSchema):
             )
         return None
 
+    @staticmethod
+    def resolve_carinsurance(obj):
+        if obj.carinsurance_amount is not None:
+            return ProjectBondSchema(
+                amount=obj.carinsurance_amount,
+                policycost=obj.carinsurance_policycost,
+                validitystartdate=obj.carinsurance_validitystartdate,
+                validityenddate=obj.carinsurance_validityenddate,
+            )
+        return None
+
+    @staticmethod
+    def resolve_liabilityinsurance(obj):
+        if obj.liabilityinsurance_amount is not None:
+            return ProjectBondSchema(
+                amount=obj.liabilityinsurance_amount,
+                policycost=obj.liabilityinsurance_policycost,
+                validitystartdate=obj.liabilityinsurance_validitystartdate,
+                validityenddate=obj.liabilityinsurance_validityenddate,
+            )
+        return None
+
 
 class CreateProjectDto(Schema):
     """DTO for creating a construction project."""
@@ -251,6 +277,8 @@ class CreateProjectDto(Schema):
     advancebond: Optional[ProjectBondDto] = None
     completionbond: Optional[ProjectBondDto] = None
     defectsbond: Optional[ProjectBondDto] = None
+    carinsurance: Optional[ProjectBondDto] = None
+    liabilityinsurance: Optional[ProjectBondDto] = None
     projectemail: Optional[str] = None
     emailprotocol: Optional[int] = None
     periodtype: int = 0
@@ -283,6 +311,8 @@ class UpdateProjectDto(Schema):
     advancebond: Optional[ProjectBondDto] = None
     completionbond: Optional[ProjectBondDto] = None
     defectsbond: Optional[ProjectBondDto] = None
+    carinsurance: Optional[ProjectBondDto] = None
+    liabilityinsurance: Optional[ProjectBondDto] = None
     projectemail: Optional[str] = None
     emailconfigured: Optional[bool] = None
     emailprotocol: Optional[int] = None
@@ -290,3 +320,221 @@ class UpdateProjectDto(Schema):
     alertthreshold_warning: Optional[Decimal] = None
     alertthreshold_critical: Optional[Decimal] = None
     alertthreshold_exceeded: Optional[Decimal] = None
+
+
+# ============================================================================
+# ProjectRisk Schemas
+# ============================================================================
+
+class ProjectRiskSchema(ModelSchema):
+    """Full risk response schema."""
+
+    class Meta:
+        model = ProjectRisk
+        fields = [
+            'riskid', 'projectid', 'description',
+            'production_variance', 'cost_variance', 'result_variance',
+            'statuscode', 'createdon', 'modifiedon',
+        ]
+
+
+class CreateRiskDto(Schema):
+    """DTO for creating a project risk."""
+    projectid: UUID
+    description: str
+    production_variance: Optional[Decimal] = Decimal('0')
+    cost_variance: Optional[Decimal] = Decimal('0')
+    result_variance: Optional[Decimal] = Decimal('0')
+
+
+class UpdateRiskDto(Schema):
+    """DTO for updating a project risk."""
+    description: Optional[str] = None
+    production_variance: Optional[Decimal] = None
+    cost_variance: Optional[Decimal] = None
+    result_variance: Optional[Decimal] = None
+    statuscode: Optional[int] = None
+
+
+# ============================================================================
+# ProjectAssetUsage Schemas
+# ============================================================================
+
+class ProjectAssetUsageSchema(ModelSchema):
+    """Full asset usage response schema."""
+    category_label: Optional[str] = None
+
+    class Meta:
+        model = ProjectAssetUsage
+        fields = [
+            'assetusageid', 'projectid', 'category', 'description',
+            'plannedamount', 'createdon', 'modifiedon',
+        ]
+
+    @staticmethod
+    def resolve_category_label(obj):
+        try:
+            return AssetCategoryCode(obj.category).label
+        except ValueError:
+            return None
+
+
+class CreateAssetUsageDto(Schema):
+    """DTO for creating a project asset usage."""
+    projectid: UUID
+    category: int
+    description: str
+    plannedamount: Optional[Decimal] = Decimal('0')
+
+
+class UpdateAssetUsageDto(Schema):
+    """DTO for updating a project asset usage."""
+    category: Optional[int] = None
+    description: Optional[str] = None
+    plannedamount: Optional[Decimal] = None
+
+
+# ============================================================================
+# Executive Summary Schemas
+# ============================================================================
+
+class BondSummarySchema(Schema):
+    amount: Optional[Decimal] = None
+    policycost: Optional[Decimal] = None
+    validity_start: Optional[date] = None
+    validity_end: Optional[date] = None
+
+
+class ProjectInfoSchema(Schema):
+    name: str
+    client: Optional[str] = None
+    presentation_date: Optional[date] = None
+    award_date: Optional[date] = None
+    start_date: Optional[date] = None
+    project_type: Optional[int] = None
+    bidding_type: Optional[int] = None
+    contract_amount_notax: Decimal
+    contract_amount_withtax: Decimal
+    advance_payment_notax: Optional[Decimal] = None
+    advance_payment_withtax: Optional[Decimal] = None
+    advance_bond: Optional[BondSummarySchema] = None
+    completion_bond: Optional[BondSummarySchema] = None
+    defects_bond: Optional[BondSummarySchema] = None
+    car_insurance: Optional[BondSummarySchema] = None
+    liability_insurance: Optional[BondSummarySchema] = None
+
+
+class AdvanceSummarySchema(Schema):
+    amortized_notax: Decimal
+    pending_notax: Decimal
+    amortized_net: Decimal
+    pending_net: Decimal
+    last_updated_period: Optional[str] = None
+
+
+class CertificationSummarySchema(Schema):
+    invoiced_notax: Decimal
+    debt_notax: Decimal
+    invoiced_net: Decimal
+    debt_net: Decimal
+    oldest_overdue_days: int
+    last_updated_period: Optional[str] = None
+
+
+class GuaranteeSummarySchema(Schema):
+    accumulated_notax: Decimal
+    paid_notax: Decimal
+    accumulated_net: Decimal
+    paid_net: Decimal
+    last_updated_period: Optional[str] = None
+
+
+class ProductionSummarySchema(Schema):
+    accumulated: Decimal
+    estimated: Decimal
+    executed_unestimated: Decimal
+
+
+class ResultSummarySchema(Schema):
+    planned: Decimal
+    actual: Decimal
+    variance_pct: Decimal
+
+
+class CurrentStatusSchema(Schema):
+    advance: AdvanceSummarySchema
+    certification: CertificationSummarySchema
+    guarantee_retention: GuaranteeSummarySchema
+    production: ProductionSummarySchema
+    result: ResultSummarySchema
+
+
+class MainItemSchema(Schema):
+    name: str
+    study: Decimal
+    contract: Decimal
+    accumulated: Decimal
+    type: str
+
+
+class CategoryBreakdownSchema(Schema):
+    name: str
+    costtype: int
+    study: Decimal
+    accumulated: Decimal
+    pending: Decimal
+    deviation_ratio: Decimal
+
+
+class FamilyRollupSchema(Schema):
+    study: Decimal
+    current_contract: Decimal
+    accumulated: Decimal
+    pending: Decimal
+    deviation_ratio: Optional[Decimal] = None
+
+
+class ProductionRollupSchema(Schema):
+    study: Decimal
+    current_contract: Decimal
+    accumulated: Decimal
+    pending: Decimal
+
+
+class ResultByFamilySchema(Schema):
+    direct_cost: FamilyRollupSchema
+    indirect_cost: FamilyRollupSchema
+    production: ProductionRollupSchema
+    by_category: List[CategoryBreakdownSchema]
+
+
+class TechnicalEconomicSchema(Schema):
+    main_items: List[MainItemSchema]
+    result_by_family: ResultByFamilySchema
+
+
+class RiskSummarySchema(Schema):
+    riskid: UUID
+    description: str
+    production_variance: Decimal
+    cost_variance: Decimal
+    result_variance: Decimal
+    statuscode: int
+
+
+class AssetUsageSummarySchema(Schema):
+    assetusageid: UUID
+    category: int
+    description: str
+    planned: Decimal
+    accumulated_actual: Decimal
+    pending: Decimal
+    deviation_pct: Decimal
+
+
+class ExecutiveSummarySchema(Schema):
+    project_info: ProjectInfoSchema
+    current_status: CurrentStatusSchema
+    technical_economic: TechnicalEconomicSchema
+    risks: List[RiskSummarySchema]
+    asset_usages: List[AssetUsageSummarySchema]
