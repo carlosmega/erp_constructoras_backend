@@ -701,7 +701,7 @@ class ConceptCatalogService:
         subfamilyid: Optional[UUID] = None,
     ) -> QuerySet[BudgetConcept]:
         """List all budget concepts for a project, optionally filtered by subfamily."""
-        queryset = BudgetConcept.objects.filter(projectid=project_id)
+        queryset = BudgetConcept.objects.filter(projectid=project_id, statecode=0)
 
         if subfamilyid is not None:
             queryset = queryset.filter(subfamilyid=subfamilyid)
