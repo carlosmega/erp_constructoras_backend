@@ -676,6 +676,19 @@ class ConceptCatalogService:
         subfamily.save()
         return subfamily
 
+    @staticmethod
+    def delete_subfamily(subfamily_id: UUID, user) -> ConceptSubfamily:
+        """Soft delete a concept subfamily (statecode=1)."""
+        try:
+            subfamily = ConceptSubfamily.objects.get(subfamilyid=subfamily_id)
+        except ConceptSubfamily.DoesNotExist:
+            raise NotFound(f"ConceptSubfamily with ID {subfamily_id} not found")
+
+        subfamily.statecode = 1
+        subfamily.modifiedby = user
+        subfamily.save()
+        return subfamily
+
     # -------------------------------------------------------------------------
     # Concepts
     # -------------------------------------------------------------------------

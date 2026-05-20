@@ -305,6 +305,17 @@ def update_subfamily(request: HttpRequest, subfamily_id: UUID, payload: UpdateCo
     return subfamily
 
 
+@concept_families_router.delete(
+    "/concept-subfamilies/{subfamily_id}/",
+    response=ConceptSubfamilySchema,
+)
+# TODO: Add @require_permission decorator during integration
+def delete_subfamily(request: HttpRequest, subfamily_id: UUID):
+    """Soft delete a concept subfamily."""
+    subfamily = ConceptCatalogService.delete_subfamily(subfamily_id, request.user)
+    return subfamily
+
+
 # =============================================================================
 # 2. Budget Concepts Router
 # =============================================================================
