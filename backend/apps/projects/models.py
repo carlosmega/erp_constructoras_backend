@@ -261,6 +261,34 @@ class ConstructionProject(AuditMixin):
         db_column='defectsbond_validityenddate', blank=True, null=True
     )
 
+    # Car Insurance / Seguro Todo Riesgo de Construcción (flattened)
+    carinsurance_amount = models.DecimalField(
+        max_digits=19, decimal_places=2, db_column='carinsurance_amount', blank=True, null=True
+    )
+    carinsurance_policycost = models.DecimalField(
+        max_digits=19, decimal_places=2, db_column='carinsurance_policycost', blank=True, null=True
+    )
+    carinsurance_validitystartdate = models.DateField(
+        db_column='carinsurance_validitystartdate', blank=True, null=True
+    )
+    carinsurance_validityenddate = models.DateField(
+        db_column='carinsurance_validityenddate', blank=True, null=True
+    )
+
+    # Liability Insurance / Seguro de Responsabilidad Civil (flattened)
+    liabilityinsurance_amount = models.DecimalField(
+        max_digits=19, decimal_places=2, db_column='liabilityinsurance_amount', blank=True, null=True
+    )
+    liabilityinsurance_policycost = models.DecimalField(
+        max_digits=19, decimal_places=2, db_column='liabilityinsurance_policycost', blank=True, null=True
+    )
+    liabilityinsurance_validitystartdate = models.DateField(
+        db_column='liabilityinsurance_validitystartdate', blank=True, null=True
+    )
+    liabilityinsurance_validityenddate = models.DateField(
+        db_column='liabilityinsurance_validityenddate', blank=True, null=True
+    )
+
     # Email Configuration
     projectemail = models.EmailField(
         max_length=200,
@@ -527,3 +555,110 @@ class ProjectSupplier(AuditMixin):
 
     def __str__(self):
         return f"#{self.suppliernumber} - {self.businessname}"
+
+
+# ============================================================================
+# ProjectRisk Model
+# ============================================================================
+
+class RiskStatusCode(models.IntegerChoices):
+    OPEN = 0, 'Open'
+    MITIGATED = 1, 'Mitigated'
+    MATERIALIZED = 2, 'Materialized'
+    CLOSED = 3, 'Closed'
+
+
+class ProjectRisk(AuditMixin):
+    """Risk record associated with a construction project."""
+
+    riskid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='riskid'
+    )
+
+    projectid = models.ForeignKey(
+        ConstructionProject,
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='risks'
+    )
+
+    description = models.TextField(db_column='description')
+
+    production_variance = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='production_variance'
+    )
+    cost_variance = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='cost_variance'
+    )
+    result_variance = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='result_variance'
+    )
+
+    statuscode = models.IntegerField(
+        choices=RiskStatusCode.choices,
+        default=RiskStatusCode.OPEN,
+        db_column='statuscode'
+    )
+
+    class Meta:
+        db_table = 'projectrisk'
+        verbose_name = 'Project Risk'
+        verbose_name_plural = 'Project Risks'
+        ordering = ['-createdon']
+
+    def __str__(self):
+        return f"[{RiskStatusCode(self.statuscode).label}] {self.description[:60]}"
+
+
+# ============================================================================
+# ProjectAssetUsage Model
+# ============================================================================
+
+class AssetCategoryCode(models.IntegerChoices):
+    AC1_COMPUTING = 1, 'AC1 Equipo de cómputo y oficina'
+    AC2_MACHINERY_MINOR = 2, 'AC2 Maquinaria (Equipo Menor)'
+    AC3_MACHINERY_MAJOR = 3, 'AC3 Maquinaria (Equipo Mayor)'
+    AC4_CAMP_FURNITURE = 4, 'AC4 Mobiliario campamentos'
+    AC5_SITE_EQUIPMENT = 5, 'AC5 Mobiliario y equipamiento obra'
+    AC6_VEHICLES = 6, 'AC6 Vehículos utilitarios'
+
+
+class ProjectAssetUsage(AuditMixin):
+    """Asset usage entry (AC1-AC6) imputado al proyecto."""
+
+    assetusageid = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        db_column='assetusageid'
+    )
+
+    projectid = models.ForeignKey(
+        ConstructionProject,
+        on_delete=models.CASCADE,
+        db_column='projectid',
+        related_name='asset_usages'
+    )
+
+    category = models.IntegerField(
+        choices=AssetCategoryCode.choices,
+        db_column='category'
+    )
+
+    description = models.CharField(max_length=300, db_column='description')
+
+    plannedamount = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='plannedamount'
+    )
+
+    class Meta:
+        db_table = 'projectassetusage'
+        verbose_name = 'Project Asset Usage'
+        verbose_name_plural = 'Project Asset Usages'
+        ordering = ['category']
+
+    def __str__(self):
+        return f"{AssetCategoryCode(self.category).label} — {self.description[:60]}"

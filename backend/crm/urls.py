@@ -108,6 +108,23 @@ def not_found_handler(request, exc):
     )
 
 
+# AlreadyConvertedError lives in apps.proyeccion.services (it's a domain-specific
+# 409 — caller tried to mutate an estimation that's been converted to a project,
+# or tried to convert one that's already locked). Imported here so the global
+# handler can attach the existing projectid to the response body.
+from apps.proyeccion.services import AlreadyConvertedError  # noqa: E402
+
+
+@api.exception_handler(AlreadyConvertedError)
+def already_converted_handler(request, exc):
+    """409 with the existing projectid so the UI can link the user to the project."""
+    logger.info("Already converted: %s [path=%s]", exc, request.path)
+    return _build_error_response(
+        request, "already_converted", 409, str(exc),
+        details={'projectid': str(exc.projectid) if exc.projectid else None},
+    )
+
+
 @api.exception_handler(Exception)
 def generic_exception_handler(request, exc):
     """Handle unexpected exceptions."""
@@ -142,7 +159,7 @@ from apps.activities.routers import activities_router
 from apps.cases.routers import cases_router
 from apps.notifications.routers import notifications_router
 from apps.graph.routers import graph_router
-from apps.projects.routers import projects_router, zones_router, suppliers_router, team_members_router
+from apps.projects.routers import projects_router, zones_router, suppliers_router, team_members_router, risks_router, asset_usages_router
 from apps.budgets.routers import categories_router, imputation_codes_router, periods_router, budget_lines_router
 from apps.expenses.routers import expenses_router, expense_lines_router, attachments_router, estimates_router
 from apps.invoiceinbox.routers import inbox_router
@@ -210,6 +227,8 @@ api.add_router("/projects", projects_router)
 api.add_router("/zones", zones_router)
 api.add_router("/suppliers", suppliers_router)
 api.add_router("/team-members", team_members_router)
+api.add_router("/project-risks", risks_router)
+api.add_router("/project-asset-usages", asset_usages_router)
 api.add_router("/categories", categories_router)
 api.add_router("/codes", imputation_codes_router)
 api.add_router("/periods", periods_router)

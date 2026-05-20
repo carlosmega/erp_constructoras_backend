@@ -9,9 +9,13 @@ from apps.projects.schemas import (
     ProjectZoneSchema, CreateZoneDto, UpdateZoneDto,
     ProjectSupplierSchema, CreateSupplierDto,
     ProjectTeamMemberSchema, CreateTeamMemberDto, UpdateTeamMemberDto,
+    ProjectRiskSchema, CreateRiskDto, UpdateRiskDto,
+    ProjectAssetUsageSchema, CreateAssetUsageDto, UpdateAssetUsageDto,
+    ExecutiveSummarySchema,
 )
 from apps.projects.services import (
     ProjectService, ZoneService, SupplierService, TeamMemberService,
+    RiskService, AssetUsageService, ExecutiveSummaryService,
 )
 from core.permissions import require_permission, Permission
 
@@ -192,3 +196,90 @@ def remove_team_member(request: HttpRequest, member_id: UUID):
     """Hard delete a team member."""
     TeamMemberService.remove_team_member(member_id, request.user)
     return 204, None
+
+
+# ============================================================================
+# Risks Router  (mounted under /projects/{project_id}/risks/)
+# ============================================================================
+
+risks_router = Router(tags=["Project Risks"])
+
+
+@projects_router.get("/{project_id}/risks/", response=List[ProjectRiskSchema])
+@require_permission(Permission.PROJECT_READ)
+def list_risks(request: HttpRequest, project_id: UUID):
+    """List all risks for a project."""
+    return RiskService.list_risks(project_id)
+
+
+@projects_router.post("/{project_id}/risks/", response={201: ProjectRiskSchema})
+@require_permission(Permission.PROJECT_UPDATE)
+def create_risk(request: HttpRequest, project_id: UUID, payload: CreateRiskDto):
+    """Add a risk to a project."""
+    payload.projectid = project_id
+    risk = RiskService.create_risk(payload, request.user)
+    return 201, risk
+
+
+@risks_router.patch("/{risk_id}", response=ProjectRiskSchema)
+@require_permission(Permission.PROJECT_UPDATE)
+def update_risk(request: HttpRequest, risk_id: UUID, payload: UpdateRiskDto):
+    """Update a project risk."""
+    return RiskService.update_risk(risk_id, payload, request.user)
+
+
+@risks_router.delete("/{risk_id}", response={204: None})
+@require_permission(Permission.PROJECT_UPDATE)
+def delete_risk(request: HttpRequest, risk_id: UUID):
+    """Delete a project risk."""
+    RiskService.delete_risk(risk_id)
+    return 204, None
+
+
+# ============================================================================
+# Asset Usages Router  (mounted under /projects/{project_id}/asset-usages/)
+# ============================================================================
+
+asset_usages_router = Router(tags=["Project Asset Usages"])
+
+
+@projects_router.get("/{project_id}/asset-usages/", response=List[ProjectAssetUsageSchema])
+@require_permission(Permission.PROJECT_READ)
+def list_asset_usages(request: HttpRequest, project_id: UUID):
+    """List all asset usages for a project."""
+    return AssetUsageService.list_asset_usages(project_id)
+
+
+@projects_router.post("/{project_id}/asset-usages/", response={201: ProjectAssetUsageSchema})
+@require_permission(Permission.PROJECT_UPDATE)
+def create_asset_usage(request: HttpRequest, project_id: UUID, payload: CreateAssetUsageDto):
+    """Add an asset usage to a project."""
+    payload.projectid = project_id
+    usage = AssetUsageService.create_asset_usage(payload, request.user)
+    return 201, usage
+
+
+@asset_usages_router.patch("/{usage_id}", response=ProjectAssetUsageSchema)
+@require_permission(Permission.PROJECT_UPDATE)
+def update_asset_usage(request: HttpRequest, usage_id: UUID, payload: UpdateAssetUsageDto):
+    """Update a project asset usage."""
+    return AssetUsageService.update_asset_usage(usage_id, payload, request.user)
+
+
+@asset_usages_router.delete("/{usage_id}", response={204: None})
+@require_permission(Permission.PROJECT_UPDATE)
+def delete_asset_usage(request: HttpRequest, usage_id: UUID):
+    """Delete a project asset usage."""
+    AssetUsageService.delete_asset_usage(usage_id)
+    return 204, None
+
+
+# ============================================================================
+# Executive Summary endpoint
+# ============================================================================
+
+@projects_router.get("/{project_id}/executive-summary/", response=ExecutiveSummarySchema)
+@require_permission(Permission.PROJECT_READ)
+def get_executive_summary(request: HttpRequest, project_id: UUID):
+    """Compute and return the executive summary for a construction project."""
+    return ExecutiveSummaryService.compute(project_id)
