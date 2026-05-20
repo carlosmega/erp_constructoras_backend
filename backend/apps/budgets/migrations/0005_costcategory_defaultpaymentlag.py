@@ -1,6 +1,25 @@
 from django.db import migrations, models
 
 
+def _add_column_idempotent(apps, schema_editor):
+    db = schema_editor.connection.vendor
+    with schema_editor.connection.cursor() as cursor:
+        if db == 'sqlite':
+            cursor.execute("PRAGMA table_info(costcategory)")
+            existing = {row[1] for row in cursor.fetchall()}
+            if 'defaultpaymentlag' not in existing:
+                cursor.execute(
+                    "ALTER TABLE costcategory ADD COLUMN defaultpaymentlag INTEGER NOT NULL DEFAULT 0"
+                )
+        else:
+            # PostgreSQL: ADD COLUMN IF NOT EXISTS is a no-op when column exists
+            cursor.execute(
+                "ALTER TABLE costcategory"
+                " ADD COLUMN IF NOT EXISTS defaultpaymentlag INTEGER NOT NULL DEFAULT 0"
+            )
+        cursor.execute("UPDATE costcategory SET defaultpaymentlag = COALESCE(defaultpaymentlag, 0)")
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -16,12 +35,8 @@ class Migration(migrations.Migration):
                     field=models.IntegerField(default=0, db_column='defaultpaymentlag'),
                 ),
             ],
-            # Column already exists in DB with NOT NULL; ensure all rows have default=0.
             database_operations=[
-                migrations.RunSQL(
-                    sql="UPDATE costcategory SET defaultpaymentlag = COALESCE(defaultpaymentlag, 0)",
-                    reverse_sql=migrations.RunSQL.noop,
-                ),
+                migrations.RunPython(_add_column_idempotent, reverse_code=migrations.RunPython.noop),
             ],
         ),
     ]
