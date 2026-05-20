@@ -66,6 +66,11 @@ class CostCategory(AuditMixin):
         db_column='statecode'
     )
 
+    defaultpaymentlag = models.IntegerField(
+        default=0,
+        db_column='defaultpaymentlag'
+    )
+
     sortorder = models.IntegerField(
         default=0,
         db_column='sortorder'
