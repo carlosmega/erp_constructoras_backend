@@ -7,6 +7,7 @@ from datetime import datetime
 from collections import defaultdict
 from django.db import models, transaction
 from django.db.models import QuerySet, Max, Sum, Q, F
+from django.utils import timezone
 
 from apps.proyeccion.models import (
     EstimationProject,
@@ -125,7 +126,7 @@ class EstimationProjectService:
         project = EstimationProjectService.get_project(project_id, user)
 
         if project.statecode == EstimationStateCode.CONVERTED:
-            raise ValidationError("Cannot update a converted estimation project")
+            raise AlreadyConvertedError(project.generatedprojectid_id)
 
         update_fields = [
             'name', 'description', 'presentationdate', 'estimatedstartdate',
@@ -159,154 +160,383 @@ class EstimationProjectService:
         """Soft-delete an estimation project (set to Canceled). Cannot delete if converted."""
         project = EstimationProjectService.get_project(project_id, user)
         if project.statecode == EstimationStateCode.CONVERTED:
-            raise ValidationError("Cannot delete a converted estimation project")
+            raise AlreadyConvertedError(project.generatedprojectid_id)
         project.statecode = EstimationStateCode.CANCELED
         project.modifiedby = user
         project.save()
         return project
 
+class AlreadyConvertedError(Exception):
+    """Raised when the caller tries to convert an estimation that is already CONVERTED.
+
+    Carries the existing ``projectid`` so the API layer can return 409 with the link.
+    """
+
+    def __init__(self, projectid):
+        self.projectid = projectid
+        super().__init__(f"Estimation already converted (project={projectid})")
+
+
+class EstimationConversionService:
+    """Convert an accepted EstimationProject into a ConstructionProject.
+
+    Replaces the legacy ``EstimationProjectService.convert_to_project`` with a
+    flow that pulls everything from the estimation (no inputs from the caller).
+
+    Spec: docs/superpowers/specs/2026-05-17-conversion-estudio-proyecto-design.md
+    """
+
     @staticmethod
     @transaction.atomic
-    def convert_to_project(project_id, dto, user):
-        """Convert an accepted estimation into a ConstructionProject with budgets."""
-        from apps.projects.models import ConstructionProject
-        from apps.budgets.models import CostCategory, ImputationCode, CostTypeCode
-        from apps.budgets.services import CostCategoryService
+    def convert(estimation_id: UUID, *, user):
+        """Convert the given estimation to a construction project.
 
-        estimation = EstimationProjectService.get_project(project_id, user)
+        Validates every pre-condition listed in spec §6.1 then creates the
+        ConstructionProject with header fields pulled from the estimation
+        (OfferAlternative.chosen for amounts, EstimationFinancialSettings for
+        anticipo).
+        """
+        from apps.budgets.models import CostCategory, CostTypeCode
+        from apps.budgets.services import DEFAULT_INDIRECT_CATEGORIES
+        from apps.projects.models import ConstructionProject, ProjectStateCode, ProjectZone
+        from apps.projects.services import ProjectService
 
+        try:
+            estimation = EstimationProject.objects.select_for_update().get(
+                estimationprojectid=estimation_id,
+            )
+        except EstimationProject.DoesNotExist:
+            raise NotFound(f"Estimation project with ID {estimation_id} not found")
+
+        # Idempotency: if already converted, signal the existing projectid.
         if estimation.statecode == EstimationStateCode.CONVERTED:
-            raise ValidationError("Estimation already converted")
-        if estimation.statecode == EstimationStateCode.CANCELED:
-            raise ValidationError("Cannot convert a canceled estimation")
+            raise AlreadyConvertedError(estimation.generatedprojectid_id)
 
-        # 1. Generate project number
-        year = datetime.now().year
-        max_num = ConstructionProject.objects.filter(
-            projectnumber__startswith=f'PRY-{year}-'
-        ).count()
-        next_num = max_num + 1
-        project_number = f'PRY-{year}-{next_num:03d}'
+        EstimationConversionService._validate_preconditions(estimation)
 
-        # 2. Create ConstructionProject
-        project = ConstructionProject(
-            projectnumber=project_number,
+        chosen = OfferAlternative.objects.get(projectid=estimation, ischosen=True)
+        settings = getattr(estimation, 'financial_settings', None)
+        advance_notax = settings.advanceamountnotax if settings else Decimal('0')
+        advance_withtax = advance_notax * Decimal('1.16')
+
+        project = ConstructionProject.objects.create(
+            projectnumber=ProjectService.generate_project_number(),
             name=estimation.name,
             description=estimation.description,
+            statecode=ProjectStateCode.DRAFT,
             accountid=estimation.accountid,
             opportunityid=estimation.opportunityid,
             presentationdate=estimation.presentationdate,
-            startdate=dto.startdate,
-            contractenddate=dto.contractenddate,
-            expectedenddate=dto.expectedenddate,
+            awarddate=timezone.now().date(),
+            startdate=estimation.estimatedstartdate,
+            contractenddate=estimation.estimatedenddate,
             durationmonths=estimation.durationmonths,
             projecttype=estimation.projecttype,
             biddingtype=estimation.biddingtype,
             periodtype=estimation.periodtype,
-            contractamount_notax=dto.contractamount_notax,
-            contractamount_withtax=dto.contractamount_withtax,
-            advancepayment_notax=dto.advancepayment_notax,
-            advancepayment_withtax=dto.advancepayment_withtax,
+            contractamount_notax=chosen.salepricenet,
+            contractamount_withtax=chosen.salepricetotal,
+            advancepayment_notax=advance_notax,
+            advancepayment_withtax=advance_withtax,
             exchangerate_mxn_usd=estimation.exchangerate_mxn_usd,
             ownerid=user,
             createdby=user,
             modifiedby=user,
         )
-        project.save()
 
-        # 3. Seed cost categories (P1-P10, C1-C8)
-        categories = CostCategoryService.seed_default_categories(project.projectid, user)
+        default_zone = EstimationConversionService._seed_default_zone(project, user)
+        family_to_category = EstimationConversionService._seed_direct_categories(estimation, project, user)
+        indirect_categories = EstimationConversionService._seed_indirect_categories(project, user)
+        period_by_sortorder = EstimationConversionService._initialize_periods(project, user)
+        EstimationConversionService._seed_direct_imputation_codes_and_budgets(
+            estimation, project, family_to_category, default_zone, period_by_sortorder, user,
+        )
+        EstimationConversionService._seed_indirect_imputation_codes_and_budgets(
+            estimation, project, indirect_categories, period_by_sortorder, user,
+        )
 
-        # Build category lookup by code
-        cat_map = {cat.code: cat for cat in categories}
+        # Lock the estimation: state → CONVERTED and link to the new project.
+        estimation.statecode = EstimationStateCode.CONVERTED
+        estimation.generatedprojectid = project
+        estimation.modifiedby = user
+        estimation.save(update_fields=['statecode', 'generatedprojectid', 'modifiedby', 'modifiedon'])
 
-        # 4. Convert BudgetConcepts -> ImputationCodes (direct costs)
-        concepts = BudgetConcept.objects.filter(
-            projectid=estimation.estimationprojectid,
-            statecode=0,
-        ).select_related(
-            'subfamilyid', 'subfamilyid__familyid'
-        ).order_by('subfamilyid__familyid__sortorder', 'subfamilyid__sortorder', 'sequencenumber')
+        return project
 
-        seq_counters = {}  # Track sequence per category
-        direct_codes = []
+    @staticmethod
+    def _initialize_periods(project, user):
+        from apps.budgets.services import PeriodService
+        periods = PeriodService.initialize_periods(project.projectid, user)
+        return {p.sortorder: p for p in periods}
+
+    @staticmethod
+    def _seed_default_zone(project, user):
+        from apps.projects.models import ProjectZone
+        return ProjectZone.objects.create(
+            projectid=project,
+            prefix='GEN',
+            name='General',
+            sortorder=0,
+            createdby=user,
+            modifiedby=user,
+        )
+
+    @staticmethod
+    def _seed_direct_categories(estimation, project, user):
+        """Create 1 CostCategory direct per ConceptFamily, mapped P1..P10 (Opción A).
+
+        Returns ``dict[familyid: UUID → CostCategory]`` so downstream code can
+        assign each ImputationCode to the correct category.
+        """
+        from apps.budgets.models import CostCategory, CostTypeCode
+
+        family_to_category = {}
+        families = list(
+            ConceptFamily.objects.filter(projectid=estimation).order_by('sortorder')
+        )
+        if not families:
+            return family_to_category
+
+        max_individual = 9
+        head = families[:max_individual]
+        tail = families[max_individual:]
+
+        for idx, family in enumerate(head, start=1):
+            cat = CostCategory.objects.create(
+                projectid=project,
+                costtype=CostTypeCode.DIRECT,
+                code=f'P{idx}',
+                name=family.name,
+                sortorder=idx,
+                createdby=user,
+                modifiedby=user,
+            )
+            family_to_category[family.familyid] = cat
+
+        if tail:
+            cat = CostCategory.objects.create(
+                projectid=project,
+                costtype=CostTypeCode.DIRECT,
+                code='P10',
+                name='Otros',
+                sortorder=10,
+                createdby=user,
+                modifiedby=user,
+            )
+            for family in tail:
+                family_to_category[family.familyid] = cat
+
+        return family_to_category
+
+    @staticmethod
+    def _seed_direct_imputation_codes_and_budgets(
+        estimation, project, family_to_category, default_zone, period_by_sortorder, user,
+    ):
+        """For each BudgetConcept: create one direct ImputationCode and its per-period budget rows.
+
+        plannedamount(period) = SUM(breakdown.amount × concept.quantity × fraction(breakdown, period))
+        plannedvolume(period) = WorkPlanEntry.distributedquantity (entrytype=PLANNED)
+        """
+        from apps.budgets.models import ImputationCode, ImputationCodeBudget, CostTypeCode
+
+        concepts = list(
+            BudgetConcept.objects.filter(projectid=estimation)
+            .select_related('subfamilyid', 'subfamilyid__familyid')
+            .order_by('subfamilyid__familyid__sortorder', 'subfamilyid__sortorder', 'sequencenumber')
+        )
+        if not concepts:
+            return
+
+        # Pre-fetch CostDistribution for direct breakdowns (per concept).
+        breakdown_dist = {
+            (row['breakdownid_id'], row['periodnumber']): row['fraction']
+            for row in CostDistribution.objects.filter(
+                projectid=estimation, linetype=CostLineType.BREAKDOWN
+            ).values('breakdownid_id', 'periodnumber', 'fraction')
+        }
+        # Pre-fetch workplan PLANNED entries.
+        workplan = {
+            (row['conceptid_id'], row['periodnumber']): row['distributedquantity']
+            for row in WorkPlanEntry.objects.filter(
+                projectid=estimation, entrytype=WorkPlanEntryType.PLANNED
+            ).values('conceptid_id', 'periodnumber', 'distributedquantity')
+        }
+
+        # Track sequence counters per (category, zone) for code generation.
+        seq_counters: dict = {}
+
         for concept in concepts:
-            # Map concept to P4 (Materiales) as default direct category
-            cat_code = 'P4'
-            category = cat_map.get(cat_code)
-            if not category:
+            family_id = concept.subfamilyid.familyid_id
+            category = family_to_category.get(family_id)
+            if category is None:
+                # No category mapped for this concept's family — skip defensively.
                 continue
 
-            key = (str(project.projectid), str(category.categoryid))
+            key = (category.categoryid, default_zone.zoneid)
             seq_counters[key] = seq_counters.get(key, 0) + 1
             seq = seq_counters[key]
+            code_str = f"{default_zone.prefix}-{category.code}-{seq}"
 
-            code_str = f"{cat_code}-{seq}"
-
-            direct_codes.append(ImputationCode(
+            imputation_code = ImputationCode.objects.create(
                 projectid=project,
                 categoryid=category,
+                zoneid=default_zone,
                 costtype=CostTypeCode.DIRECT,
                 code=code_str,
                 sequencenumber=seq,
                 name=concept.description,
                 unit=concept.unit,
                 contractcode=concept.code,
-                contractunitprice=concept.clientunitprice or concept.unitprice,
-                quantity=concept.quantity,
-                unitcost=concept.clientunitprice or concept.unitprice,
+                contractunitprice=concept.clientunitprice or concept.unitprice or None,
                 sourceconceptid=concept,
+                unitcost=concept.directunitcost + concept.indirectunitcost,
+                quantity=concept.quantity,
                 totalbudget=concept.totalamount,
+                remainingbudget=concept.totalamount,
                 createdby=user,
                 modifiedby=user,
-            ))
-        if direct_codes:
-            ImputationCode.objects.bulk_create(direct_codes)
+            )
 
-        # 5. Convert IndirectCostDetails -> ImputationCodes (indirect costs)
-        indirect_details = IndirectCostDetail.objects.filter(
-            projectid=estimation.estimationprojectid,
-            statecode=0,
-        ).order_by('categorycode', 'linenumber')
+            # Build per-period budget rows.
+            breakdown_ids_for_concept = list(
+                UnitCostBreakdown.objects.filter(conceptid=concept).values_list('breakdownid', 'amount')
+            )
+            concept_qty = concept.quantity or Decimal('0')
 
-        seq_counters_indirect = {}
-        indirect_codes = []
-        for detail in indirect_details:
-            category = cat_map.get(detail.categorycode)
-            if not category:
+            budgets_to_create = []
+            for sortorder, period in period_by_sortorder.items():
+                planned_amount = Decimal('0')
+                for bd_id, bd_amount in breakdown_ids_for_concept:
+                    frac = breakdown_dist.get((bd_id, sortorder), Decimal('0'))
+                    planned_amount += (bd_amount or Decimal('0')) * concept_qty * frac
+
+                planned_volume = workplan.get((concept.conceptid, sortorder), Decimal('0'))
+
+                budgets_to_create.append(ImputationCodeBudget(
+                    imputationcodeid=imputation_code,
+                    periodid=period,
+                    periodlabel=period.label,
+                    plannedamount=planned_amount,
+                    plannedvolume=planned_volume,
+                ))
+
+            ImputationCodeBudget.objects.bulk_create(budgets_to_create)
+
+    @staticmethod
+    def _seed_indirect_categories(project, user):
+        """Create the 8 standard indirect categories (C1-C8). Returns ``dict[code: str → CostCategory]``."""
+        from apps.budgets.models import CostCategory
+        from apps.budgets.services import DEFAULT_INDIRECT_CATEGORIES
+
+        CostCategory.objects.bulk_create([
+            CostCategory(
+                projectid=project,
+                costtype=costtype,
+                code=code,
+                name=name,
+                sortorder=sortorder,
+                createdby=user,
+                modifiedby=user,
+            )
+            for code, name, costtype, sortorder in DEFAULT_INDIRECT_CATEGORIES
+        ])
+        return {
+            c.code: c
+            for c in CostCategory.objects.filter(projectid=project, costtype=1)
+        }
+
+    @staticmethod
+    def _seed_indirect_imputation_codes_and_budgets(
+        estimation, project, indirect_categories, period_by_sortorder, user,
+    ):
+        """For each IndirectCostDetail: create one indirect ImputationCode (zoneid=None) and its per-period budgets.
+
+        plannedamount(period) = IndirectCostDetail.amount × CostDistribution.fraction(detail, period)
+        """
+        from apps.budgets.models import ImputationCode, ImputationCodeBudget, CostTypeCode
+
+        details = list(
+            IndirectCostDetail.objects.filter(projectid=estimation)
+            .order_by('categorycode', 'linenumber')
+        )
+        if not details:
+            return
+
+        indirect_dist = {
+            (row['indirectcostid_id'], row['periodnumber']): row['fraction']
+            for row in CostDistribution.objects.filter(
+                projectid=estimation, linetype=CostLineType.INDIRECT
+            ).values('indirectcostid_id', 'periodnumber', 'fraction')
+        }
+
+        seq_counters: dict = {}
+
+        for detail in details:
+            category = indirect_categories.get(detail.categorycode)
+            if category is None:
+                # Skip silently if the detail's categorycode doesn't match a seeded C-category.
                 continue
 
-            key = str(category.categoryid)
-            seq_counters_indirect[key] = seq_counters_indirect.get(key, 0) + 1
-            seq = seq_counters_indirect[key]
+            seq_counters[category.code] = seq_counters.get(category.code, 0) + 1
+            seq = seq_counters[category.code]
+            code_str = f"{category.code}-{seq}"
 
-            code_str = f"{detail.categorycode}-{seq}"
-
-            indirect_codes.append(ImputationCode(
+            is_c1 = detail.categorycode == 'C1'
+            imputation_code = ImputationCode.objects.create(
                 projectid=project,
                 categoryid=category,
+                zoneid=None,
                 costtype=CostTypeCode.INDIRECT,
                 code=code_str,
                 sequencenumber=seq,
                 name=detail.description,
-                description=detail.area,
+                personnelrole=detail.area if is_c1 else None,
                 monthlycost=detail.monthlycost,
                 units=detail.units,
                 executionmonths=int(detail.months) if detail.months else None,
                 totalbudget=detail.amount,
+                remainingbudget=detail.amount,
                 createdby=user,
                 modifiedby=user,
-            ))
-        if indirect_codes:
-            ImputationCode.objects.bulk_create(indirect_codes)
+            )
 
-        # 6. Update estimation state
-        estimation.statecode = EstimationStateCode.CONVERTED
-        estimation.generatedprojectid = project
-        estimation.modifiedby = user
-        estimation.save()
+            budgets_to_create = []
+            for sortorder, period in period_by_sortorder.items():
+                frac = indirect_dist.get((detail.indirectcostid, sortorder), Decimal('0'))
+                planned_amount = (detail.amount or Decimal('0')) * frac
+                budgets_to_create.append(ImputationCodeBudget(
+                    imputationcodeid=imputation_code,
+                    periodid=period,
+                    periodlabel=period.label,
+                    plannedamount=planned_amount,
+                ))
+            ImputationCodeBudget.objects.bulk_create(budgets_to_create)
 
-        return estimation
+    @staticmethod
+    def _validate_preconditions(estimation):
+        if estimation.statecode != EstimationStateCode.ACCEPTED:
+            raise ValidationError(
+                f"Estimation must be in ACCEPTED state to convert (current: "
+                f"{EstimationStateCode(estimation.statecode).label})"
+            )
+        if estimation.accountid_id is None:
+            raise ValidationError(
+                "Estimation has no account linked; cannot convert to a project"
+            )
+        if estimation.estimatedstartdate is None:
+            raise ValidationError("Estimation is missing the estimated start date")
+        if estimation.estimatedenddate is None:
+            raise ValidationError("Estimation is missing the estimated end date")
+        if not estimation.durationmonths or estimation.durationmonths <= 0:
+            raise ValidationError("Estimation duration (months) must be greater than zero")
+
+        chosen = OfferAlternative.objects.filter(
+            projectid=estimation, ischosen=True
+        ).first()
+        if chosen is None:
+            raise ValidationError(
+                "Estimation has no chosen offer alternative — set one as ischosen=True before converting"
+            )
 
 
 # Default external cost checklist items

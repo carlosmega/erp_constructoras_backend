@@ -89,15 +89,15 @@ class UpdateEstimationProjectDto(Schema):
     statecode: Optional[int] = None
 
 
-class ConvertToProjectDto(Schema):
-    """DTO for converting an estimation to a construction project."""
-    contractamount_notax: Decimal
-    contractamount_withtax: Decimal
-    advancepayment_notax: Optional[Decimal] = None
-    advancepayment_withtax: Optional[Decimal] = None
-    startdate: date
-    contractenddate: date
-    expectedenddate: Optional[date] = None
+class ConvertEstimationResponseDto(Schema):
+    """Response shape returned by POST /estimation-projects/{id}/convert/.
+
+    All inputs come from the estimation itself; no body is needed on the request.
+    """
+    projectid: UUID
+    projectnumber: str
+    estimation_locked: bool
+    summary: dict  # {periods_created, direct_codes_created, indirect_codes_created, contract_amount}
 
 
 # =============================================================================

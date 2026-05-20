@@ -14,7 +14,7 @@ from apps.proyeccion.schemas import (
     EstimationProjectSchema,
     CreateEstimationProjectDto,
     UpdateEstimationProjectDto,
-    ConvertToProjectDto,
+    ConvertEstimationResponseDto,
     ConceptFamilySchema,
     CreateConceptFamilyDto,
     UpdateConceptFamilyDto,
@@ -92,6 +92,7 @@ from apps.proyeccion.schemas import (
     HeartbeatRequest,
 )
 from apps.proyeccion.services import (
+    EstimationConversionService,
     EstimationProjectService,
     ConceptCatalogService,
     UnitCostBreakdownService,
@@ -187,10 +188,35 @@ def delete_estimation_project(request: HttpRequest, project_id: UUID):
     return EstimationProjectService.delete_project(project_id, request.user)
 
 
-@estimation_projects_router.post("/{project_id}/convert/", response=EstimationProjectSchema)
-def convert_to_project(request: HttpRequest, project_id: UUID, payload: ConvertToProjectDto):
-    """Convert an estimation project into a ConstructionProject with budgets."""
-    return EstimationProjectService.convert_to_project(project_id, payload, request.user)
+@estimation_projects_router.post("/{project_id}/convert/", response=ConvertEstimationResponseDto)
+def convert_to_project(request: HttpRequest, project_id: UUID):
+    """Convert an accepted estimation into a ConstructionProject.
+
+    Pulls every field (contract amount, anticipo, dates, categories, periods,
+    budgets) from the estimation itself; no request body needed. Locks the
+    estimation as CONVERTED on success. Returns 409 with ``{projectid}`` if the
+    estimation was already converted.
+    """
+    from apps.budgets.models import CostCategory, CostTypeCode, ImputationCode, ImputationPeriod
+
+    project = EstimationConversionService.convert(project_id, user=request.user)
+
+    summary = {
+        'periods_created': ImputationPeriod.objects.filter(projectid=project).count(),
+        'direct_codes_created': ImputationCode.objects.filter(
+            projectid=project, costtype=CostTypeCode.DIRECT,
+        ).count(),
+        'indirect_codes_created': ImputationCode.objects.filter(
+            projectid=project, costtype=CostTypeCode.INDIRECT,
+        ).count(),
+        'contract_amount': str(project.contractamount_notax),
+    }
+    return ConvertEstimationResponseDto(
+        projectid=project.projectid,
+        projectnumber=project.projectnumber,
+        estimation_locked=True,
+        summary=summary,
+    )
 
 
 # =============================================================================
