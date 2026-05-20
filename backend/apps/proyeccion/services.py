@@ -622,6 +622,7 @@ class ConceptCatalogService:
         family.statecode = 1
         family.modifiedby = user
         family.save()
+        ConceptSubfamily.objects.filter(familyid=family).update(statecode=1, modifiedby=user)
         return family
 
     # -------------------------------------------------------------------------
