@@ -5592,21 +5592,37 @@ class ConceptExcelService:
 
     @classmethod
     def export(cls, project_id, user) -> bytes:
-        """Return an .xlsx workbook (as bytes) with all active concepts."""
+        """Return an .xlsx workbook with all active families/subfamilies and their concepts.
+        Subfamilies without concepts appear as a single blank row so the user can fill them in."""
         import io
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment
 
         project = EstimationProject.objects.get(estimationprojectid=project_id)
-        concepts = (
-            BudgetConcept.objects.filter(projectid=project, statecode=0)
-            .select_related('subfamilyid', 'subfamilyid__familyid')
-            .order_by(
-                'subfamilyid__familyid__sortorder',
-                'subfamilyid__sortorder',
-                'code',
+
+        # Build a structured list: one entry per (subfamily, concept_or_None)
+        families = (
+            ConceptFamily.objects.filter(projectid=project, statecode=0)
+            .prefetch_related(
+                'subfamilies',
+                'subfamilies__concepts',
             )
+            .order_by('sortorder', 'code')
         )
+
+        # Collect rows: (fam_name, fam_code, sf_name, sf_code, concept_or_None)
+        data_rows = []
+        for fam in families:
+            for sf in fam.subfamilies.filter(statecode=0).order_by('sortorder', 'code'):
+                active_concepts = list(
+                    sf.concepts.filter(statecode=0).order_by('sequencenumber', 'code')
+                )
+                if active_concepts:
+                    for concept in active_concepts:
+                        data_rows.append((fam, sf, concept))
+                else:
+                    # Subfamily has no concepts yet — include a blank placeholder row
+                    data_rows.append((fam, sf, None))
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -5635,24 +5651,30 @@ class ConceptExcelService:
         for col, width in enumerate([20, 12, 25, 12, 12, 55, 10, 12], 1):
             ws.column_dimensions[chr(64 + col)].width = width
 
-        if not concepts.exists():
+        placeholder_font = Font(size=10, color='AAAAAA', italic=True)
+
+        if not data_rows:
+            # No families at all — show example rows so the user has a template
             gray_font = Font(size=10, color='888888', italic=True)
             for row_offset, ex in enumerate(cls.EXAMPLE_ROWS, 4):
                 for col, val in enumerate(ex, 1):
                     cell = ws.cell(row=row_offset, column=col, value=val)
                     cell.font = gray_font
         else:
-            for row_offset, concept in enumerate(concepts, 4):
-                sf = concept.subfamilyid
-                fam = sf.familyid
+            for row_offset, (fam, sf, concept) in enumerate(data_rows, 4):
                 ws.cell(row=row_offset, column=1, value=fam.name)
                 ws.cell(row=row_offset, column=2, value=fam.code)
                 ws.cell(row=row_offset, column=3, value=sf.name)
                 ws.cell(row=row_offset, column=4, value=sf.code)
-                ws.cell(row=row_offset, column=5, value=concept.code)
-                ws.cell(row=row_offset, column=6, value=concept.description)
-                ws.cell(row=row_offset, column=7, value=concept.unit)
-                ws.cell(row=row_offset, column=8, value=float(concept.quantity))
+                if concept is not None:
+                    ws.cell(row=row_offset, column=5, value=concept.code)
+                    ws.cell(row=row_offset, column=6, value=concept.description)
+                    ws.cell(row=row_offset, column=7, value=concept.unit)
+                    ws.cell(row=row_offset, column=8, value=float(concept.quantity))
+                else:
+                    # Blank placeholder so the user knows to fill in this subfamily
+                    for col in range(5, 9):
+                        ws.cell(row=row_offset, column=col).font = placeholder_font
 
         buf = io.BytesIO()
         wb.save(buf)
@@ -5683,19 +5705,11 @@ class ConceptExcelService:
                 'La columna 4 debe contener "COD.SUB".'
             )
 
-        # Build lookup: cod_sub.upper() → ConceptSubfamily (all statecodes — unique_together
-        # applies regardless of statecode so we must detect inactive records too)
-        existing_subfamilies = {
-            sf.code.strip().upper(): sf
-            for sf in ConceptSubfamily.objects.filter(projectid=project)
-        }
-
-        # Build set of existing concept codes — include inactive records to avoid
-        # hitting the unique_together(projectid, code) constraint on re-import
-        existing_codes = {
-            code.upper()
-            for code in BudgetConcept.objects.filter(projectid=project)
-            .values_list('code', flat=True)
+        # Build concept lookup: code.upper() → BudgetConcept (all statecodes)
+        # Keying by concept code lets us detect changes for the 'update' status.
+        existing_concepts = {
+            c.code.strip().upper(): c
+            for c in BudgetConcept.objects.filter(projectid=project)
         }
 
         rows = []
@@ -5732,23 +5746,27 @@ class ConceptExcelService:
             except (ValueError, TypeError):
                 quantity = 0.0
 
+            old_description = old_unit = old_quantity = None
+
             if not cod_sub or not cod_fam:
                 status = 'error'
                 error_msg = 'Fila sin COD.SUB o COD.FAM — no se puede determinar la subfamilia'
             else:
-                sf_obj = existing_subfamilies.get(cod_sub.upper())
-                if sf_obj is None:
-                    # Subfamily doesn't exist yet — will be auto-created on import
-                    if codigo.upper() in existing_codes:
-                        status = 'skip'
-                    else:
-                        status = 'new'
-                    error_msg = None
-                elif codigo.upper() in existing_codes:
-                    status = 'skip'
+                existing_c = existing_concepts.get(codigo.upper()) if codigo else None
+                if existing_c is None:
+                    status = 'new'
                     error_msg = None
                 else:
-                    status = 'new'
+                    old_description = existing_c.description
+                    old_unit = existing_c.unit
+                    old_quantity = float(existing_c.quantity)
+                    needs_update = (
+                        existing_c.statecode != 0
+                        or existing_c.description.strip() != description
+                        or existing_c.unit.strip() != unit
+                        or abs(float(existing_c.quantity) - quantity) > 0.0001
+                    )
+                    status = 'update' if needs_update else 'skip'
                     error_msg = None
 
             rows.append({
@@ -5763,6 +5781,9 @@ class ConceptExcelService:
                 'quantity': quantity,
                 'status': status,
                 'error_msg': error_msg,
+                'old_description': old_description,
+                'old_unit': old_unit,
+                'old_quantity': old_quantity,
             })
 
         wb.close()
@@ -5773,6 +5794,7 @@ class ConceptExcelService:
 
         summary = {
             'new': sum(1 for r in rows if r['status'] == 'new'),
+            'update': sum(1 for r in rows if r['status'] == 'update'),
             'skip': sum(1 for r in rows if r['status'] == 'skip'),
             'error': sum(1 for r in rows if r['status'] == 'error'),
             'total': len(rows),
@@ -5783,34 +5805,67 @@ class ConceptExcelService:
     @classmethod
     @transaction.atomic
     def import_(cls, project_id, payload, user) -> dict:
-        """Create BudgetConcept rows for each item. Skip rows with unknown cod_sub."""
+        """Create or update BudgetConcept rows. Families/subfamilies are auto-created
+        (or reactivated) as needed. Never deletes existing concepts."""
         from django.db.models import Max
 
         project = EstimationProject.objects.get(estimationprojectid=project_id)
 
-        # Include all statecodes — unique_together constraints apply regardless of statecode,
-        # so we must detect inactive records to avoid IntegrityError on re-import
-        existing_subfamilies = {
-            sf.code.strip().upper(): sf
-            for sf in ConceptSubfamily.objects.filter(projectid=project)
-        }
+        # Subfamily lookup keyed by (cod_fam.upper(), cod_sub.upper()) so that
+        # 'sub-1' under family 'f1' and 'sub-1' under family 'f2' are distinct.
+        existing_subfamilies: dict[tuple, object] = {}
+        for sf in ConceptSubfamily.objects.filter(projectid=project).select_related('familyid'):
+            key = (sf.familyid.code.strip().upper(), sf.code.strip().upper())
+            existing_subfamilies[key] = sf
+
         existing_families = {
             fam.code.strip().upper(): fam
             for fam in ConceptFamily.objects.filter(projectid=project)
         }
 
         created = 0
+        updated = 0
         skipped = 0
-        # Separate caches: one for auto-code suffix, one for sequencenumber
-        auto_code_counter: dict[str, int] = {}   # cod_sub.upper() → last suffix used
-        seq_num_cache: dict[str, int] = {}        # sf PK str → last sequencenumber used
+        auto_code_counter: dict[str, int] = {}  # (cod_fam, cod_sub) key → last suffix
+        seq_num_cache: dict[str, int] = {}       # sf PK str → last sequencenumber
 
         for item in payload.items:
             cod_sub_upper = item.cod_sub.strip().upper()
             cod_fam_upper = item.cod_fam.strip().upper()
-            sf = existing_subfamilies.get(cod_sub_upper)
+            sf_lookup_key = (cod_fam_upper, cod_sub_upper)
+
+            # ── Handle 'update' items ──────────────────────────────────────────
+            if item.status == 'update':
+                concept = BudgetConcept.objects.filter(
+                    projectid=project, code=item.codigo.strip()
+                ).first()
+                if concept is None:
+                    skipped += 1
+                    continue
+                concept.description = item.description
+                concept.unit = item.unit
+                concept.quantity = Decimal(str(item.quantity))
+                concept.statecode = 0  # reactivate if it was soft-deleted
+                concept.modifiedby = user
+                concept.save(update_fields=[
+                    'description', 'unit', 'quantity', 'statecode', 'modifiedby', 'modifiedon',
+                ])
+                # Also reactivate subfamily and family chains
+                sf_of_concept = concept.subfamilyid
+                if sf_of_concept.statecode != 0:
+                    sf_of_concept.statecode = 0
+                    sf_of_concept.save(update_fields=['statecode'])
+                fam_of_concept = sf_of_concept.familyid
+                if fam_of_concept.statecode != 0:
+                    fam_of_concept.statecode = 0
+                    fam_of_concept.save(update_fields=['statecode'])
+                updated += 1
+                continue
+
+            # ── Handle 'new' items ────────────────────────────────────────────
+            sf = existing_subfamilies.get(sf_lookup_key)
             if sf is None:
-                # Auto-create the family if it doesn't exist
+                # Ensure family exists (create or reactivate)
                 fam = existing_families.get(cod_fam_upper)
                 if fam is None:
                     fam_sort = (
@@ -5825,8 +5880,11 @@ class ConceptExcelService:
                         statecode=0,
                     )
                     existing_families[cod_fam_upper] = fam
+                elif fam.statecode != 0:
+                    fam.statecode = 0
+                    fam.save(update_fields=['statecode'])
 
-                # Auto-create the subfamily
+                # Create subfamily (or handle edge-case where it exists but inactive)
                 sf_sort = (
                     ConceptSubfamily.objects.filter(projectid=project)
                     .aggregate(m=Max('sortorder'))['m'] or 0
@@ -5839,29 +5897,32 @@ class ConceptExcelService:
                     sortorder=sf_sort,
                     statecode=0,
                 )
-                existing_subfamilies[cod_sub_upper] = sf
+                existing_subfamilies[sf_lookup_key] = sf
+            elif sf.statecode != 0:
+                sf.statecode = 0
+                sf.save(update_fields=['statecode'])
+                fam = sf.familyid
+                if fam.statecode != 0:
+                    fam.statecode = 0
+                    fam.save(update_fields=['statecode'])
 
             code = item.codigo.strip()
             if not code:
-                n = auto_code_counter.get(cod_sub_upper, 0) + 1
-                auto_code_counter[cod_sub_upper] = n
+                n = auto_code_counter.get(sf_lookup_key, 0) + 1
+                auto_code_counter[sf_lookup_key] = n
                 code = f'{item.cod_sub}-{n:02d}'
 
-            # Guard against duplicate codes (unique_together applies to all statecodes)
-            if BudgetConcept.objects.filter(
-                projectid=project, code=code
-            ).exists():
+            # Skip if concept already exists (unique_together covers all statecodes)
+            if BudgetConcept.objects.filter(projectid=project, code=code).exists():
                 skipped += 1
                 continue
 
-            # Calculate next sequence number within the subfamily (lazy init per sf)
             sf_key = str(sf.subfamilyid)
             if sf_key not in seq_num_cache:
-                max_seq = (
+                seq_num_cache[sf_key] = (
                     BudgetConcept.objects.filter(subfamilyid=sf)
                     .aggregate(m=Max('sequencenumber'))['m'] or 0
                 )
-                seq_num_cache[sf_key] = max_seq
             seq_num_cache[sf_key] += 1
 
             BudgetConcept.objects.create(
@@ -5885,4 +5946,4 @@ class ConceptExcelService:
             )
             created += 1
 
-        return {'created': created, 'skipped': skipped}
+        return {'created': created, 'updated': updated, 'skipped': skipped}

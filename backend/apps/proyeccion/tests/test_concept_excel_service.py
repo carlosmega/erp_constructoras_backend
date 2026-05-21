@@ -141,13 +141,14 @@ def test_analyze_classifies_new_row():
 @pytest.mark.django_db
 @pytest.mark.unit
 def test_analyze_classifies_existing_code_as_skip():
-    """A row whose code already exists in the project is classified as 'skip'."""
+    """A row whose code exists with identical values is classified as 'skip'."""
     from apps.proyeccion.services import ConceptExcelService
     user = SystemUserFactory()
     family = ConceptFamilyFactory(name='GABINETE', code='GAB')
     sf = ConceptSubfamilyFactory(familyid=family, name='Proy. Ejecutivo', code='GAB-01')
     project = sf.projectid
-    BudgetConceptFactory(subfamilyid=sf, code='A1')
+    # Create with same values as the Excel row so it is truly identical
+    BudgetConceptFactory(subfamilyid=sf, code='A1', description='Descripcion', unit='M2', quantity=100)
 
     buf = _make_excel([
         ('GABINETE', 'GAB', 'Proy. Ejecutivo', 'GAB-01', 'A1', 'Descripcion', 'M2', 100),
@@ -157,6 +158,29 @@ def test_analyze_classifies_existing_code_as_skip():
 
     assert result['summary']['skip'] == 1
     assert result['rows'][0]['status'] == 'skip'
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_analyze_classifies_changed_concept_as_update():
+    """A row whose code exists but with different values is classified as 'update'."""
+    from apps.proyeccion.services import ConceptExcelService
+    user = SystemUserFactory()
+    family = ConceptFamilyFactory(name='GABINETE', code='GAB')
+    sf = ConceptSubfamilyFactory(familyid=family, name='Proy. Ejecutivo', code='GAB-01')
+    project = sf.projectid
+    BudgetConceptFactory(subfamilyid=sf, code='A1', description='Viejo', unit='M2', quantity=50)
+
+    buf = _make_excel([
+        ('GABINETE', 'GAB', 'Proy. Ejecutivo', 'GAB-01', 'A1', 'Nuevo', 'M2', 100),
+    ])
+
+    result = ConceptExcelService.analyze(project.estimationprojectid, buf, user)
+
+    assert result['summary']['update'] == 1
+    assert result['rows'][0]['status'] == 'update'
+    assert result['rows'][0]['old_description'] == 'Viejo'
+    assert result['rows'][0]['old_quantity'] == 50.0
 
 
 @pytest.mark.django_db
@@ -236,13 +260,14 @@ def test_import_creates_new_concepts():
     project = sf.projectid
 
     payload = ImportConceptExcelRequestDto(items=[
-        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 100.0},
-        {'row': 5, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A2', 'description': 'Desc 2', 'unit': 'KG', 'quantity': 50.0},
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 100.0, 'status': 'new'},
+        {'row': 5, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A2', 'description': 'Desc 2', 'unit': 'KG', 'quantity': 50.0, 'status': 'new'},
     ])
 
     result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
 
     assert result['created'] == 2
+    assert result['updated'] == 0
     assert result['skipped'] == 0
     assert BudgetConcept.objects.filter(projectid=project, statecode=0).count() == 2
 
@@ -259,7 +284,7 @@ def test_import_autocreates_family_and_subfamily():
     project = EstimationProjectFactory()
 
     payload = ImportConceptExcelRequestDto(items=[
-        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ejecutivo', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 1.0},
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ejecutivo', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 1.0, 'status': 'new'},
     ])
 
     result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
@@ -268,6 +293,34 @@ def test_import_autocreates_family_and_subfamily():
     assert ConceptFamily.objects.filter(projectid=project, code='GAB').exists()
     assert ConceptSubfamily.objects.filter(projectid=project, code='GAB-01').exists()
     assert BudgetConcept.objects.filter(projectid=project, code='A1').exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_import_updates_existing_concept():
+    """import_() updates description/unit/quantity for status='update' items."""
+    from apps.proyeccion.services import ConceptExcelService
+    from apps.proyeccion.models import BudgetConcept
+    from apps.proyeccion.schemas import ImportConceptExcelRequestDto
+
+    user = SystemUserFactory()
+    family = ConceptFamilyFactory(code='GAB')
+    sf = ConceptSubfamilyFactory(familyid=family, code='GAB-01')
+    project = sf.projectid
+    BudgetConceptFactory(subfamilyid=sf, code='A1', description='Viejo', unit='M2', quantity=50)
+
+    payload = ImportConceptExcelRequestDto(items=[
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Nuevo', 'unit': 'KG', 'quantity': 200.0, 'status': 'update'},
+    ])
+
+    result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
+
+    assert result['updated'] == 1
+    assert result['created'] == 0
+    concept = BudgetConcept.objects.get(projectid=project, code='A1')
+    assert concept.description == 'Nuevo'
+    assert concept.unit == 'KG'
+    assert float(concept.quantity) == 200.0
 
 
 @pytest.mark.django_db
@@ -284,7 +337,7 @@ def test_import_autogenerates_code_when_blank():
     project = sf.projectid
 
     payload = ImportConceptExcelRequestDto(items=[
-        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': '', 'description': 'Sin codigo', 'unit': 'M2', 'quantity': 1.0},
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': '', 'description': 'Sin codigo', 'unit': 'M2', 'quantity': 1.0, 'status': 'new'},
     ])
 
     ConceptExcelService.import_(project.estimationprojectid, payload, user)
