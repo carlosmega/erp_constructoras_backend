@@ -576,7 +576,8 @@ class ConceptCatalogService:
     def list_families(project_id: UUID, user) -> QuerySet[ConceptFamily]:
         """List all concept families for a project."""
         return ConceptFamily.objects.filter(
-            projectid=project_id
+            projectid=project_id,
+            statecode=0,
         ).select_related('createdby', 'modifiedby')
 
     @staticmethod
@@ -633,7 +634,8 @@ class ConceptCatalogService:
     def list_subfamilies(family_id: UUID, user) -> QuerySet[ConceptSubfamily]:
         """List all subfamilies for a family."""
         return ConceptSubfamily.objects.filter(
-            familyid=family_id
+            familyid=family_id,
+            statecode=0,
         ).select_related('familyid', 'createdby', 'modifiedby')
 
     @staticmethod
@@ -5568,3 +5570,382 @@ class IndirectExcelService:
         buf = io.BytesIO()
         wb.save(buf)
         return buf.getvalue()
+
+
+# =============================================================================
+# Concept Excel Export / Import Service (8-column round-trip format)
+# =============================================================================
+
+class ConceptExcelService:
+    """Export all project concepts to Excel and import new ones from Excel."""
+
+    HEADERS = [
+        'FAMILIA', 'COD.FAM', 'SUBFAMILIA', 'COD.SUB',
+        'CODIGO', 'DESCRIPCION COMPLETA', 'UNIDAD', 'CANTIDAD',
+    ]
+    EXAMPLE_ROWS = [
+        ('GABINETE', 'GAB', 'Proyecto Ejecutivo', 'GAB-01', 'A1',
+         'Elaboracion de proyecto ejecutivo acorde a las necesidades del cliente', 'EST', 1),
+        ('GABINETE', 'GAB', 'Proyecto Ejecutivo', 'GAB-01', 'A2',
+         'Levantamiento topografico. Incluye brigada de topografia. P.U.O.T.', 'M2', 1400),
+        ('PRELIMINARES', 'PRE', 'Movimiento de Tierras', 'PRE-01', 'B1',
+         'Deshierbe, desmonte y despalme. Incluye mano de obra y herramienta menor.', 'M2', 5000),
+    ]
+
+    @classmethod
+    def export(cls, project_id, user) -> bytes:
+        """Return an .xlsx workbook with all active families/subfamilies and their concepts.
+        Subfamilies without concepts appear as a single blank row so the user can fill them in."""
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        project = EstimationProject.objects.get(estimationprojectid=project_id)
+
+        # Build a structured list: one entry per (subfamily, concept_or_None)
+        families = (
+            ConceptFamily.objects.filter(projectid=project, statecode=0)
+            .prefetch_related(
+                'subfamilies',
+                'subfamilies__concepts',
+            )
+            .order_by('sortorder', 'code')
+        )
+
+        # Collect rows: (fam_name, fam_code, sf_name, sf_code, concept_or_None)
+        data_rows = []
+        for fam in families:
+            for sf in fam.subfamilies.filter(statecode=0).order_by('sortorder', 'code'):
+                active_concepts = list(
+                    sf.concepts.filter(statecode=0).order_by('sequencenumber', 'code')
+                )
+                if active_concepts:
+                    for concept in active_concepts:
+                        data_rows.append((fam, sf, concept))
+                else:
+                    # Subfamily has no concepts yet — include a blank placeholder row
+                    data_rows.append((fam, sf, None))
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Conceptos'
+
+        # Row 1: project name
+        ws.cell(row=1, column=1, value=project.name)
+        ws.cell(row=1, column=1).font = Font(bold=True, size=12)
+
+        # Row 2: project UUID (round-trip marker)
+        ws.cell(row=2, column=1, value=str(project.estimationprojectid))
+        ws.cell(row=2, column=1).font = Font(italic=True, size=9, color='888888')
+
+        # Row 3: headers
+        header_fill = PatternFill('solid', fgColor='1F4E79')
+        header_font = Font(bold=True, color='FFFFFF')
+        for col, header in enumerate(cls.HEADERS, 1):
+            cell = ws.cell(row=3, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        ws.freeze_panes = 'A4'
+
+        # Column widths: A=20 B=12 C=25 D=12 E=12 F=55 G=10 H=12
+        for col, width in enumerate([20, 12, 25, 12, 12, 55, 10, 12], 1):
+            ws.column_dimensions[chr(64 + col)].width = width
+
+        placeholder_font = Font(size=10, color='AAAAAA', italic=True)
+
+        if not data_rows:
+            # No families at all — show example rows so the user has a template
+            gray_font = Font(size=10, color='888888', italic=True)
+            for row_offset, ex in enumerate(cls.EXAMPLE_ROWS, 4):
+                for col, val in enumerate(ex, 1):
+                    cell = ws.cell(row=row_offset, column=col, value=val)
+                    cell.font = gray_font
+        else:
+            for row_offset, (fam, sf, concept) in enumerate(data_rows, 4):
+                ws.cell(row=row_offset, column=1, value=fam.name)
+                ws.cell(row=row_offset, column=2, value=fam.code)
+                ws.cell(row=row_offset, column=3, value=sf.name)
+                ws.cell(row=row_offset, column=4, value=sf.code)
+                if concept is not None:
+                    ws.cell(row=row_offset, column=5, value=concept.code)
+                    ws.cell(row=row_offset, column=6, value=concept.description)
+                    ws.cell(row=row_offset, column=7, value=concept.unit)
+                    ws.cell(row=row_offset, column=8, value=float(concept.quantity))
+                else:
+                    # Blank placeholder so the user knows to fill in this subfamily
+                    for col in range(5, 9):
+                        ws.cell(row=row_offset, column=col).font = placeholder_font
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    @classmethod
+    def analyze(cls, project_id, file, user) -> dict:
+        """Parse uploaded 8-column Excel, classify each row as new/skip/error."""
+        import openpyxl
+
+        project = EstimationProject.objects.get(estimationprojectid=project_id)
+
+        wb = openpyxl.load_workbook(file, data_only=True)
+        ws = wb.active
+
+        # Locate header row: column 4 must contain "COD" and "SUB"
+        header_row = None
+        for row_idx in range(1, min(11, ws.max_row + 1)):
+            val = str(ws.cell(row=row_idx, column=4).value or '').strip().upper()
+            if 'COD' in val and 'SUB' in val:
+                header_row = row_idx
+                break
+
+        if header_row is None:
+            from core.exceptions import ValidationError
+            raise ValidationError(
+                'No se encontro la fila de encabezados. '
+                'La columna 4 debe contener "COD.SUB".'
+            )
+
+        # Build concept lookup: code.upper() → BudgetConcept (all statecodes)
+        # Keying by concept code lets us detect changes for the 'update' status.
+        existing_concepts = {
+            c.code.strip().upper(): c
+            for c in BudgetConcept.objects.filter(projectid=project)
+        }
+
+        rows = []
+        prev = {'familia': '', 'cod_fam': '', 'subfamilia': '', 'cod_sub': ''}
+
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            familia = str(ws.cell(row=row_idx, column=1).value or '').strip()
+            cod_fam = str(ws.cell(row=row_idx, column=2).value or '').strip()
+            subfamilia = str(ws.cell(row=row_idx, column=3).value or '').strip()
+            cod_sub = str(ws.cell(row=row_idx, column=4).value or '').strip()
+            codigo = str(ws.cell(row=row_idx, column=5).value or '').strip()
+            description = str(ws.cell(row=row_idx, column=6).value or '').strip()
+            unit = str(ws.cell(row=row_idx, column=7).value or '').strip()
+            qty_raw = ws.cell(row=row_idx, column=8).value
+
+            # Skip completely empty rows
+            if not description and not codigo:
+                continue
+
+            # Inherit grouping columns from previous row when blank
+            familia = familia or prev['familia']
+            cod_fam = cod_fam or prev['cod_fam']
+            subfamilia = subfamilia or prev['subfamilia']
+            cod_sub = cod_sub or prev['cod_sub']
+            prev = {
+                'familia': familia,
+                'cod_fam': cod_fam,
+                'subfamilia': subfamilia,
+                'cod_sub': cod_sub,
+            }
+
+            try:
+                quantity = float(qty_raw) if qty_raw is not None else 0.0
+            except (ValueError, TypeError):
+                quantity = 0.0
+
+            old_description = old_unit = old_quantity = None
+
+            if not cod_sub or not cod_fam:
+                status = 'error'
+                error_msg = 'Fila sin COD.SUB o COD.FAM — no se puede determinar la subfamilia'
+            else:
+                existing_c = existing_concepts.get(codigo.upper()) if codigo else None
+                if existing_c is None:
+                    status = 'new'
+                    error_msg = None
+                else:
+                    old_description = existing_c.description
+                    old_unit = existing_c.unit
+                    old_quantity = float(existing_c.quantity)
+                    needs_update = (
+                        existing_c.statecode != 0
+                        or existing_c.description.strip() != description
+                        or existing_c.unit.strip() != unit
+                        or abs(float(existing_c.quantity) - quantity) > 0.0001
+                    )
+                    status = 'update' if needs_update else 'skip'
+                    error_msg = None
+
+            rows.append({
+                'row': row_idx,
+                'familia': familia,
+                'cod_fam': cod_fam,
+                'subfamilia': subfamilia,
+                'cod_sub': cod_sub,
+                'codigo': codigo,
+                'description': description,
+                'unit': unit,
+                'quantity': quantity,
+                'status': status,
+                'error_msg': error_msg,
+                'old_description': old_description,
+                'old_unit': old_unit,
+                'old_quantity': old_quantity,
+            })
+
+        wb.close()
+
+        if not rows:
+            from core.exceptions import ValidationError
+            raise ValidationError('El archivo no contiene filas de datos.')
+
+        summary = {
+            'new': sum(1 for r in rows if r['status'] == 'new'),
+            'update': sum(1 for r in rows if r['status'] == 'update'),
+            'skip': sum(1 for r in rows if r['status'] == 'skip'),
+            'error': sum(1 for r in rows if r['status'] == 'error'),
+            'total': len(rows),
+        }
+
+        return {'summary': summary, 'rows': rows}
+
+    @classmethod
+    @transaction.atomic
+    def import_(cls, project_id, payload, user) -> dict:
+        """Create or update BudgetConcept rows. Families/subfamilies are auto-created
+        (or reactivated) as needed. Never deletes existing concepts."""
+        from django.db.models import Max
+
+        project = EstimationProject.objects.get(estimationprojectid=project_id)
+
+        # Subfamily lookup keyed by (cod_fam.upper(), cod_sub.upper()) so that
+        # 'sub-1' under family 'f1' and 'sub-1' under family 'f2' are distinct.
+        existing_subfamilies: dict[tuple, object] = {}
+        for sf in ConceptSubfamily.objects.filter(projectid=project).select_related('familyid'):
+            key = (sf.familyid.code.strip().upper(), sf.code.strip().upper())
+            existing_subfamilies[key] = sf
+
+        existing_families = {
+            fam.code.strip().upper(): fam
+            for fam in ConceptFamily.objects.filter(projectid=project)
+        }
+
+        created = 0
+        updated = 0
+        skipped = 0
+        auto_code_counter: dict[str, int] = {}  # (cod_fam, cod_sub) key → last suffix
+        seq_num_cache: dict[str, int] = {}       # sf PK str → last sequencenumber
+
+        for item in payload.items:
+            cod_sub_upper = item.cod_sub.strip().upper()
+            cod_fam_upper = item.cod_fam.strip().upper()
+            sf_lookup_key = (cod_fam_upper, cod_sub_upper)
+
+            # ── Handle 'update' items ──────────────────────────────────────────
+            if item.status == 'update':
+                concept = BudgetConcept.objects.filter(
+                    projectid=project, code=item.codigo.strip()
+                ).first()
+                if concept is None:
+                    skipped += 1
+                    continue
+                concept.description = item.description
+                concept.unit = item.unit
+                concept.quantity = Decimal(str(item.quantity))
+                concept.statecode = 0  # reactivate if it was soft-deleted
+                concept.modifiedby = user
+                concept.save(update_fields=[
+                    'description', 'unit', 'quantity', 'statecode', 'modifiedby', 'modifiedon',
+                ])
+                # Also reactivate subfamily and family chains
+                sf_of_concept = concept.subfamilyid
+                if sf_of_concept.statecode != 0:
+                    sf_of_concept.statecode = 0
+                    sf_of_concept.save(update_fields=['statecode'])
+                fam_of_concept = sf_of_concept.familyid
+                if fam_of_concept.statecode != 0:
+                    fam_of_concept.statecode = 0
+                    fam_of_concept.save(update_fields=['statecode'])
+                updated += 1
+                continue
+
+            # ── Handle 'new' items ────────────────────────────────────────────
+            sf = existing_subfamilies.get(sf_lookup_key)
+            if sf is None:
+                # Ensure family exists (create or reactivate)
+                fam = existing_families.get(cod_fam_upper)
+                if fam is None:
+                    fam_sort = (
+                        ConceptFamily.objects.filter(projectid=project)
+                        .aggregate(m=Max('sortorder'))['m'] or 0
+                    ) + 1
+                    fam = ConceptFamily.objects.create(
+                        projectid=project,
+                        name=item.familia.strip(),
+                        code=item.cod_fam.strip(),
+                        sortorder=fam_sort,
+                        statecode=0,
+                    )
+                    existing_families[cod_fam_upper] = fam
+                elif fam.statecode != 0:
+                    fam.statecode = 0
+                    fam.save(update_fields=['statecode'])
+
+                # Create subfamily (or handle edge-case where it exists but inactive)
+                sf_sort = (
+                    ConceptSubfamily.objects.filter(projectid=project)
+                    .aggregate(m=Max('sortorder'))['m'] or 0
+                ) + 1
+                sf = ConceptSubfamily.objects.create(
+                    projectid=project,
+                    familyid=fam,
+                    name=item.subfamilia.strip(),
+                    code=item.cod_sub.strip(),
+                    sortorder=sf_sort,
+                    statecode=0,
+                )
+                existing_subfamilies[sf_lookup_key] = sf
+            elif sf.statecode != 0:
+                sf.statecode = 0
+                sf.save(update_fields=['statecode'])
+                fam = sf.familyid
+                if fam.statecode != 0:
+                    fam.statecode = 0
+                    fam.save(update_fields=['statecode'])
+
+            code = item.codigo.strip()
+            if not code:
+                n = auto_code_counter.get(sf_lookup_key, 0) + 1
+                auto_code_counter[sf_lookup_key] = n
+                code = f'{item.cod_sub}-{n:02d}'
+
+            # Skip if concept already exists (unique_together covers all statecodes)
+            if BudgetConcept.objects.filter(projectid=project, code=code).exists():
+                skipped += 1
+                continue
+
+            sf_key = str(sf.subfamilyid)
+            if sf_key not in seq_num_cache:
+                seq_num_cache[sf_key] = (
+                    BudgetConcept.objects.filter(subfamilyid=sf)
+                    .aggregate(m=Max('sequencenumber'))['m'] or 0
+                )
+            seq_num_cache[sf_key] += 1
+
+            BudgetConcept.objects.create(
+                projectid=project,
+                subfamilyid=sf,
+                code=code,
+                sequencenumber=seq_num_cache[sf_key],
+                description=item.description,
+                unit=item.unit,
+                quantity=Decimal(str(item.quantity)),
+                directunitcost=Decimal('0'),
+                indirectunitcost=Decimal('0'),
+                utilityunitcost=Decimal('0'),
+                unitprice=Decimal('0'),
+                totalamount=Decimal('0'),
+                breakdownmethod=0,
+                isprintable=True,
+                statecode=0,
+                createdby=user,
+                modifiedby=user,
+            )
+            created += 1
+
+        return {'created': created, 'updated': updated, 'skipped': skipped}
