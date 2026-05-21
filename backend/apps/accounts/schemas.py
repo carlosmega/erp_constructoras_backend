@@ -93,3 +93,4 @@ class UpdateAccountDto(Schema):
     creditonhold: Optional[bool] = None
     creditlimit: Optional[Decimal] = None
     statuscode: Optional[int] = None
+    statecode: Optional[int] = None

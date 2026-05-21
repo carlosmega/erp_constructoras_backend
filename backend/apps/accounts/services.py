@@ -134,7 +134,7 @@ class AccountService(BaseReadService[Account]):
                         'address1_country', 'description',
                         'revenue', 'numberofemployees', 'customertypecode',
                         'industrycode', 'accountcategorycode',
-                        'creditonhold', 'creditlimit', 'statuscode']
+                        'creditonhold', 'creditlimit', 'statuscode', 'statecode']
 
         for field in update_fields:
             value = getattr(dto, field, None)
