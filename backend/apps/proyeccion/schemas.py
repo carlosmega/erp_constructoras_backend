@@ -854,8 +854,12 @@ class ConceptExcelRowSchema(Schema):
     description: str
     unit: str
     quantity: float
-    status: str  # 'new' | 'skip' | 'error'
+    status: str  # 'new' | 'update' | 'skip' | 'error'
     error_msg: Optional[str] = None
+    # Present only for 'update' rows — the values currently in the DB
+    old_description: Optional[str] = None
+    old_unit: Optional[str] = None
+    old_quantity: Optional[float] = None
 
 
 class AnalyzeConceptExcelResponseSchema(Schema):
@@ -873,6 +877,7 @@ class ImportConceptExcelItemDto(Schema):
     description: str
     unit: str
     quantity: float
+    status: str  # 'new' | 'update'
 
 
 class ImportConceptExcelRequestDto(Schema):
@@ -881,6 +886,7 @@ class ImportConceptExcelRequestDto(Schema):
 
 class ImportConceptExcelResponseSchema(Schema):
     created: int
+    updated: int
     skipped: int
 
 
