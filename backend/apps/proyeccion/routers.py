@@ -67,6 +67,9 @@ from apps.proyeccion.schemas import (
     AnalyzeExcelResponseSchema,
     ImportExcelRequestDto,
     ImportExcelResponseSchema,
+    AnalyzeConceptExcelResponseSchema,
+    ImportConceptExcelRequestDto,
+    ImportConceptExcelResponseSchema,
     AnalyzeBreakdownsResponseSchema,
     ImportBreakdownsRequestDto,
     ImportBreakdownsResponseSchema,
@@ -95,6 +98,7 @@ from apps.proyeccion.services import (
     EstimationConversionService,
     EstimationProjectService,
     ConceptCatalogService,
+    ConceptExcelService,
     UnitCostBreakdownService,
     IndirectCostDetailService,
     OfferAlternativeService,
@@ -517,24 +521,42 @@ def copy_breakdowns_from_concept(
 
 # --- Excel Import Endpoints ---
 
+@budget_concepts_router.get(
+    "/projects/{project_id}/concepts/export-excel/",
+)
+def export_concepts_excel(request: HttpRequest, project_id: UUID):
+    """Export all active concepts for a project as an 8-column .xlsx file."""
+    from django.http import HttpResponse
+    binary = ConceptExcelService.export(project_id, request.user)
+    response = HttpResponse(
+        binary,
+        content_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="conceptos-{project_id}.xlsx"'
+    )
+    return response
+
+
 @budget_concepts_router.post(
     "/projects/{project_id}/concepts/analyze-excel/",
-    response=AnalyzeExcelResponseSchema,
+    response=AnalyzeConceptExcelResponseSchema,
 )
 def analyze_excel(request: HttpRequest, project_id: UUID, file: UploadedFile = File(...)):
-    """Analyze an uploaded Excel file and match concepts against the catalog."""
-    from apps.proyeccion.services import ExcelImportService
-    return ExcelImportService.analyze(project_id, file, request.user)
+    """Analyze an uploaded 8-column Excel file and classify rows as new/skip/error."""
+    return ConceptExcelService.analyze(project_id, file, request.user)
 
 
 @budget_concepts_router.post(
     "/projects/{project_id}/concepts/import-excel/",
-    response=ImportExcelResponseSchema,
+    response=ImportConceptExcelResponseSchema,
 )
-def import_excel(request: HttpRequest, project_id: UUID, payload: ImportExcelRequestDto):
-    """Import concepts from a previously analyzed Excel file."""
-    from apps.proyeccion.services import ExcelImportService
-    return ExcelImportService.do_import(project_id, payload, request.user)
+def import_excel(request: HttpRequest, project_id: UUID, payload: ImportConceptExcelRequestDto):
+    """Import new concepts from a previously analyzed 8-column Excel file."""
+    return ConceptExcelService.import_(project_id, payload, request.user)
 
 
 # --- CDU (Unit Cost Breakdown) Excel Endpoints ---
