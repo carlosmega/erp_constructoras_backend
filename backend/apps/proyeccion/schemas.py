@@ -865,6 +865,9 @@ class AnalyzeConceptExcelResponseSchema(Schema):
 
 class ImportConceptExcelItemDto(Schema):
     row: int
+    familia: str
+    cod_fam: str
+    subfamilia: str
     cod_sub: str
     codigo: str
     description: str
