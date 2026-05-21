@@ -576,7 +576,8 @@ class ConceptCatalogService:
     def list_families(project_id: UUID, user) -> QuerySet[ConceptFamily]:
         """List all concept families for a project."""
         return ConceptFamily.objects.filter(
-            projectid=project_id
+            projectid=project_id,
+            statecode=0,
         ).select_related('createdby', 'modifiedby')
 
     @staticmethod
@@ -633,7 +634,8 @@ class ConceptCatalogService:
     def list_subfamilies(family_id: UUID, user) -> QuerySet[ConceptSubfamily]:
         """List all subfamilies for a family."""
         return ConceptSubfamily.objects.filter(
-            familyid=family_id
+            familyid=family_id,
+            statecode=0,
         ).select_related('familyid', 'createdby', 'modifiedby')
 
     @staticmethod
