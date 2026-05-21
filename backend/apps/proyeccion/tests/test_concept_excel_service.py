@@ -161,8 +161,8 @@ def test_analyze_classifies_existing_code_as_skip():
 
 @pytest.mark.django_db
 @pytest.mark.unit
-def test_analyze_classifies_unknown_codsub_as_error():
-    """A row referencing a COD.SUB that doesn't exist is classified as 'error'."""
+def test_analyze_classifies_unknown_codsub_as_new():
+    """A row with an unknown COD.SUB is classified as 'new' (subfamily auto-created on import)."""
     from apps.proyeccion.services import ConceptExcelService
     user = SystemUserFactory()
     project = EstimationProjectFactory()
@@ -173,9 +173,27 @@ def test_analyze_classifies_unknown_codsub_as_error():
 
     result = ConceptExcelService.analyze(project.estimationprojectid, buf, user)
 
+    assert result['summary']['new'] == 1
+    assert result['summary']['error'] == 0
+    assert result['rows'][0]['status'] == 'new'
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_analyze_classifies_blank_codsub_as_error():
+    """A row with no COD.SUB and no COD.FAM is classified as 'error'."""
+    from apps.proyeccion.services import ConceptExcelService
+    user = SystemUserFactory()
+    project = EstimationProjectFactory()
+
+    buf = _make_excel([
+        ('', '', '', '', 'A1', 'Desc sin subfamilia', 'M2', 1),
+    ])
+
+    result = ConceptExcelService.analyze(project.estimationprojectid, buf, user)
+
     assert result['summary']['error'] == 1
     assert result['rows'][0]['status'] == 'error'
-    assert 'GAB-99' in result['rows'][0]['error_msg']
 
 
 @pytest.mark.django_db
@@ -218,8 +236,8 @@ def test_import_creates_new_concepts():
     project = sf.projectid
 
     payload = ImportConceptExcelRequestDto(items=[
-        {'row': 4, 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 100.0},
-        {'row': 5, 'cod_sub': 'GAB-01', 'codigo': 'A2', 'description': 'Desc 2', 'unit': 'KG', 'quantity': 50.0},
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 100.0},
+        {'row': 5, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A2', 'description': 'Desc 2', 'unit': 'KG', 'quantity': 50.0},
     ])
 
     result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
@@ -231,24 +249,25 @@ def test_import_creates_new_concepts():
 
 @pytest.mark.django_db
 @pytest.mark.unit
-def test_import_skips_unknown_codsub():
-    """import_() skips rows whose cod_sub doesn't match any existing subfamily."""
+def test_import_autocreates_family_and_subfamily():
+    """import_() auto-creates ConceptFamily and ConceptSubfamily when they don't exist."""
     from apps.proyeccion.services import ConceptExcelService
-    from apps.proyeccion.models import BudgetConcept
+    from apps.proyeccion.models import BudgetConcept, ConceptFamily, ConceptSubfamily
     from apps.proyeccion.schemas import ImportConceptExcelRequestDto
 
     user = SystemUserFactory()
     project = EstimationProjectFactory()
 
     payload = ImportConceptExcelRequestDto(items=[
-        {'row': 4, 'cod_sub': 'GHOST-99', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 1.0},
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ejecutivo', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc', 'unit': 'M2', 'quantity': 1.0},
     ])
 
     result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
 
-    assert result['created'] == 0
-    assert result['skipped'] == 1
-    assert BudgetConcept.objects.filter(projectid=project).count() == 0
+    assert result['created'] == 1
+    assert ConceptFamily.objects.filter(projectid=project, code='GAB').exists()
+    assert ConceptSubfamily.objects.filter(projectid=project, code='GAB-01').exists()
+    assert BudgetConcept.objects.filter(projectid=project, code='A1').exists()
 
 
 @pytest.mark.django_db
@@ -265,7 +284,7 @@ def test_import_autogenerates_code_when_blank():
     project = sf.projectid
 
     payload = ImportConceptExcelRequestDto(items=[
-        {'row': 4, 'cod_sub': 'GAB-01', 'codigo': '', 'description': 'Sin codigo', 'unit': 'M2', 'quantity': 1.0},
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': '', 'description': 'Sin codigo', 'unit': 'M2', 'quantity': 1.0},
     ])
 
     ConceptExcelService.import_(project.estimationprojectid, payload, user)

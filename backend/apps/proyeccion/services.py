@@ -5730,16 +5730,24 @@ class ConceptExcelService:
             except (ValueError, TypeError):
                 quantity = 0.0
 
-            sf_obj = existing_subfamilies.get(cod_sub.upper())
-            if sf_obj is None:
+            if not cod_sub or not cod_fam:
                 status = 'error'
-                error_msg = f'Subfamilia "{cod_sub}" no existe en el proyecto'
-            elif codigo.upper() in existing_codes:
-                status = 'skip'
-                error_msg = None
+                error_msg = 'Fila sin COD.SUB o COD.FAM — no se puede determinar la subfamilia'
             else:
-                status = 'new'
-                error_msg = None
+                sf_obj = existing_subfamilies.get(cod_sub.upper())
+                if sf_obj is None:
+                    # Subfamily doesn't exist yet — will be auto-created on import
+                    if codigo.upper() in existing_codes:
+                        status = 'skip'
+                    else:
+                        status = 'new'
+                    error_msg = None
+                elif codigo.upper() in existing_codes:
+                    status = 'skip'
+                    error_msg = None
+                else:
+                    status = 'new'
+                    error_msg = None
 
             rows.append({
                 'row': row_idx,
@@ -5782,6 +5790,10 @@ class ConceptExcelService:
             sf.code.strip().upper(): sf
             for sf in ConceptSubfamily.objects.filter(projectid=project, statecode=0)
         }
+        existing_families = {
+            fam.code.strip().upper(): fam
+            for fam in ConceptFamily.objects.filter(projectid=project, statecode=0)
+        }
 
         created = 0
         skipped = 0
@@ -5791,10 +5803,39 @@ class ConceptExcelService:
 
         for item in payload.items:
             cod_sub_upper = item.cod_sub.strip().upper()
+            cod_fam_upper = item.cod_fam.strip().upper()
             sf = existing_subfamilies.get(cod_sub_upper)
             if sf is None:
-                skipped += 1
-                continue
+                # Auto-create the family if it doesn't exist
+                fam = existing_families.get(cod_fam_upper)
+                if fam is None:
+                    fam_sort = (
+                        ConceptFamily.objects.filter(projectid=project)
+                        .aggregate(m=Max('sortorder'))['m'] or 0
+                    ) + 1
+                    fam = ConceptFamily.objects.create(
+                        projectid=project,
+                        name=item.familia.strip(),
+                        code=item.cod_fam.strip(),
+                        sortorder=fam_sort,
+                        statecode=0,
+                    )
+                    existing_families[cod_fam_upper] = fam
+
+                # Auto-create the subfamily
+                sf_sort = (
+                    ConceptSubfamily.objects.filter(projectid=project)
+                    .aggregate(m=Max('sortorder'))['m'] or 0
+                ) + 1
+                sf = ConceptSubfamily.objects.create(
+                    projectid=project,
+                    familyid=fam,
+                    name=item.subfamilia.strip(),
+                    code=item.cod_sub.strip(),
+                    sortorder=sf_sort,
+                    statecode=0,
+                )
+                existing_subfamilies[cod_sub_upper] = sf
 
             code = item.codigo.strip()
             if not code:
