@@ -841,6 +841,47 @@ class ImportExcelResponseSchema(Schema):
 
 
 # =============================================================================
+# Concept Excel Export / Import DTOs (8-column round-trip format)
+# =============================================================================
+
+class ConceptExcelRowSchema(Schema):
+    row: int
+    familia: str
+    cod_fam: str
+    subfamilia: str
+    cod_sub: str
+    codigo: str
+    description: str
+    unit: str
+    quantity: float
+    status: str  # 'new' | 'skip' | 'error'
+    error_msg: Optional[str] = None
+
+
+class AnalyzeConceptExcelResponseSchema(Schema):
+    summary: dict
+    rows: list[ConceptExcelRowSchema]
+
+
+class ImportConceptExcelItemDto(Schema):
+    row: int
+    cod_sub: str
+    codigo: str
+    description: str
+    unit: str
+    quantity: float
+
+
+class ImportConceptExcelRequestDto(Schema):
+    items: list[ImportConceptExcelItemDto]
+
+
+class ImportConceptExcelResponseSchema(Schema):
+    created: int
+    skipped: int
+
+
+# =============================================================================
 # Temporal Distribution DTOs (see spec 2026-04-22)
 # =============================================================================
 
