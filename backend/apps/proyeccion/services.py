@@ -5683,16 +5683,18 @@ class ConceptExcelService:
                 'La columna 4 debe contener "COD.SUB".'
             )
 
-        # Build lookup: cod_sub.upper() → ConceptSubfamily
+        # Build lookup: cod_sub.upper() → ConceptSubfamily (all statecodes — unique_together
+        # applies regardless of statecode so we must detect inactive records too)
         existing_subfamilies = {
             sf.code.strip().upper(): sf
-            for sf in ConceptSubfamily.objects.filter(projectid=project, statecode=0)
+            for sf in ConceptSubfamily.objects.filter(projectid=project)
         }
 
-        # Build set of existing concept codes (project-wide, unique_together is on projectid+code)
+        # Build set of existing concept codes — include inactive records to avoid
+        # hitting the unique_together(projectid, code) constraint on re-import
         existing_codes = {
             code.upper()
-            for code in BudgetConcept.objects.filter(projectid=project, statecode=0)
+            for code in BudgetConcept.objects.filter(projectid=project)
             .values_list('code', flat=True)
         }
 
@@ -5786,13 +5788,15 @@ class ConceptExcelService:
 
         project = EstimationProject.objects.get(estimationprojectid=project_id)
 
+        # Include all statecodes — unique_together constraints apply regardless of statecode,
+        # so we must detect inactive records to avoid IntegrityError on re-import
         existing_subfamilies = {
             sf.code.strip().upper(): sf
-            for sf in ConceptSubfamily.objects.filter(projectid=project, statecode=0)
+            for sf in ConceptSubfamily.objects.filter(projectid=project)
         }
         existing_families = {
             fam.code.strip().upper(): fam
-            for fam in ConceptFamily.objects.filter(projectid=project, statecode=0)
+            for fam in ConceptFamily.objects.filter(projectid=project)
         }
 
         created = 0
@@ -5843,9 +5847,9 @@ class ConceptExcelService:
                 auto_code_counter[cod_sub_upper] = n
                 code = f'{item.cod_sub}-{n:02d}'
 
-            # Guard against race conditions / duplicate codes at project level
+            # Guard against duplicate codes (unique_together applies to all statecodes)
             if BudgetConcept.objects.filter(
-                projectid=project, code=code, statecode=0
+                projectid=project, code=code
             ).exists():
                 skipped += 1
                 continue
