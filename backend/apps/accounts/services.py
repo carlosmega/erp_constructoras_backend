@@ -37,6 +37,8 @@ class AccountService(BaseReadService[Account]):
 
         if statecode is not None:
             queryset = queryset.filter(statecode=statecode)
+        else:
+            queryset = queryset.exclude(statecode=AccountStateCode.INACTIVE)
         if customertypecode is not None:
             # 1=Customer, 2=Supplier, 3=Both
             if customertypecode == 1:

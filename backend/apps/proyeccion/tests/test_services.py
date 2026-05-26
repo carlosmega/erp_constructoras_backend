@@ -943,8 +943,8 @@ class TestExternalCostService:
             project.estimationprojectid, user,
         )
 
-        assert len(items) == 21
-        assert items[0].itemname == 'Fianza de sostenimiento de oferta'
+        assert len(items) == 20
+        assert items[0].itemname == 'Fianza de anticipo'
         assert items[-1].itemname == 'Impuestos (ISR provisional)'
 
     def test_initialize_checklist_already_exists(self):
