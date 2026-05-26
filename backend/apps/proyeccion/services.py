@@ -70,6 +70,8 @@ class EstimationProjectService:
         qs = EstimationProject.objects.select_related('accountid', 'ownerid', 'createdby', 'modifiedby')
         if statecode is not None:
             qs = qs.filter(statecode=statecode)
+        else:
+            qs = qs.exclude(statecode=EstimationStateCode.CANCELED)
         if search:
             qs = qs.filter(models.Q(name__icontains=search) | models.Q(estimationnumber__icontains=search))
         return qs
@@ -541,7 +543,6 @@ class EstimationConversionService:
 
 # Default external cost checklist items
 DEFAULT_EXTERNAL_COSTS = [
-    'Fianza de sostenimiento de oferta',
     'Fianza de anticipo',
     'Fianza de cumplimiento',
     'Fianza de vicios ocultos',
