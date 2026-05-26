@@ -1,7 +1,7 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "deploy": {
-    "preDeployCommand": "python manage.py migrate --noinput",
+    "preDeployCommand": "for i in $(seq 1 15); do python -c \"import django, os; os.environ.setdefault('DJANGO_SETTINGS_MODULE','crm.settings'); django.setup(); from django.db import connection; connection.ensure_connection(); print('DB ready')\" 2>/dev/null && break || echo \"Waiting for DB... attempt $i\" && sleep 3; done && python manage.py migrate --noinput",
     "startCommand": "python manage.py collectstatic --noinput && gunicorn crm.wsgi --bind 0.0.0.0:$PORT --workers 3 --access-logfile -",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 100,
