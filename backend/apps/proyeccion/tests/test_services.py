@@ -523,6 +523,24 @@ class TestUnitCostBreakdownService:
         with pytest.raises(NotFound):
             UnitCostBreakdownService.delete_breakdown(uuid4(), user)
 
+    def test_list_breakdowns_excludes_soft_deleted(self):
+        """Soft-deleted lines (statecode=1) must NOT appear in the list.
+
+        Regression: the delete button "no jala" — the backend soft-deletes the
+        line, but list_breakdowns returned it anyway, so the UI re-painted the
+        row after refetch.
+        """
+        concept = BudgetConceptFactory()
+        user = concept.projectid.ownerid
+        active = UnitCostBreakdownFactory(conceptid=concept)
+        to_delete = UnitCostBreakdownFactory(conceptid=concept)
+
+        UnitCostBreakdownService.delete_breakdown(to_delete.breakdownid, user)
+
+        result = UnitCostBreakdownService.list_breakdowns(concept.conceptid, user)
+        assert result.count() == 1
+        assert list(result)[0].breakdownid == active.breakdownid
+
     def test_auto_generate_hm_epp(self):
         concept = BudgetConceptFactory()
         UnitCostBreakdownFactory(

@@ -881,9 +881,14 @@ class UnitCostBreakdownService:
 
     @staticmethod
     def list_breakdowns(concept_id: UUID, user) -> QuerySet[UnitCostBreakdown]:
-        """List all breakdown lines for a concept."""
+        """List all active breakdown lines for a concept.
+
+        Excludes soft-deleted lines (``statecode=1``); otherwise a deleted line
+        keeps reappearing in the UI after refetch.
+        """
         return UnitCostBreakdown.objects.filter(
-            conceptid=concept_id
+            conceptid=concept_id,
+            statecode=0,
         ).select_related('supplyid')
 
     @staticmethod
