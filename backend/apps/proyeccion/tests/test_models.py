@@ -244,3 +244,48 @@ def test_indirectcostdetail_has_payment_lag_fields():
     line.refresh_from_db()
     assert line.paymentlagperiods == 5
     assert line.lineversion == 1
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestProyeccionAuditTrail:
+    """UnitCostBreakdown / ExternalCostItem / FamilyTemplateItem migraron a
+    AuditMixin: deben exponer el audit trail CDS de 4 campos
+    (createdon/modifiedon + createdby/modifiedby), siendo createdby/modifiedby
+    nullable (poblados por la capa de servicio).
+    """
+
+    def test_unitcostbreakdown_audit_trail(self):
+        from apps.users.tests.factories import SystemUserFactory
+        from apps.proyeccion.tests.factories import UnitCostBreakdownFactory
+
+        user = SystemUserFactory()
+        bd = UnitCostBreakdownFactory(createdby=user, modifiedby=user)
+        bd.refresh_from_db()
+
+        assert bd.createdon is not None and bd.modifiedon is not None
+        assert bd.createdby == user and bd.modifiedby == user
+        # related_name del mixin: %(class)s_created / %(class)s_modified
+        assert bd in user.unitcostbreakdown_created.all()
+        assert bd in user.unitcostbreakdown_modified.all()
+
+    def test_externalcostitem_audit_fields_nullable(self):
+        from apps.proyeccion.tests.factories import ExternalCostItemFactory
+
+        item = ExternalCostItemFactory()
+        item.refresh_from_db()
+        # Sin poblar → nullable, no rompe la creación.
+        assert item.createdby is None
+        assert item.modifiedby is None
+        assert item.createdon is not None and item.modifiedon is not None
+
+    def test_familytemplateitem_audit_trail(self):
+        from apps.users.tests.factories import SystemUserFactory
+        from apps.proyeccion.tests.factories import FamilyTemplateItemFactory
+
+        user = SystemUserFactory()
+        item = FamilyTemplateItemFactory(createdby=user)
+        item.refresh_from_db()
+
+        assert item.createdby == user
+        assert item in user.familytemplateitem_created.all()

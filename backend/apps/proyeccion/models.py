@@ -407,7 +407,7 @@ class BudgetConcept(AuditMixin):
         return f"{self.code} - {self.description}"
 
 
-class UnitCostBreakdown(models.Model):
+class UnitCostBreakdown(AuditMixin):
     """Detailed cost breakdown line for a budget concept."""
 
     breakdownid = models.UUIDField(
@@ -497,16 +497,6 @@ class UnitCostBreakdown(models.Model):
         default=0,
         db_column='lineversion',
         help_text='Optimistic lock para edits a nivel de línea (lag).',
-    )
-
-    createdon = models.DateTimeField(
-        auto_now_add=True,
-        db_column='createdon'
-    )
-
-    modifiedon = models.DateTimeField(
-        auto_now=True,
-        db_column='modifiedon'
     )
 
     class Meta:
@@ -788,7 +778,7 @@ class OfferAlternative(AuditMixin):
         return f"Alternative {self.alternativenumber} - {self.name}"
 
 
-class ExternalCostItem(models.Model):
+class ExternalCostItem(AuditMixin):
     """External cost checklist item for a project offer."""
 
     externalcostid = models.UUIDField(
@@ -840,16 +830,6 @@ class ExternalCostItem(models.Model):
         default=0,
         choices=ProyeccionStateCode.choices,
         db_column='statecode'
-    )
-
-    createdon = models.DateTimeField(
-        auto_now_add=True,
-        db_column='createdon'
-    )
-
-    modifiedon = models.DateTimeField(
-        auto_now=True,
-        db_column='modifiedon'
     )
 
     class Meta:
@@ -1461,7 +1441,7 @@ class FamilyTemplateSet(AuditMixin):
         return self.name
 
 
-class FamilyTemplateItem(models.Model):
+class FamilyTemplateItem(AuditMixin):
     """Single family+subfamily entry within a template set (flat structure)."""
 
     templateitemid = models.UUIDField(
@@ -1478,8 +1458,6 @@ class FamilyTemplateItem(models.Model):
     familysortorder = models.IntegerField(default=0, db_column='familysortorder')
     subfamilysortorder = models.IntegerField(default=0, db_column='subfamilysortorder')
     statecode = models.IntegerField(default=0, db_column='statecode')
-    createdon = models.DateTimeField(auto_now_add=True, db_column='createdon')
-    modifiedon = models.DateTimeField(auto_now=True, db_column='modifiedon')
 
     class Meta:
         db_table = 'familytemplateitem'
