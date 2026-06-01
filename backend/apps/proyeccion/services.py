@@ -1092,13 +1092,10 @@ class UnitCostBreakdownService:
             ],
         ).delete()
 
-        labor_amount = sum(
-            (b.amount for b in UnitCostBreakdown.objects.filter(
-                conceptid_id=concept_id,
-                categorycode=BreakdownCategoryCode.LABOR,
-            )),
-            D('0'),
-        )
+        labor_amount = UnitCostBreakdown.objects.filter(
+            conceptid_id=concept_id,
+            categorycode=BreakdownCategoryCode.LABOR,
+        ).aggregate(total=Sum('amount'))['total'] or D('0')
 
         if labor_amount <= 0:
             return (False, False)
@@ -2092,10 +2089,18 @@ class WorkPlanService:
         the check out of the path. The UI still highlights rows that exceed capacity.
         """
         # Validate that every referenced concept exists (fail fast with a clean 404).
+        # Single query + dict reuse instead of one .exists() per concept and one
+        # .get() per entry inside the loop (avoids N+1).
         referenced_concepts = {entry_data['conceptid'] for entry_data in entries_data}
-        for concept_id_val in referenced_concepts:
-            if not BudgetConcept.objects.filter(conceptid=concept_id_val).exists():
-                raise NotFound(f"BudgetConcept with ID {concept_id_val} not found")
+        # Key by str so lookups work whether the payload sends UUID objects or
+        # string UUIDs (c.conceptid is a UUID, payload values are strings).
+        concepts_by_id = {
+            str(c.conceptid): c
+            for c in BudgetConcept.objects.filter(conceptid__in=referenced_concepts)
+        }
+        missing = {str(cid) for cid in referenced_concepts if str(cid) not in concepts_by_id}
+        if missing:
+            raise NotFound(f"BudgetConcept with ID {next(iter(missing))} not found")
 
         created_or_updated = []
         for entry_data in entries_data:
@@ -2105,7 +2110,7 @@ class WorkPlanService:
             etype = int(entry_data.get('entrytype', WorkPlanEntryType.PLANNED))
             dist_qty = Decimal(str(entry_data['distributedquantity']))
 
-            concept = BudgetConcept.objects.get(conceptid=concept_id_val)
+            concept = concepts_by_id[str(concept_id_val)]
             dist_amount = dist_qty * concept.unitprice
 
             entry, _created = WorkPlanEntry.objects.update_or_create(
