@@ -11,9 +11,10 @@ from django.db import transaction
 
 from apps.proyeccion.models import (
     EstimationProject, ConceptFamily, ConceptSubfamily, BudgetConcept,
-    UnitCostBreakdown, IndirectCostDetail, OfferAlternative, ExternalCostItem,
+    UnitCostBreakdown, IndirectCostDetail, OfferAlternative,
     BreakdownCategoryCode, ChecklistStatusCode, EstimationStateCode,
 )
+from apps.proyeccion.services import external_name_to_category
 from apps.users.models import SystemUser
 
 
@@ -497,16 +498,31 @@ class Command(BaseCommand):
         ]
 
         for name, applies, pct, order in external_items:
-            ExternalCostItem.objects.create(
+            cat = external_name_to_category(name)
+            from django.db.models import Max as _Max
+            agg = IndirectCostDetail.objects.filter(
+                projectid=project, categorycode=cat
+            ).aggregate(m=_Max('linenumber'))
+            next_line = (agg['m'] or 0) + 1
+            IndirectCostDetail.objects.create(
                 projectid=project,
-                itemname=name,
+                categorycode=cat,
+                linenumber=next_line,
+                imputationcode='',
+                area='',
+                description=name,
+                monthlycost=D('0'),
+                units=1,
+                months=1,
                 applies=applies,
                 percentofsale=pct,
                 amount=D('0'),
-                sortorder=order,
+                formulakey='',
+                createdby=owner,
+                modifiedby=owner,
             )
 
-        self.stdout.write(f"Created {len(external_items)} external cost items")
+        self.stdout.write(f"Created {len(external_items)} external cost items (as IndirectCostDetail)")
 
         # =====================================================================
         # Summary

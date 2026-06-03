@@ -30,14 +30,16 @@ from apps.proyeccion.schemas import (
     IndirectCostDetailSchema,
     CreateIndirectCostDetailDto,
     UpdateIndirectCostDetailDto,
+    ComputeBondsOverridesDto,
+    SetChecklistStateDto,
     ApplyTemplateDto,
     OfferAlternativeSchema,
     CreateOfferAlternativeDto,
     UpdateOfferAlternativeDto,
-    ExternalCostItemSchema,
-    UpdateExternalCostItemDto,
+    AlternativeBaseCostsSchema,
     SupplyExplosionItemSchema,
     SupplyExplosionConsolidatedSchema,
+    SetSupplyLagDto,
     WorkPlanEntrySchema,
     CreateWorkPlanEntryDto,
     UpdateWorkPlanEntryDto,
@@ -102,7 +104,6 @@ from apps.proyeccion.services import (
     UnitCostBreakdownService,
     IndirectCostDetailService,
     OfferAlternativeService,
-    ExternalCostService,
     SupplyExplosionService,
     WorkPlanService,
     TemporalDistributionService,
@@ -688,6 +689,40 @@ def prorate_indirect_costs(request: HttpRequest, project_id: UUID):
     return list(concepts)
 
 
+@indirect_cost_details_router.post(
+    "/projects/{project_id}/indirect-cost-details/compute-bonds/",
+    response=List[IndirectCostDetailSchema],
+)
+# TODO: Add @require_permission decorator during integration
+def compute_bond_and_tax_lines(request: HttpRequest, project_id: UUID, payload: ComputeBondsOverridesDto):
+    """Calcula (upsert) las líneas de fianzas, seguros e impuestos del estudio."""
+    lines = IndirectCostDetailService.compute_bond_and_tax_lines(
+        project_id, request.user, overrides=payload
+    )
+    return lines
+
+
+@indirect_cost_details_router.patch(
+    "/indirect-cost-details/{detail_id}/checklist/",
+    response=IndirectCostDetailSchema,
+)
+# TODO: Add @require_permission decorator during integration
+def set_indirect_checklist_state(request: HttpRequest, detail_id: UUID, payload: SetChecklistStateDto):
+    """Setea applies/percentofsale (vista checklist de externos) y recalcula importe."""
+    return IndirectCostDetailService.set_checklist_state(
+        detail_id, request.user, applies=payload.applies, percentofsale=payload.percentofsale)
+
+
+@indirect_cost_details_router.post(
+    "/projects/{project_id}/indirect-cost-details/seed-externals/",
+    response=List[IndirectCostDetailSchema],
+)
+# TODO: Add @require_permission decorator during integration
+def seed_external_checklist(request: HttpRequest, project_id: UUID):
+    """Siembra las líneas del checklist de externos (C7/C8) en applies=NA."""
+    return IndirectCostDetailService.seed_external_checklist(project_id, request.user)
+
+
 @indirect_cost_details_router.get(
     "/projects/{project_id}/indirect-cost-details/total/",
     response=Decimal,
@@ -769,6 +804,16 @@ def list_alternatives(request: HttpRequest, project_id: UUID):
     return list(alternatives)
 
 
+@offer_alternatives_router.get(
+    "/projects/{project_id}/alternative-base-costs/",
+    response=AlternativeBaseCostsSchema,
+)
+# TODO: Add @require_permission decorator during integration
+def get_alternative_base_costs(request: HttpRequest, project_id: UUID):
+    """Costos base (directo/indirecto) del proyecto para el resumen en vivo del form."""
+    return OfferAlternativeService.get_base_costs(project_id)
+
+
 @offer_alternatives_router.post(
     "/projects/{project_id}/alternatives/",
     response={201: OfferAlternativeSchema},
@@ -815,46 +860,6 @@ def choose_alternative(request: HttpRequest, alternative_id: UUID):
 
 
 # =============================================================================
-# 5. External Costs Router
-# =============================================================================
-
-external_costs_router = Router(tags=["External Costs"])
-
-
-@external_costs_router.get(
-    "/projects/{project_id}/external-costs/",
-    response=List[ExternalCostItemSchema],
-)
-# TODO: Add @require_permission decorator during integration
-def list_external_costs(request: HttpRequest, project_id: UUID):
-    """List all external cost items for a project."""
-    costs = ExternalCostService.list_costs(project_id, request.user)
-    return list(costs)
-
-
-@external_costs_router.post(
-    "/projects/{project_id}/external-costs/init/",
-    response={201: List[ExternalCostItemSchema]},
-)
-# TODO: Add @require_permission decorator during integration
-def initialize_external_cost_checklist(request: HttpRequest, project_id: UUID):
-    """Initialize the default external cost checklist for a project."""
-    items = ExternalCostService.initialize_checklist(project_id, request.user)
-    return 201, items
-
-
-@external_costs_router.patch(
-    "/external-costs/{cost_id}/",
-    response=ExternalCostItemSchema,
-)
-# TODO: Add @require_permission decorator during integration
-def update_external_cost(request: HttpRequest, cost_id: UUID, payload: UpdateExternalCostItemDto):
-    """Update an external cost item."""
-    cost = ExternalCostService.update_cost(cost_id, payload, request.user)
-    return cost
-
-
-# =============================================================================
 # 6. Supply Explosion Router
 # =============================================================================
 
@@ -881,6 +886,18 @@ def get_consolidated_supply_explosion(request: HttpRequest, project_id: UUID):
     """Get consolidated supply explosion grouped by supply code."""
     lines = SupplyExplosionService.generate_consolidated(project_id, request.user)
     return lines
+
+
+@supply_explosion_router.patch(
+    "/projects/{project_id}/supply-explosion/lag/",
+    response=dict,
+)
+# TODO: Add @require_permission decorator during integration
+def set_supply_lag(request: HttpRequest, project_id: UUID, payload: SetSupplyLagDto):
+    """Setea el lag de pago de un insumo (bulk a todas sus líneas)."""
+    n = SupplyExplosionService.set_supply_lag(
+        project_id, payload.supplyid, payload.paymentlagperiods, request.user)
+    return {"updated": n}
 
 
 @supply_explosion_router.get(

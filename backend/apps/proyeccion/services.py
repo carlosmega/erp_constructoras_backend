@@ -2,7 +2,7 @@
 
 from typing import Optional
 from uuid import UUID
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from collections import defaultdict
 from django.db import models, transaction
@@ -19,7 +19,6 @@ from apps.proyeccion.models import (
     IndirectCostDetail,
     IndirectCostTemplate,
     OfferAlternative,
-    ExternalCostItem,
     SupplyCatalogItem,
     EquipmentYield,
     WorkPlanEntry,
@@ -48,7 +47,6 @@ from apps.proyeccion.schemas import (
     UpdateIndirectCostDetailDto,
     CreateOfferAlternativeDto,
     UpdateOfferAlternativeDto,
-    UpdateExternalCostItemDto,
     CreateSupplyCatalogItemDto,
     UpdateSupplyCatalogItemDto,
     CreateEquipmentYieldDto,
@@ -59,6 +57,70 @@ from apps.proyeccion.schemas import (
     ApplyFamilyTemplateDto,
 )
 from core.exceptions import ValidationError, NotFound
+
+
+# ---------------------------------------------------------------------------
+# ExternalCostItem migration helper (Task 5)
+# ---------------------------------------------------------------------------
+
+def external_name_to_category(name):
+    """Mapea un nombre de costo externo a su categoría de indirecto (C7/C8)."""
+    n = (name or '').lower()
+    if 'fianza' in n or 'seguro' in n or 'financ' in n or 'licitaci' in n:
+        return 'C7'
+    return 'C8'
+
+
+# ---------------------------------------------------------------------------
+# Fianzas / Seguros / Impuestos — constantes de la calculadora (Task 3)
+# ---------------------------------------------------------------------------
+IVA_RATE = Decimal('0.16')
+
+# (formulakey, categorycode, area, description)
+BOND_TAX_LINE_SPECS = [
+    ('bond_anticipo', 'C7', 'FIANZAS Y SEGUROS',
+     'Fianza Anticipo (Aprox 1.3% del valor del anticipo c/IVA)'),
+    ('bond_cumplimiento', 'C7', 'FIANZAS Y SEGUROS',
+     'Fianza Cumplimiento (Aprox 1.7% del valor afianzado)'),
+    # Base = anticipo SIN IVA (a diferencia de bond_anticipo, que usa el anticipo c/IVA).
+    ('bond_vicios', 'C7', 'FIANZAS Y SEGUROS',
+     'Fianza Vicios Ocultos (Aprox 1.3% del valor del anticipo)'),
+    ('insurance_rc', 'C7', 'FIANZAS Y SEGUROS',
+     'Seg. Resp. Civil (Aprox 0.11% del contrato c/IVA)'),
+    ('tax_isr', 'C8', 'GESTIONES E IMPUESTOS',
+     'Impuestos (Aprox 0.0918 x 0.30 del contrato sin IVA)'),
+]
+
+# (categorycode, formulakey, area, description) — 20 líneas del checklist de externos
+DEFAULT_EXTERNAL_INDIRECT_SEEDS = [
+    # C7 — FIANZAS, SEGUROS Y OTROS PREVIOS
+    ('C7', 'bond_anticipo', 'FIANZAS Y SEGUROS',
+     'Fianza Anticipo (Aprox 1.3% del valor del anticipo c/IVA)'),
+    ('C7', 'bond_cumplimiento', 'FIANZAS Y SEGUROS',
+     'Fianza Cumplimiento (Aprox 1.7% del valor afianzado)'),
+    ('C7', 'bond_vicios', 'FIANZAS Y SEGUROS',
+     'Fianza Vicios Ocultos (Aprox 1.3% del valor del anticipo)'),
+    ('C7', 'insurance_rc', 'FIANZAS Y SEGUROS',
+     'Seg. Resp. Civil (Aprox 0.11% del contrato c/IVA)'),
+    ('C7', '', 'FIANZAS Y SEGUROS', 'Seguro de obra'),
+    ('C7', '', 'FIANZAS Y SEGUROS', 'Seguro de equipo'),
+    ('C7', '', 'FIANZAS Y SEGUROS', 'Gastos financieros'),
+    ('C7', '', 'FIANZAS Y SEGUROS', 'Gastos de licitación'),
+    # C8 — PROYECTOS, GESTIONES E IMPUESTOS
+    ('C8', 'tax_isr', 'GESTIONES E IMPUESTOS',
+     'Impuestos (Aprox 0.0918 x 0.30 del contrato sin IVA)'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Gastos notariales'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Permisos de construcción'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Licencias ambientales'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Permisos municipales'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Derechos de vía'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Estudios topográficos'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Estudios de mecánica de suelos'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Estudios de impacto ambiental'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Dictamen estructural'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Supervisión externa'),
+    ('C8', '', 'GESTIONES E IMPUESTOS', 'Laboratorio de control de calidad'),
+]
 
 
 class EstimationProjectService:
@@ -74,6 +136,15 @@ class EstimationProjectService:
             qs = qs.exclude(statecode=EstimationStateCode.CANCELED)
         if search:
             qs = qs.filter(models.Q(name__icontains=search) | models.Q(estimationnumber__icontains=search))
+        from django.db.models import Subquery, OuterRef, Value, DecimalField
+        from django.db.models.functions import Coalesce
+        chosen_sale = OfferAlternative.objects.filter(
+            projectid=OuterRef('pk'), ischosen=True, statecode=0,
+        ).values('salepricenet')[:1]
+        qs = qs.annotate(saleamount_annotated=Coalesce(
+            Subquery(chosen_sale), Value(0),
+            output_field=DecimalField(max_digits=19, decimal_places=2),
+        ))
         return qs
 
     @staticmethod
@@ -540,30 +611,6 @@ class EstimationConversionService:
                 "Estimation has no chosen offer alternative — set one as ischosen=True before converting"
             )
 
-
-# Default external cost checklist items
-DEFAULT_EXTERNAL_COSTS = [
-    'Fianza de anticipo',
-    'Fianza de cumplimiento',
-    'Fianza de vicios ocultos',
-    'Seguro de responsabilidad civil',
-    'Seguro de obra',
-    'Seguro de equipo',
-    'Gastos notariales',
-    'Permisos de construccion',
-    'Licencias ambientales',
-    'Permisos municipales',
-    'Derechos de via',
-    'Estudios topograficos',
-    'Estudios de mecanica de suelos',
-    'Estudios de impacto ambiental',
-    'Dictamen estructural',
-    'Gastos de licitacion',
-    'Supervision externa',
-    'Laboratorio de control de calidad',
-    'Gastos financieros',
-    'Impuestos (ISR provisional)',
-]
 
 
 class ConceptCatalogService:
@@ -1357,6 +1404,19 @@ class IndirectCostDetailService:
     """Service class for IndirectCostDetail business logic."""
 
     @staticmethod
+    def _recompute_amount(line, contract_amount):
+        """Regla única: applies≠SI→0; %-driven→%×contrato; si no mensual×uds×meses.
+        Importe cuantizado a 2 decimales (ROUND_HALF_UP), consistente con la calculadora."""
+        if line.applies != ChecklistStatusCode.YES:
+            raw = Decimal('0')
+        elif line.percentofsale is not None:
+            raw = (line.percentofsale / Decimal('100')) * (contract_amount or Decimal('0'))
+        else:
+            raw = (line.monthlycost or Decimal('0')) * (line.units or Decimal('0')) * (line.months or Decimal('0'))
+        line.amount = raw.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return line.amount
+
+    @staticmethod
     def list_details(
         project_id: UUID,
         user,
@@ -1380,11 +1440,9 @@ class IndirectCostDetailService:
         ).aggregate(max_line=Max('linenumber'))['max_line'] or 0
         next_line = max_line + 1
 
-        # Compute amount = monthlycost * units * months
         monthlycost = dto.monthlycost or Decimal('0')
         units = dto.units or Decimal('1')
         months = dto.months or Decimal('0')
-        amount = monthlycost * units * months
 
         detail = IndirectCostDetail(
             projectid_id=dto.projectid,
@@ -1396,10 +1454,14 @@ class IndirectCostDetailService:
             monthlycost=monthlycost,
             units=units,
             months=months,
-            amount=amount,
+            amount=Decimal('0'),
+            applies=dto.applies if dto.applies is not None else ChecklistStatusCode.YES,
+            percentofsale=dto.percentofsale,
             createdby=user,
             modifiedby=user,
         )
+        contract = EstimationProject.objects.get(estimationprojectid=dto.projectid).estimatedcontractamount
+        IndirectCostDetailService._recompute_amount(detail, contract)
         detail.save()
         return detail
 
@@ -1407,21 +1469,22 @@ class IndirectCostDetailService:
     def update_detail(detail_id: UUID, dto: UpdateIndirectCostDetailDto, user) -> IndirectCostDetail:
         """Update an indirect cost detail line and recompute amount."""
         try:
-            detail = IndirectCostDetail.objects.get(indirectcostid=detail_id)
+            detail = IndirectCostDetail.objects.select_related('projectid').get(indirectcostid=detail_id)
         except IndirectCostDetail.DoesNotExist:
             raise NotFound(f"IndirectCostDetail with ID {detail_id} not found")
 
         update_fields = [
             'categorycode', 'imputationcode', 'area', 'description',
             'monthlycost', 'units', 'months', 'statecode',
+            'applies', 'percentofsale',
         ]
         for field in update_fields:
             value = getattr(dto, field, None)
             if value is not None:
                 setattr(detail, field, value)
 
-        # Recompute amount
-        detail.amount = detail.monthlycost * detail.units * detail.months
+        # Recompute amount using unified rule
+        IndirectCostDetailService._recompute_amount(detail, detail.projectid.estimatedcontractamount)
 
         detail.modifiedby = user
         detail.save()
@@ -1439,6 +1502,106 @@ class IndirectCostDetailService:
         detail.modifiedby = user
         detail.save()
         return detail
+
+    @staticmethod
+    def set_checklist_state(detail_id, user, *, applies=None, percentofsale=None):
+        """Setea applies/percentofsale de una línea (vista checklist) y recalcula importe."""
+        try:
+            detail = IndirectCostDetail.objects.select_related('projectid').get(indirectcostid=detail_id)
+        except IndirectCostDetail.DoesNotExist:
+            raise NotFound(f"IndirectCostDetail with ID {detail_id} not found")
+        if applies is not None:
+            detail.applies = applies
+        if percentofsale is not None:
+            detail.percentofsale = percentofsale
+        IndirectCostDetailService._recompute_amount(detail, detail.projectid.estimatedcontractamount)
+        detail.modifiedby = user
+        detail.save()
+        return detail
+
+    @staticmethod
+    @transaction.atomic
+    def seed_external_checklist(project_id, user):
+        """Siembra las ~20 líneas C7/C8 del checklist de externos en applies=NA (idempotente)."""
+        existing = set(
+            IndirectCostDetail.objects.filter(projectid=project_id)
+            .values_list('categorycode', 'description'))
+        for categorycode, formulakey, area, description in DEFAULT_EXTERNAL_INDIRECT_SEEDS:
+            if (categorycode, description) in existing:
+                continue
+            max_line = IndirectCostDetail.objects.filter(
+                projectid=project_id, categorycode=categorycode,
+            ).aggregate(m=Max('linenumber'))['m'] or 0
+            detail = IndirectCostDetail(
+                projectid_id=project_id, categorycode=categorycode,
+                linenumber=max_line + 1, formulakey=formulakey, area=area,
+                description=description, monthlycost=Decimal('0'), units=Decimal('1'),
+                months=Decimal('1'), applies=ChecklistStatusCode.NA, percentofsale=None,
+                amount=Decimal('0'), createdby=user, modifiedby=user)
+            detail.save()
+        return list(IndirectCostDetail.objects.filter(
+            projectid=project_id,
+            description__in=[s[3] for s in DEFAULT_EXTERNAL_INDIRECT_SEEDS]))
+
+    @staticmethod
+    @transaction.atomic
+    def compute_bond_and_tax_lines(project_id, user, *, overrides) -> list:
+        """Upsert idempotente (por formulakey) de las 5 líneas de fianzas/seguros/impuestos.
+
+        Bases en None se derivan del estudio. Sobrescribe siempre el importe.
+        """
+        try:
+            project = EstimationProject.objects.get(estimationprojectid=project_id)
+        except EstimationProject.DoesNotExist:
+            raise NotFound(f"EstimationProject {project_id} not found")
+        try:
+            settings = project.financial_settings
+        except EstimationFinancialSettings.DoesNotExist:
+            settings = None
+
+        ZERO = Decimal('0')
+        contract_notax = (overrides.contract_notax if overrides.contract_notax is not None
+                          else (project.estimatedcontractamount or ZERO))
+        advance_notax = (overrides.advance_notax if overrides.advance_notax is not None
+                         else (settings.advanceamountnotax if settings else ZERO))
+        bonded_value = (overrides.bonded_value if overrides.bonded_value is not None
+                        else contract_notax)
+        contract_withtax = contract_notax * (Decimal('1') + IVA_RATE)
+        advance_withtax = advance_notax * (Decimal('1') + IVA_RATE)
+
+        raw_amounts = {
+            'bond_anticipo': advance_withtax * overrides.rate_anticipo,
+            'bond_cumplimiento': bonded_value * overrides.rate_cumplimiento,
+            'bond_vicios': advance_notax * overrides.rate_vicios,
+            'insurance_rc': contract_withtax * overrides.rate_rc,
+            'tax_isr': contract_notax * overrides.tax_base_rate * overrides.tax_factor,
+        }
+
+        cents = Decimal('0.01')
+        results = []
+        for formulakey, categorycode, area, description in BOND_TAX_LINE_SPECS:
+            amount = raw_amounts[formulakey].quantize(cents, rounding=ROUND_HALF_UP)
+            detail = IndirectCostDetail.objects.filter(
+                projectid=project_id, formulakey=formulakey).first()
+            if detail is None:
+                max_line = IndirectCostDetail.objects.filter(
+                    projectid=project_id, categorycode=categorycode,
+                ).aggregate(max_line=Max('linenumber'))['max_line'] or 0
+                detail = IndirectCostDetail(
+                    projectid_id=project_id, categorycode=categorycode,
+                    linenumber=max_line + 1, formulakey=formulakey, createdby=user)
+            detail.area = area
+            detail.description = description
+            detail.monthlycost = amount
+            detail.units = Decimal('1')
+            detail.months = Decimal('1')
+            detail.amount = amount
+            detail.applies = ChecklistStatusCode.YES
+            detail.statecode = 0
+            detail.modifiedby = user
+            detail.save()
+            results.append(detail)
+        return results
 
     @staticmethod
     @transaction.atomic
@@ -1559,6 +1722,51 @@ class OfferAlternativeService:
     """Service class for OfferAlternative business logic."""
 
     @staticmethod
+    def _recompute_totals(alternative):
+        """Regla única: CD/CI base ± ajustes → construcción → coef → precio → IVA → total."""
+        from apps.proyeccion.models import AdjustmentCostType
+        adjustments = alternative.cost_adjustments.filter(statecode=0)
+        adj_direct = sum((a.amount for a in adjustments if a.costtype == AdjustmentCostType.DIRECT), Decimal('0'))
+        adj_indirect = sum((a.amount for a in adjustments if a.costtype == AdjustmentCostType.INDIRECT), Decimal('0'))
+        alternative.directadjustmenttotal = adj_direct
+        alternative.indirectadjustmenttotal = adj_indirect
+        adjusted_direct = (alternative.directcosttotal or Decimal('0')) + adj_direct
+        adjusted_indirect = (alternative.indirectcosttotal or Decimal('0')) + adj_indirect
+        alternative.constructioncost = adjusted_direct + adjusted_indirect
+        alternative.coefficient = (
+            Decimal('1')
+            + (alternative.transversalpercent or Decimal('0')) / Decimal('100')
+            + (alternative.profitpercent or Decimal('0')) / Decimal('100')
+        )
+        alternative.salepricenet = alternative.constructioncost * alternative.coefficient
+        alternative.taxamount = alternative.salepricenet * Decimal('0.16')
+        alternative.salepricetotal = alternative.salepricenet + alternative.taxamount
+
+    @staticmethod
+    def _replace_adjustments(alternative, adjustments_input, project):
+        """Borra ajustes existentes y crea nuevos (valida ≤3 por tipo). amount = monthly × meses."""
+        from apps.proyeccion.models import AlternativeCostAdjustment, AdjustmentCostType
+        counts = {AdjustmentCostType.DIRECT: 0, AdjustmentCostType.INDIRECT: 0}
+        for a in adjustments_input:
+            counts[a.costtype] = counts.get(a.costtype, 0) + 1
+        if counts.get(AdjustmentCostType.DIRECT, 0) > 3 or counts.get(AdjustmentCostType.INDIRECT, 0) > 3:
+            raise ValidationError("Máximo 3 ajustes por tipo (directo/indirecto)")
+
+        alternative.cost_adjustments.all().delete()
+        default_months = project.durationmonths or 0
+        rows = []
+        for a in adjustments_input:
+            months = a.months if a.months is not None else default_months
+            monthly = a.monthlyamount or Decimal('0')
+            rows.append(AlternativeCostAdjustment(
+                alternativeid=alternative, costtype=a.costtype,
+                description=a.description or '', monthlyamount=monthly,
+                months=months, amount=monthly * Decimal(months),
+                sortorder=a.sortorder or 0, createdby=alternative.modifiedby,
+                modifiedby=alternative.modifiedby))
+        AlternativeCostAdjustment.objects.bulk_create(rows)
+
+    @staticmethod
     def list_alternatives(project_id: UUID, user) -> QuerySet[OfferAlternative]:
         """List active offer alternatives for a project (excludes soft-deleted)."""
         return OfferAlternative.objects.filter(
@@ -1567,6 +1775,7 @@ class OfferAlternativeService:
         ).select_related('createdby', 'modifiedby')
 
     @staticmethod
+    @transaction.atomic
     def create_alternative(dto: CreateOfferAlternativeDto, user) -> OfferAlternative:
         """Create a new offer alternative. Max 4 per project."""
         existing_count = OfferAlternative.objects.filter(
@@ -1597,16 +1806,8 @@ class OfferAlternativeService:
             statecode=0,
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
-        construction_cost = direct_total + indirect_total
-
         transversal = dto.transversalpercent or Decimal('0')
         profit = dto.profitpercent or Decimal('0')
-
-        # coefficient = 1 + transversal/100 + profit/100
-        coefficient = Decimal('1') + transversal / Decimal('100') + profit / Decimal('100')
-        sale_price_net = construction_cost * coefficient
-        tax_amount = sale_price_net * Decimal('0.16')
-        sale_price_total = sale_price_net + tax_amount
 
         alternative = OfferAlternative(
             projectid_id=dto.projectid,
@@ -1615,26 +1816,26 @@ class OfferAlternativeService:
             description=dto.description or '',
             transversalpercent=transversal,
             profitpercent=profit,
-            coefficient=coefficient,
             directcosttotal=direct_total,
             indirectcosttotal=indirect_total,
-            constructioncost=construction_cost,
-            salepricenet=sale_price_net,
-            taxamount=tax_amount,
-            salepricetotal=sale_price_total,
             authorizationname=dto.authorizationname or '',
             authorizationposition=dto.authorizationposition or '',
             createdby=user,
             modifiedby=user,
         )
         alternative.save()
+        project = EstimationProject.objects.get(estimationprojectid=dto.projectid)
+        OfferAlternativeService._replace_adjustments(alternative, dto.adjustments or [], project)
+        OfferAlternativeService._recompute_totals(alternative)
+        alternative.save()
         return alternative
 
     @staticmethod
+    @transaction.atomic
     def update_alternative(alternative_id: UUID, dto: UpdateOfferAlternativeDto, user) -> OfferAlternative:
         """Update an offer alternative and recompute derived fields."""
         try:
-            alternative = OfferAlternative.objects.get(alternativeid=alternative_id)
+            alternative = OfferAlternative.objects.select_related('projectid').get(alternativeid=alternative_id)
         except OfferAlternative.DoesNotExist:
             raise NotFound(f"OfferAlternative with ID {alternative_id} not found")
 
@@ -1647,17 +1848,9 @@ class OfferAlternativeService:
             if value is not None:
                 setattr(alternative, field, value)
 
-        # Recompute coefficient and derived totals
-        alternative.coefficient = (
-            Decimal('1')
-            + alternative.transversalpercent / Decimal('100')
-            + alternative.profitpercent / Decimal('100')
-        )
-        alternative.constructioncost = alternative.directcosttotal + alternative.indirectcosttotal
-        alternative.salepricenet = alternative.constructioncost * alternative.coefficient
-        alternative.taxamount = alternative.salepricenet * Decimal('0.16')
-        alternative.salepricetotal = alternative.salepricenet + alternative.taxamount
-
+        if dto.adjustments is not None:
+            OfferAlternativeService._replace_adjustments(alternative, dto.adjustments, alternative.projectid)
+        OfferAlternativeService._recompute_totals(alternative)
         alternative.modifiedby = user
         alternative.save()
         return alternative
@@ -1674,6 +1867,17 @@ class OfferAlternativeService:
         alternative.modifiedby = user
         alternative.save()
         return alternative
+
+    @staticmethod
+    def get_base_costs(project_id):
+        """Σ directo (conceptos) y Σ indirecto (indirectos) base del proyecto."""
+        direct_total = BudgetConcept.objects.filter(
+            projectid=project_id, statecode=0,
+        ).aggregate(total=Sum(F('directunitcost') * F('quantity'), output_field=models.DecimalField()))['total'] or Decimal('0')
+        indirect_total = IndirectCostDetail.objects.filter(
+            projectid=project_id, statecode=0,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        return {'directcosttotal': direct_total, 'indirectcosttotal': indirect_total}
 
     @staticmethod
     @transaction.atomic
@@ -1708,71 +1912,6 @@ class OfferAlternativeService:
         IndirectCostDetailService.prorate_to_concepts(project.estimationprojectid, user)
 
         return alternative
-
-
-class ExternalCostService:
-    """Service class for ExternalCostItem business logic."""
-
-    @staticmethod
-    def list_costs(project_id: UUID, user) -> QuerySet[ExternalCostItem]:
-        """List all external cost items for a project."""
-        return ExternalCostItem.objects.filter(
-            projectid=project_id
-        )
-
-    @staticmethod
-    @transaction.atomic
-    def initialize_checklist(project_id: UUID, user) -> list[ExternalCostItem]:
-        """Create default external cost checklist items (~21 items)."""
-        existing = ExternalCostItem.objects.filter(projectid=project_id).exists()
-        if existing:
-            raise ValidationError("External cost checklist already initialized for this project")
-
-        items = []
-        for idx, name in enumerate(DEFAULT_EXTERNAL_COSTS, start=1):
-            item = ExternalCostItem(
-                projectid_id=project_id,
-                itemname=name,
-                applies=0,  # N/A by default
-                percentofsale=None,
-                amount=Decimal('0'),
-                sortorder=idx,
-            )
-            items.append(item)
-
-        ExternalCostItem.objects.bulk_create(items)
-        return items
-
-    @staticmethod
-    def update_cost(cost_id: UUID, dto: UpdateExternalCostItemDto, user) -> ExternalCostItem:
-        """Update an external cost item.
-
-        ``amount`` is derived: when the item applies (Yes), it is recomputed as
-        ``(percentofsale / 100) * project.estimatedcontractamount``. When applies
-        is N/A or No, ``amount`` is forced to 0. Any client-supplied ``amount``
-        in the DTO is ignored.
-        """
-        try:
-            cost = ExternalCostItem.objects.select_related('projectid').get(externalcostid=cost_id)
-        except ExternalCostItem.DoesNotExist:
-            raise NotFound(f"ExternalCostItem with ID {cost_id} not found")
-
-        if dto.applies is not None:
-            cost.applies = dto.applies
-        if dto.percentofsale is not None:
-            cost.percentofsale = dto.percentofsale
-        if dto.statecode is not None:
-            cost.statecode = dto.statecode
-
-        if cost.applies == ChecklistStatusCode.YES:
-            contract_amount = cost.projectid.estimatedcontractamount or Decimal('0')
-            percent = cost.percentofsale or Decimal('0')
-            cost.amount = (percent / Decimal('100')) * contract_amount
-        else:
-            cost.amount = Decimal('0')
-
-        cost.save()
-        return cost
 
 
 class SupplyExplosionService:
@@ -1830,12 +1969,14 @@ class SupplyExplosionService:
 
         # Group by supply code
         groups = defaultdict(lambda: {
+            'supplyid': None,
             'description': '',
             'unit': '',
             'supplytype': 0,
             'totalquantity': Decimal('0'),
             'totalamount': Decimal('0'),
             'concepts': set(),
+            'lags': set(),
         })
 
         for bd in breakdowns:
@@ -1843,21 +1984,26 @@ class SupplyExplosionService:
             concept_qty = bd.conceptid.quantity or Decimal('0')
             key = supply.code
             group = groups[key]
+            group['supplyid'] = supply.supplyid
             group['description'] = supply.description
             group['unit'] = supply.unit
             group['supplytype'] = supply.supplytype
             group['totalquantity'] += bd.quantity * concept_qty
             group['totalamount'] += bd.amount * concept_qty
             group['concepts'].add(bd.conceptid_id)
+            group['lags'].add(bd.paymentlagperiods)
 
         results = []
         for supplycode, data in sorted(groups.items()):
             total_qty = data['totalquantity']
             total_amt = data['totalamount']
             avg_price = total_amt / total_qty if total_qty > 0 else Decimal('0')
+            lags = data['lags']
+            common_lag = next(iter(lags)) if len(lags) == 1 else None
 
             results.append({
                 'supplycode': supplycode,
+                'supplyid': data['supplyid'],
                 'description': data['description'],
                 'unit': data['unit'],
                 'supplytype': data['supplytype'],
@@ -1865,9 +2011,26 @@ class SupplyExplosionService:
                 'averageprice': avg_price,
                 'totalamount': total_amt,
                 'conceptcount': len(data['concepts']),
+                'paymentlagperiods': common_lag,
             })
 
         return results
+
+    @staticmethod
+    @transaction.atomic
+    def set_supply_lag(project_id, supplyid, paymentlagperiods, user):
+        """Bulk: setea paymentlagperiods en todas las líneas de un insumo. Lag ∈ [0,120] ∪ {None}."""
+        if paymentlagperiods is not None and not (0 <= paymentlagperiods <= 120):
+            raise ValidationError("paymentlagperiods fuera de rango [0,120] o null")
+        lines = list(UnitCostBreakdown.objects.filter(
+            conceptid__projectid=project_id, supplyid=supplyid, statecode=0,
+        ).select_for_update())
+        for line in lines:
+            line.paymentlagperiods = paymentlagperiods
+            line.lineversion = (line.lineversion or 0) + 1
+            line.modifiedby = user
+        UnitCostBreakdown.objects.bulk_update(lines, ['paymentlagperiods', 'lineversion', 'modifiedby'])
+        return len(lines)
 
     # Labels for human-readable export — single source of truth.
     _CATEGORY_LABELS = {

@@ -170,7 +170,6 @@ from apps.proyeccion.routers import (
     budget_concepts_router,
     indirect_cost_details_router,
     offer_alternatives_router,
-    external_costs_router,
     supply_explosion_router,
     workplan_router,
     analysis_router,
@@ -245,7 +244,6 @@ api.add_router("/proyeccion", concept_families_router)
 api.add_router("/proyeccion", budget_concepts_router)
 api.add_router("/proyeccion", indirect_cost_details_router)
 api.add_router("/proyeccion", offer_alternatives_router)
-api.add_router("/proyeccion", external_costs_router)
 api.add_router("/proyeccion", supply_explosion_router)
 api.add_router("/proyeccion", workplan_router)
 api.add_router("/proyeccion", analysis_router)

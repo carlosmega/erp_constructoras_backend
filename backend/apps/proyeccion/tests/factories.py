@@ -18,7 +18,6 @@ from apps.proyeccion.models import (
     IndirectCostDetail,
     IndirectCostTemplate,
     OfferAlternative,
-    ExternalCostItem,
     SupplyCatalogItem,
     EquipmentYield,
     WorkPlanEntry,
@@ -253,19 +252,6 @@ class OfferAlternativeFactory(DjangoModelFactory):
     createdby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
     modifiedby = factory.LazyAttribute(lambda o: o.projectid.ownerid)
 
-
-class ExternalCostItemFactory(DjangoModelFactory):
-    """Factory for creating ExternalCostItem instances."""
-
-    class Meta:
-        model = ExternalCostItem
-
-    projectid = factory.SubFactory(EstimationProjectFactory)
-    itemname = factory.Sequence(lambda n: f'External cost {n + 1}')
-    applies = 0
-    amount = Decimal('0')
-    sortorder = factory.Sequence(lambda n: n + 1)
-    statecode = 0
 
 
 class SupplyCatalogItemFactory(DjangoModelFactory):

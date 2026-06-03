@@ -11,7 +11,6 @@ from apps.proyeccion.tests.factories import (
     IndirectCostDetailFactory,
     IndirectCostTemplateFactory,
     OfferAlternativeFactory,
-    ExternalCostItemFactory,
     SupplyCatalogItemFactory,
     EquipmentYieldFactory,
     WorkPlanEntryFactory,
@@ -567,35 +566,6 @@ class TestOfferAlternatives:
 
 # =============================================================================
 # External Costs
-# =============================================================================
-
-@pytest.mark.contract
-class TestExternalCosts:
-    def test_list_external_costs(self, admin_auth_client, system_admin):
-        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
-        ExternalCostItemFactory(projectid=project)
-        response = admin_auth_client.get(f'/api/proyeccion/projects/{project.estimationprojectid}/external-costs/')
-        assert response.status_code == 200
-        assert len(response.json()) >= 1
-
-    def test_initialize_external_cost_checklist(self, admin_auth_client, system_admin):
-        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
-        response = admin_auth_client.post(
-            f'/api/proyeccion/projects/{project.estimationprojectid}/external-costs/init/'
-        )
-        assert response.status_code == 201
-
-    def test_update_external_cost(self, admin_auth_client, system_admin):
-        project = EstimationProjectFactory(ownerid=system_admin, createdby=system_admin, modifiedby=system_admin)
-        cost = ExternalCostItemFactory(projectid=project)
-        response = admin_auth_client.patch(
-            f'/api/proyeccion/external-costs/{cost.externalcostid}/',
-            {'applies': 1, 'amount': '5000'},
-            content_type='application/json',
-        )
-        assert response.status_code == 200
-
-
 # =============================================================================
 # Supply Explosion
 # =============================================================================

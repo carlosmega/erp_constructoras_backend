@@ -14,7 +14,6 @@ from apps.proyeccion.models import (
     UnitCostBreakdown,
     IndirectCostDetail,
     OfferAlternative,
-    ExternalCostItem,
     SupplyCatalogItem,
     EquipmentYield,
     WorkPlanEntry,
@@ -27,7 +26,6 @@ from apps.proyeccion.services import (
     UnitCostBreakdownService,
     IndirectCostDetailService,
     OfferAlternativeService,
-    ExternalCostService,
     WorkPlanService,
     SupplyCatalogService,
     EquipmentYieldService,
@@ -47,7 +45,6 @@ from apps.proyeccion.schemas import (
     UpdateIndirectCostDetailDto,
     CreateOfferAlternativeDto,
     UpdateOfferAlternativeDto,
-    UpdateExternalCostItemDto,
     CreateSupplyCatalogItemDto,
     UpdateSupplyCatalogItemDto,
     CreateEquipmentYieldDto,
@@ -72,7 +69,6 @@ from .factories import (
     IndirectCostDetailFactory,
     IndirectCostTemplateFactory,
     OfferAlternativeFactory,
-    ExternalCostItemFactory,
     SupplyCatalogItemFactory,
     EquipmentYieldFactory,
     WorkPlanEntryFactory,
@@ -933,120 +929,6 @@ class TestOfferAlternativeService:
 
         with pytest.raises(NotFound):
             OfferAlternativeService.choose_alternative(uuid4(), user)
-
-
-# =============================================================================
-# ExternalCostService
-# =============================================================================
-
-@pytest.mark.unit
-@pytest.mark.django_db
-class TestExternalCostService:
-    """Tests for ExternalCostService."""
-
-    def test_list_costs(self):
-        project = EstimationProjectFactory()
-        user = project.ownerid
-        ExternalCostItemFactory(projectid=project)
-        ExternalCostItemFactory(projectid=project)
-
-        result = ExternalCostService.list_costs(project.estimationprojectid, user)
-        assert result.count() == 2
-
-    def test_initialize_checklist(self):
-        project = EstimationProjectFactory()
-        user = project.ownerid
-
-        items = ExternalCostService.initialize_checklist(
-            project.estimationprojectid, user,
-        )
-
-        assert len(items) == 20
-        assert items[0].itemname == 'Fianza de anticipo'
-        assert items[-1].itemname == 'Impuestos (ISR provisional)'
-
-    def test_initialize_checklist_already_exists(self):
-        project = EstimationProjectFactory()
-        user = project.ownerid
-        ExternalCostItemFactory(projectid=project)
-
-        with pytest.raises(ValidationError, match='already initialized'):
-            ExternalCostService.initialize_checklist(
-                project.estimationprojectid, user,
-            )
-
-    def test_update_cost_recomputes_amount_from_percent(self):
-        """Amount = (percentofsale / 100) * project.estimatedcontractamount when applies=Yes."""
-        project = EstimationProjectFactory(estimatedcontractamount=Decimal('1000000'))
-        item = ExternalCostItemFactory(projectid=project, amount=Decimal('0'))
-        user = SalespersonFactory()
-
-        dto = UpdateExternalCostItemDto(
-            applies=1,
-            percentofsale=Decimal('5'),
-        )
-
-        updated = ExternalCostService.update_cost(item.externalcostid, dto, user)
-
-        assert updated.applies == 1
-        assert updated.percentofsale == Decimal('5')
-        assert updated.amount == Decimal('50000.00')
-
-    def test_update_cost_ignores_client_amount(self):
-        """Client-supplied amount is ignored; service always recomputes."""
-        project = EstimationProjectFactory(estimatedcontractamount=Decimal('1000000'))
-        item = ExternalCostItemFactory(projectid=project, amount=Decimal('0'))
-        user = SalespersonFactory()
-
-        dto = UpdateExternalCostItemDto(
-            applies=1,
-            percentofsale=Decimal('2'),
-            amount=Decimal('999999'),  # bogus value, should be ignored
-        )
-
-        updated = ExternalCostService.update_cost(item.externalcostid, dto, user)
-
-        assert updated.amount == Decimal('20000.00')
-
-    def test_update_cost_zeroes_amount_when_not_applies(self):
-        """When applies switches to No or N/A, amount is forced to 0."""
-        project = EstimationProjectFactory(estimatedcontractamount=Decimal('1000000'))
-        item = ExternalCostItemFactory(
-            projectid=project,
-            applies=1,
-            percentofsale=Decimal('5'),
-            amount=Decimal('50000'),
-        )
-        user = SalespersonFactory()
-
-        updated = ExternalCostService.update_cost(
-            item.externalcostid,
-            UpdateExternalCostItemDto(applies=2),  # No
-            user,
-        )
-
-        assert updated.amount == Decimal('0')
-
-    def test_update_cost_amount_zero_when_contract_amount_missing(self):
-        """If the project has no estimated contract amount, amount stays 0."""
-        project = EstimationProjectFactory(estimatedcontractamount=Decimal('0'))
-        item = ExternalCostItemFactory(projectid=project, amount=Decimal('0'))
-        user = SalespersonFactory()
-
-        updated = ExternalCostService.update_cost(
-            item.externalcostid,
-            UpdateExternalCostItemDto(applies=1, percentofsale=Decimal('5')),
-            user,
-        )
-
-        assert updated.amount == Decimal('0')
-
-    def test_update_cost_not_found(self):
-        user = SalespersonFactory()
-        dto = UpdateExternalCostItemDto(applies=1)
-
-        with pytest.raises(NotFound):
-            ExternalCostService.update_cost(uuid4(), dto, user)
 
 
 # =============================================================================

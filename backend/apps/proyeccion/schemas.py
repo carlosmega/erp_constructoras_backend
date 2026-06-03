@@ -15,7 +15,7 @@ from apps.proyeccion.models import (
     UnitCostBreakdown,
     IndirectCostDetail,
     OfferAlternative,
-    ExternalCostItem,
+    AlternativeCostAdjustment,
     SupplyCatalogItem,
     IndirectCostTemplate,
     EquipmentYield,
@@ -36,6 +36,7 @@ class EstimationProjectSchema(ModelSchema):
     accountname: Optional[str] = None
     ownername: Optional[str] = None
     state_name: Optional[str] = None
+    saleamount: Decimal = Decimal('0')
 
     class Meta:
         model = EstimationProject
@@ -52,6 +53,14 @@ class EstimationProjectSchema(ModelSchema):
     @staticmethod
     def resolve_state_name(obj):
         return obj.state_name
+
+    @staticmethod
+    def resolve_saleamount(obj):
+        val = getattr(obj, 'saleamount_annotated', None)
+        if val is not None:
+            return val
+        return (obj.offer_alternatives.filter(ischosen=True, statecode=0)
+                .values_list('salepricenet', flat=True).first() or Decimal('0'))
 
 
 class CreateEstimationProjectDto(Schema):
@@ -272,6 +281,8 @@ class CreateIndirectCostDetailDto(Schema):
     monthlycost: Optional[Decimal] = Decimal('0')
     units: Optional[Decimal] = Decimal('1')
     months: Optional[Decimal] = Decimal('0')
+    applies: Optional[int] = None
+    percentofsale: Optional[Decimal] = None
 
 
 class UpdateIndirectCostDetailDto(Schema):
@@ -284,18 +295,63 @@ class UpdateIndirectCostDetailDto(Schema):
     units: Optional[Decimal] = None
     months: Optional[Decimal] = None
     statecode: Optional[int] = None
+    applies: Optional[int] = None
+    percentofsale: Optional[Decimal] = None
+
+
+class ComputeBondsOverridesDto(Schema):
+    """Overrides opcionales para la calculadora de fianzas/seguros/impuestos.
+
+    Las bases en None se derivan del estudio (estimatedcontractamount,
+    financial_settings.advanceamountnotax). Las tasas vienen con defaults estándar.
+    """
+    contract_notax: Optional[Decimal] = None      # Contrato sin IVA
+    advance_notax: Optional[Decimal] = None        # Anticipo sin IVA
+    bonded_value: Optional[Decimal] = None         # Valor afianzado (default = contract_notax)
+    rate_anticipo: Decimal = Decimal('0.013')      # 1.3%
+    rate_cumplimiento: Decimal = Decimal('0.017')  # 1.7%
+    rate_vicios: Decimal = Decimal('0.013')        # 1.3%
+    rate_rc: Decimal = Decimal('0.0011')           # 0.11%
+    tax_base_rate: Decimal = Decimal('0.0918')     # 9.18%
+    tax_factor: Decimal = Decimal('0.30')          # × 0.30
+
+
+class SetChecklistStateDto(Schema):
+    applies: Optional[int] = None
+    percentofsale: Optional[Decimal] = None
 
 
 # =============================================================================
 # OfferAlternative Schemas
 # =============================================================================
 
+class AlternativeCostAdjustmentSchema(ModelSchema):
+    """Full AlternativeCostAdjustment response schema."""
+    class Meta:
+        model = AlternativeCostAdjustment
+        fields = '__all__'
+
+
+class AlternativeCostAdjustmentInputDto(Schema):
+    """Ajuste anidado en create/update de la alternativa."""
+    costtype: int
+    description: Optional[str] = ''
+    monthlyamount: Optional[Decimal] = Decimal('0')
+    months: Optional[int] = None
+    sortorder: Optional[int] = 0
+
+
 class OfferAlternativeSchema(ModelSchema):
-    """Full OfferAlternative response schema."""
+    """Full OfferAlternative response schema (incluye ajustes anidados)."""
+    adjustments: List[AlternativeCostAdjustmentSchema] = []
 
     class Meta:
         model = OfferAlternative
         fields = '__all__'
+
+    @staticmethod
+    def resolve_adjustments(obj):
+        return list(obj.cost_adjustments.filter(statecode=0).order_by('costtype', 'sortorder'))
 
 
 class CreateOfferAlternativeDto(Schema):
@@ -307,6 +363,7 @@ class CreateOfferAlternativeDto(Schema):
     profitpercent: Optional[Decimal] = Decimal('0')
     authorizationname: Optional[str] = ''
     authorizationposition: Optional[str] = ''
+    adjustments: List[AlternativeCostAdjustmentInputDto] = []
 
 
 class UpdateOfferAlternativeDto(Schema):
@@ -318,26 +375,12 @@ class UpdateOfferAlternativeDto(Schema):
     authorizationname: Optional[str] = None
     authorizationposition: Optional[str] = None
     statecode: Optional[int] = None
+    adjustments: Optional[List[AlternativeCostAdjustmentInputDto]] = None
 
 
-# =============================================================================
-# ExternalCostItem Schemas
-# =============================================================================
-
-class ExternalCostItemSchema(ModelSchema):
-    """Full ExternalCostItem response schema."""
-
-    class Meta:
-        model = ExternalCostItem
-        fields = '__all__'
-
-
-class UpdateExternalCostItemDto(Schema):
-    """DTO for updating an external cost item."""
-    applies: Optional[int] = None
-    percentofsale: Optional[Decimal] = None
-    amount: Optional[Decimal] = None
-    statecode: Optional[int] = None
+class AlternativeBaseCostsSchema(Schema):
+    directcosttotal: Decimal
+    indirectcosttotal: Decimal
 
 
 # =============================================================================
@@ -556,6 +599,7 @@ class SupplyExplosionItemSchema(Schema):
 class SupplyExplosionConsolidatedSchema(Schema):
     """Consolidated supply explosion grouped by supply code."""
     supplycode: str
+    supplyid: UUID
     description: str
     unit: str
     supplytype: int
@@ -563,6 +607,12 @@ class SupplyExplosionConsolidatedSchema(Schema):
     averageprice: Decimal
     totalamount: Decimal
     conceptcount: int
+    paymentlagperiods: Optional[int] = None
+
+
+class SetSupplyLagDto(Schema):
+    supplyid: UUID
+    paymentlagperiods: Optional[int] = None
 
 
 class TemporalDistributionSchema(Schema):

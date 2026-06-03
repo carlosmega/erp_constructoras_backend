@@ -249,7 +249,7 @@ def test_indirectcostdetail_has_payment_lag_fields():
 @pytest.mark.unit
 @pytest.mark.django_db
 class TestProyeccionAuditTrail:
-    """UnitCostBreakdown / ExternalCostItem / FamilyTemplateItem migraron a
+    """UnitCostBreakdown / FamilyTemplateItem migraron a
     AuditMixin: deben exponer el audit trail CDS de 4 campos
     (createdon/modifiedon + createdby/modifiedby), siendo createdby/modifiedby
     nullable (poblados por la capa de servicio).
@@ -268,16 +268,6 @@ class TestProyeccionAuditTrail:
         # related_name del mixin: %(class)s_created / %(class)s_modified
         assert bd in user.unitcostbreakdown_created.all()
         assert bd in user.unitcostbreakdown_modified.all()
-
-    def test_externalcostitem_audit_fields_nullable(self):
-        from apps.proyeccion.tests.factories import ExternalCostItemFactory
-
-        item = ExternalCostItemFactory()
-        item.refresh_from_db()
-        # Sin poblar → nullable, no rompe la creación.
-        assert item.createdby is None
-        assert item.modifiedby is None
-        assert item.createdon is not None and item.modifiedon is not None
 
     def test_familytemplateitem_audit_trail(self):
         from apps.users.tests.factories import SystemUserFactory

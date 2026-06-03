@@ -9,7 +9,6 @@ from apps.proyeccion.models import (
     UnitCostBreakdown,
     IndirectCostDetail,
     OfferAlternative,
-    ExternalCostItem,
     SupplyCatalogItem,
     IndirectCostTemplate,
     EquipmentYield,
@@ -73,14 +72,6 @@ class OfferAlternativeAdmin(admin.ModelAdmin):
     list_filter = ('statecode', 'projectid', 'ischosen')
     search_fields = ('name',)
     readonly_fields = ('alternativeid', 'createdon', 'modifiedon', 'createdby', 'modifiedby')
-
-
-@admin.register(ExternalCostItem)
-class ExternalCostItemAdmin(admin.ModelAdmin):
-    list_display = ('projectid', 'itemname', 'applies', 'percentofsale', 'amount', 'sortorder', 'statecode')
-    list_filter = ('statecode', 'projectid', 'applies')
-    search_fields = ('itemname',)
-    readonly_fields = ('externalcostid', 'createdon', 'modifiedon')
 
 
 @admin.register(SupplyCatalogItem)

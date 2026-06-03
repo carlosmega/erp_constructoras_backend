@@ -46,6 +46,11 @@ class ChecklistStatusCode(models.IntegerChoices):
     NO = 2, 'No'
 
 
+class AdjustmentCostType(models.IntegerChoices):
+    DIRECT = 0, 'Directo'
+    INDIRECT = 1, 'Indirecto'
+
+
 class ProjectSizeCode(models.IntegerChoices):
     SMALL = 0, 'Small'
     MEDIUM = 1, 'Medium'
@@ -612,6 +617,36 @@ class IndirectCostDetail(AuditMixin):
         help_text='Optimistic lock para edits a nivel de línea (lag).',
     )
 
+    formulakey = models.CharField(
+        max_length=30,
+        blank=True,
+        default='',
+        db_column='formulakey',
+        help_text=(
+            'Marca líneas generadas por la calculadora de fianzas/impuestos '
+            '(bond_anticipo, bond_cumplimiento, bond_vicios, insurance_rc, tax_isr). '
+            'Vacío = línea capturada manualmente.'
+        ),
+    )
+
+    applies = models.IntegerField(
+        choices=ChecklistStatusCode.choices,
+        default=ChecklistStatusCode.YES,
+        db_column='applies',
+        help_text=(
+            'SI/NO/NA. Solo significativo para externos (C7/C8). Líneas internas '
+            'C1-C6 quedan en SI. Semillas del checklist se siembran en NA.'
+        ),
+    )
+    percentofsale = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True,
+        db_column='percentofsale',
+        help_text=(
+            'Si no es null, la línea es %-driven: amount = (%/100) × contrato. '
+            'null = amount por mensual×uds×meses (o por la calculadora).'
+        ),
+    )
+
     class Meta:
         db_table = 'indirectcostdetail'
         ordering = ['categorycode', 'linenumber']
@@ -706,6 +741,13 @@ class OfferAlternative(AuditMixin):
         db_column='indirectcosttotal'
     )
 
+    directadjustmenttotal = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='directadjustmenttotal'
+    )
+    indirectadjustmenttotal = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='indirectadjustmenttotal'
+    )
+
     constructioncost = models.DecimalField(
         max_digits=19,
         decimal_places=2,
@@ -778,69 +820,41 @@ class OfferAlternative(AuditMixin):
         return f"Alternative {self.alternativenumber} - {self.name}"
 
 
-class ExternalCostItem(AuditMixin):
-    """External cost checklist item for a project offer."""
+class AlternativeCostAdjustment(AuditMixin):
+    """Ajuste puntual (delta) a costo directo/indirecto dentro de una alternativa."""
 
-    externalcostid = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        db_column='externalcostid'
+    adjustmentid = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, db_column='adjustmentid'
     )
-
-    projectid = models.ForeignKey(
-        EstimationProject,
-        on_delete=models.CASCADE,
-        db_column='projectid',
-        related_name='external_costs'
+    alternativeid = models.ForeignKey(
+        OfferAlternative, on_delete=models.CASCADE,
+        db_column='alternativeid', related_name='cost_adjustments'
     )
-
-    itemname = models.CharField(
-        max_length=200,
-        db_column='itemname'
+    costtype = models.IntegerField(
+        choices=AdjustmentCostType.choices, db_column='costtype'
     )
-
-    applies = models.IntegerField(
-        choices=ChecklistStatusCode.choices,
-        default=0,
-        db_column='applies'
+    description = models.CharField(max_length=300, blank=True, default='', db_column='description')
+    monthlyamount = models.DecimalField(
+        max_digits=19, decimal_places=2, default=0, db_column='monthlyamount',
+        help_text='Monto mensual con signo (ej. -10000).',
     )
-
-    percentofsale = models.DecimalField(
-        max_digits=7,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        db_column='percentofsale'
-    )
-
+    months = models.IntegerField(default=0, db_column='months')
     amount = models.DecimalField(
-        max_digits=19,
-        decimal_places=2,
-        default=0,
-        db_column='amount'
+        max_digits=19, decimal_places=2, default=0, db_column='amount',
+        help_text='Delta derivado = monthlyamount × months.',
     )
-
-    sortorder = models.IntegerField(
-        default=0,
-        db_column='sortorder'
-    )
-
+    sortorder = models.IntegerField(default=0, db_column='sortorder')
     statecode = models.IntegerField(
-        default=0,
-        choices=ProyeccionStateCode.choices,
-        db_column='statecode'
+        default=0, choices=ProyeccionStateCode.choices, db_column='statecode'
     )
 
     class Meta:
-        db_table = 'externalcostitem'
-        ordering = ['sortorder']
-        indexes = [
-            models.Index(fields=['projectid']),
-        ]
+        db_table = 'alternativecostadjustment'
+        ordering = ['costtype', 'sortorder']
+        indexes = [models.Index(fields=['alternativeid', 'costtype'])]
 
     def __str__(self):
-        return self.itemname
+        return f"{self.get_costtype_display()} {self.amount} - {self.description}"
 
 
 class SupplyCatalogItem(AuditMixin):
