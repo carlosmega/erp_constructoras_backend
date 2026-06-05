@@ -136,14 +136,26 @@ class EstimationProjectService:
             qs = qs.exclude(statecode=EstimationStateCode.CANCELED)
         if search:
             qs = qs.filter(models.Q(name__icontains=search) | models.Q(estimationnumber__icontains=search))
-        from django.db.models import Subquery, OuterRef, Value, DecimalField
-        from django.db.models.functions import Coalesce
+        from django.db.models import Subquery, OuterRef, Value, DecimalField, Sum
+        from django.db.models.functions import Coalesce, NullIf
+        decimal_field = DecimalField(max_digits=19, decimal_places=2)
+        # Sale amount precedence: chosen alternative → budget total → manual contract amount → 0.
         chosen_sale = OfferAlternative.objects.filter(
             projectid=OuterRef('pk'), ischosen=True, statecode=0,
         ).values('salepricenet')[:1]
+        budget_total = (
+            BudgetConcept.objects.filter(projectid=OuterRef('pk'), statecode=0)
+            .values('projectid')
+            .annotate(total=Sum('totalamount'))
+            .values('total')[:1]
+        )
         qs = qs.annotate(saleamount_annotated=Coalesce(
-            Subquery(chosen_sale), Value(0),
-            output_field=DecimalField(max_digits=19, decimal_places=2),
+            Subquery(chosen_sale, output_field=decimal_field),
+            # NullIf(..., 0) lets a zero/empty budget fall through to the next source.
+            NullIf(Subquery(budget_total, output_field=decimal_field), Value(0)),
+            NullIf('estimatedcontractamount', Value(0)),
+            Value(0),
+            output_field=decimal_field,
         ))
         return qs
 

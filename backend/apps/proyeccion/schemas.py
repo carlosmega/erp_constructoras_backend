@@ -59,8 +59,17 @@ class EstimationProjectSchema(ModelSchema):
         val = getattr(obj, 'saleamount_annotated', None)
         if val is not None:
             return val
-        return (obj.offer_alternatives.filter(ischosen=True, statecode=0)
-                .values_list('salepricenet', flat=True).first() or Decimal('0'))
+        # Sale amount precedence: chosen alternative → budget total → manual contract amount → 0.
+        chosen = (obj.offer_alternatives.filter(ischosen=True, statecode=0)
+                  .values_list('salepricenet', flat=True).first())
+        if chosen:
+            return chosen
+        from django.db.models import Sum
+        budget_total = (obj.budget_concepts.filter(statecode=0)
+                        .aggregate(total=Sum('totalamount'))['total'])
+        if budget_total:
+            return budget_total
+        return obj.estimatedcontractamount or Decimal('0')
 
 
 class CreateEstimationProjectDto(Schema):
