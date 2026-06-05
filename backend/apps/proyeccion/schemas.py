@@ -268,6 +268,38 @@ class UpdateUnitCostBreakdownDto(Schema):
     statecode: Optional[int] = None
 
 
+# --- CDU report (full breakdown for PDF/print) ---
+
+class CduReportLineSchema(Schema):
+    """One insumo line of a concept's unit-cost breakdown."""
+    categorycode: int
+    description: str
+    unit: Optional[str] = None
+    quantity: Decimal = Decimal('0')
+    unitprice: Decimal = Decimal('0')
+    yieldvalue: Decimal = Decimal('1')
+    amount: Decimal = Decimal('0')
+    supplyname: Optional[str] = None
+
+
+class CduReportConceptSchema(Schema):
+    """A concept with its full breakdown (all 7 categories) and CDU total."""
+    conceptid: UUID
+    code: str
+    description: str
+    unit: Optional[str] = None
+    quantity: Decimal = Decimal('0')
+    directunitcost: Decimal = Decimal('0')
+    totalamount: Decimal = Decimal('0')
+    cdu_total: Decimal = Decimal('0')
+    lines: List[CduReportLineSchema] = []
+
+
+class CduReportSchema(Schema):
+    """Full project CDU report: every concept with its breakdown lines."""
+    concepts: List[CduReportConceptSchema] = []
+
+
 # =============================================================================
 # IndirectCostDetail Schemas
 # =============================================================================

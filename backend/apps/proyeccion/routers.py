@@ -27,6 +27,7 @@ from apps.proyeccion.schemas import (
     UnitCostBreakdownSchema,
     CreateUnitCostBreakdownDto,
     UpdateUnitCostBreakdownDto,
+    CduReportSchema,
     IndirectCostDetailSchema,
     CreateIndirectCostDetailDto,
     UpdateIndirectCostDetailDto,
@@ -581,6 +582,16 @@ def export_breakdown_excel(request: HttpRequest, project_id: UUID):
         f'attachment; filename="cdu-{project_id}.xlsx"'
     )
     return response
+
+
+@budget_concepts_router.get(
+    "/projects/{project_id}/cdu-report/",
+    response=CduReportSchema,
+)
+def cdu_report(request: HttpRequest, project_id: UUID):
+    """Full CDU (all concepts + breakdown lines + CDU totals) for PDF/print reports."""
+    from apps.proyeccion.services import UnitCostBreakdownService
+    return UnitCostBreakdownService.get_project_cdu_report(project_id, request.user)
 
 
 @budget_concepts_router.post(

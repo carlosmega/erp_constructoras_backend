@@ -951,6 +951,59 @@ class UnitCostBreakdownService:
         ).select_related('supplyid')
 
     @staticmethod
+    def get_project_cdu_report(project_id: UUID, user) -> dict:
+        """Assemble the full CDU (all concepts + their breakdown lines) for a PDF report.
+
+        Single query for concepts + single query for all breakdowns (no N+1).
+        Includes every category (HM/EPP included, unlike the Excel export) and only
+        active rows (``statecode=0``). Lines are ordered by category then linenumber so
+        the report prints Materiales→Acarreos→…→EPP in the standard order.
+        """
+        from apps.proyeccion.models import BudgetConcept
+
+        concepts = list(
+            BudgetConcept.objects.filter(projectid_id=project_id, statecode=0)
+            .order_by('code')
+        )
+        lines_by_concept: dict = {}
+        for b in (
+            UnitCostBreakdown.objects
+            .filter(conceptid__projectid_id=project_id, statecode=0)
+            .select_related('supplyid')
+            .order_by('conceptid__code', 'categorycode', 'linenumber')
+        ):
+            lines_by_concept.setdefault(b.conceptid_id, []).append(b)
+
+        report_concepts = []
+        for c in concepts:
+            lines = lines_by_concept.get(c.conceptid, [])
+            cdu_total = sum((line.amount or Decimal('0')) for line in lines)
+            report_concepts.append({
+                'conceptid': c.conceptid,
+                'code': c.code,
+                'description': c.description,
+                'unit': c.unit,
+                'quantity': c.quantity,
+                'directunitcost': c.directunitcost,
+                'totalamount': c.totalamount,
+                'cdu_total': cdu_total,
+                'lines': [
+                    {
+                        'categorycode': line.categorycode,
+                        'description': line.description,
+                        'unit': line.unit,
+                        'quantity': line.quantity,
+                        'unitprice': line.unitprice,
+                        'yieldvalue': line.yieldvalue,
+                        'amount': line.amount,
+                        'supplyname': line.supplyid.description if line.supplyid else None,
+                    }
+                    for line in lines
+                ],
+            })
+        return {'concepts': report_concepts}
+
+    @staticmethod
     def create_breakdown(dto: CreateUnitCostBreakdownDto, user) -> UnitCostBreakdown:
         """Create a new breakdown line with computed amount and auto linenumber."""
         # Validate categorycode
