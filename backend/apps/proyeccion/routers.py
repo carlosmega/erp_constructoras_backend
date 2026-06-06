@@ -125,7 +125,7 @@ from apps.proyeccion.models import (
     EstimationProject,
     ProjectionPeriod,
 )
-from core.permissions import Permission, require_permission
+from core.permissions import Permission, require_permission, require_authenticated
 from core.exceptions import NotFound
 
 
@@ -163,6 +163,7 @@ estimation_projects_router = Router(tags=["Estimation Projects"])
 
 
 @estimation_projects_router.get("/", response=List[EstimationProjectSchema])
+@require_authenticated
 def list_estimation_projects(request: HttpRequest, statecode: Optional[int] = None, search: Optional[str] = None):
     """List all estimation projects with optional filters."""
     projects = EstimationProjectService.list_projects(request.user, statecode=statecode, search=search)
@@ -170,6 +171,7 @@ def list_estimation_projects(request: HttpRequest, statecode: Optional[int] = No
 
 
 @estimation_projects_router.post("/", response={201: EstimationProjectSchema})
+@require_authenticated
 def create_estimation_project(request: HttpRequest, payload: CreateEstimationProjectDto):
     """Create a new estimation project."""
     project = EstimationProjectService.create_project(payload, request.user)
@@ -177,24 +179,28 @@ def create_estimation_project(request: HttpRequest, payload: CreateEstimationPro
 
 
 @estimation_projects_router.get("/{project_id}/", response=EstimationProjectSchema)
+@require_authenticated
 def get_estimation_project(request: HttpRequest, project_id: UUID):
     """Get a single estimation project by ID."""
     return EstimationProjectService.get_project(project_id, request.user)
 
 
 @estimation_projects_router.patch("/{project_id}/", response=EstimationProjectSchema)
+@require_authenticated
 def update_estimation_project(request: HttpRequest, project_id: UUID, payload: UpdateEstimationProjectDto):
     """Update an estimation project."""
     return EstimationProjectService.update_project(project_id, payload, request.user)
 
 
 @estimation_projects_router.delete("/{project_id}/", response=EstimationProjectSchema)
+@require_authenticated
 def delete_estimation_project(request: HttpRequest, project_id: UUID):
     """Soft-delete an estimation project (set to Canceled)."""
     return EstimationProjectService.delete_project(project_id, request.user)
 
 
 @estimation_projects_router.post("/{project_id}/convert/", response=ConvertEstimationResponseDto)
+@require_authenticated
 def convert_to_project(request: HttpRequest, project_id: UUID):
     """Convert an accepted estimation into a ConstructionProject.
 
@@ -236,7 +242,7 @@ concept_families_router = Router(tags=["Concept Catalog"])
     "/projects/{project_id}/concept-families/",
     response=List[ConceptFamilySchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_families(request: HttpRequest, project_id: UUID):
     """List all concept families for a project."""
     families = ConceptCatalogService.list_families(project_id, request.user)
@@ -247,7 +253,7 @@ def list_families(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/concept-families/",
     response={201: ConceptFamilySchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_family(request: HttpRequest, project_id: UUID, payload: CreateConceptFamilyDto):
     """Create a new concept family."""
     payload.projectid = project_id
@@ -259,7 +265,7 @@ def create_family(request: HttpRequest, project_id: UUID, payload: CreateConcept
     "/concept-families/{family_id}/",
     response=ConceptFamilySchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_family(request: HttpRequest, family_id: UUID, payload: UpdateConceptFamilyDto):
     """Update a concept family."""
     family = ConceptCatalogService.update_family(family_id, payload, request.user)
@@ -270,7 +276,7 @@ def update_family(request: HttpRequest, family_id: UUID, payload: UpdateConceptF
     "/concept-families/{family_id}/",
     response=ConceptFamilySchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_family(request: HttpRequest, family_id: UUID):
     """Soft delete a concept family."""
     family = ConceptCatalogService.delete_family(family_id, request.user)
@@ -281,7 +287,7 @@ def delete_family(request: HttpRequest, family_id: UUID):
     "/concept-families/{family_id}/subfamilies/",
     response=List[ConceptSubfamilySchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_subfamilies(request: HttpRequest, family_id: UUID):
     """List all subfamilies for a given family."""
     subfamilies = ConceptCatalogService.list_subfamilies(family_id, request.user)
@@ -292,7 +298,7 @@ def list_subfamilies(request: HttpRequest, family_id: UUID):
     "/concept-families/{family_id}/subfamilies/",
     response={201: ConceptSubfamilySchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_subfamily(request: HttpRequest, family_id: UUID, payload: CreateConceptSubfamilyDto):
     """Create a new concept subfamily."""
     payload.familyid = family_id
@@ -304,7 +310,7 @@ def create_subfamily(request: HttpRequest, family_id: UUID, payload: CreateConce
     "/concept-subfamilies/{subfamily_id}/",
     response=ConceptSubfamilySchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_subfamily(request: HttpRequest, subfamily_id: UUID, payload: UpdateConceptSubfamilyDto):
     """Update a concept subfamily."""
     subfamily = ConceptCatalogService.update_subfamily(subfamily_id, payload, request.user)
@@ -315,7 +321,7 @@ def update_subfamily(request: HttpRequest, subfamily_id: UUID, payload: UpdateCo
     "/concept-subfamilies/{subfamily_id}/",
     response=ConceptSubfamilySchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_subfamily(request: HttpRequest, subfamily_id: UUID):
     """Soft delete a concept subfamily."""
     subfamily = ConceptCatalogService.delete_subfamily(subfamily_id, request.user)
@@ -333,7 +339,7 @@ budget_concepts_router = Router(tags=["Budget Concepts"])
     "/projects/{project_id}/concepts/",
     response=List[BudgetConceptSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_concepts(
     request: HttpRequest,
     project_id: UUID,
@@ -354,7 +360,7 @@ def list_concepts(
     "/projects/{project_id}/concepts/",
     response={201: BudgetConceptSchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_concept(request: HttpRequest, project_id: UUID, payload: CreateBudgetConceptDto):
     """Create a new budget concept."""
     payload.projectid = project_id
@@ -366,7 +372,7 @@ def create_concept(request: HttpRequest, project_id: UUID, payload: CreateBudget
     "/concepts/{concept_id}/",
     response=BudgetConceptSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_concept(request: HttpRequest, concept_id: UUID):
     """Get a single budget concept by ID."""
     concept = ConceptCatalogService.get_concept(concept_id, request.user)
@@ -377,7 +383,7 @@ def get_concept(request: HttpRequest, concept_id: UUID):
     "/concepts/{concept_id}/",
     response=BudgetConceptSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_concept(request: HttpRequest, concept_id: UUID, payload: UpdateBudgetConceptDto):
     """Update a budget concept."""
     concept = ConceptCatalogService.update_concept(concept_id, payload, request.user)
@@ -388,7 +394,7 @@ def update_concept(request: HttpRequest, concept_id: UUID, payload: UpdateBudget
     "/concepts/{concept_id}/",
     response=BudgetConceptSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_concept(request: HttpRequest, concept_id: UUID):
     """Soft delete a budget concept."""
     concept = ConceptCatalogService.delete_concept(concept_id, request.user)
@@ -399,7 +405,7 @@ def delete_concept(request: HttpRequest, concept_id: UUID):
     "/concepts/{concept_id}/recalculate/",
     response=BudgetConceptSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def recalculate_concept(request: HttpRequest, concept_id: UUID):
     """Recalculate a concept's costs from its breakdown lines."""
     concept = ConceptCatalogService.recalculate_concept(concept_id, request.user)
@@ -410,7 +416,7 @@ def recalculate_concept(request: HttpRequest, concept_id: UUID):
     "/concepts/{concept_id}/breakdowns/",
     response=List[UnitCostBreakdownSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_breakdowns(
     request: HttpRequest,
     concept_id: UUID,
@@ -429,7 +435,7 @@ def list_breakdowns(
     "/concepts/{concept_id}/breakdowns/",
     response={201: UnitCostBreakdownSchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_breakdown(request: HttpRequest, concept_id: UUID, payload: CreateUnitCostBreakdownDto):
     """Create a new unit cost breakdown line."""
     payload.conceptid = concept_id
@@ -441,6 +447,7 @@ def create_breakdown(request: HttpRequest, concept_id: UUID, payload: CreateUnit
     "/concepts/{concept_id}/breakdowns/bulk/",
     response={201: List[UnitCostBreakdownSchema]},
 )
+@require_authenticated
 def bulk_create_breakdowns(
     request: HttpRequest, concept_id: UUID, payload: List[CreateUnitCostBreakdownDto]
 ):
@@ -455,7 +462,7 @@ def bulk_create_breakdowns(
     "/breakdowns/{breakdown_id}/",
     response=UnitCostBreakdownSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_breakdown(request: HttpRequest, breakdown_id: UUID, payload: UpdateUnitCostBreakdownDto):
     """Update a unit cost breakdown line."""
     breakdown = UnitCostBreakdownService.update_breakdown(breakdown_id, payload, request.user)
@@ -466,7 +473,7 @@ def update_breakdown(request: HttpRequest, breakdown_id: UUID, payload: UpdateUn
     "/breakdowns/{breakdown_id}/",
     response=UnitCostBreakdownSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_breakdown(request: HttpRequest, breakdown_id: UUID):
     """Soft delete a unit cost breakdown line."""
     breakdown = UnitCostBreakdownService.delete_breakdown(breakdown_id, request.user)
@@ -477,7 +484,7 @@ def delete_breakdown(request: HttpRequest, breakdown_id: UUID):
     "/concepts/{concept_id}/breakdowns/auto-generate-hm-epp/",
     response={201: List[UnitCostBreakdownSchema]},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def auto_generate_hm_epp(request: HttpRequest, concept_id: UUID):
     """Auto generate Minor Tools (HM) and PPE breakdown lines from labor cost."""
     lines = UnitCostBreakdownService.auto_generate_hm_epp(concept_id, request.user)
@@ -488,6 +495,7 @@ def auto_generate_hm_epp(request: HttpRequest, concept_id: UUID):
     "/concepts/{concept_id}/breakdowns/auto-generate-skeleton/",
     response={201: List[UnitCostBreakdownSchema]},
 )
+@require_authenticated
 def auto_generate_skeleton(request: HttpRequest, concept_id: UUID, payload: AutoGenerateSkeletonDto):
     """Auto-generate skeleton breakdown lines based on subfamily and unit matching rules."""
     lines = UnitCostBreakdownService.auto_generate_skeleton(
@@ -501,6 +509,7 @@ def auto_generate_skeleton(request: HttpRequest, concept_id: UUID, payload: Auto
     "/breakdowns/{breakdown_id}/duplicate/",
     response={201: UnitCostBreakdownSchema},
 )
+@require_authenticated
 def duplicate_breakdown_line(request: HttpRequest, breakdown_id: UUID):
     """Duplicate a breakdown line within the same concept and category."""
     service = UnitCostBreakdownService()
@@ -512,6 +521,7 @@ def duplicate_breakdown_line(request: HttpRequest, breakdown_id: UUID):
     "/concepts/{concept_id}/breakdowns/copy-from/{source_concept_id}/",
     response={201: List[UnitCostBreakdownSchema]},
 )
+@require_authenticated
 def copy_breakdowns_from_concept(
     request: HttpRequest, concept_id: UUID, source_concept_id: UUID
 ):
@@ -526,6 +536,7 @@ def copy_breakdowns_from_concept(
 @budget_concepts_router.get(
     "/projects/{project_id}/concepts/export-excel/",
 )
+@require_authenticated
 def export_concepts_excel(request: HttpRequest, project_id: UUID):
     """Export all active concepts for a project as an 8-column .xlsx file."""
     from django.http import HttpResponse
@@ -547,6 +558,7 @@ def export_concepts_excel(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/concepts/analyze-excel/",
     response=AnalyzeConceptExcelResponseSchema,
 )
+@require_authenticated
 def analyze_excel(request: HttpRequest, project_id: UUID, file: UploadedFile = File(...)):
     """Analyze an uploaded 8-column Excel file and classify rows as new/skip/error."""
     return ConceptExcelService.analyze(project_id, file, request.user)
@@ -556,6 +568,7 @@ def analyze_excel(request: HttpRequest, project_id: UUID, file: UploadedFile = F
     "/projects/{project_id}/concepts/import-excel/",
     response=ImportConceptExcelResponseSchema,
 )
+@require_authenticated
 def import_excel(request: HttpRequest, project_id: UUID, payload: ImportConceptExcelRequestDto):
     """Import new concepts from a previously analyzed 8-column Excel file."""
     return ConceptExcelService.import_(project_id, payload, request.user)
@@ -566,6 +579,7 @@ def import_excel(request: HttpRequest, project_id: UUID, payload: ImportConceptE
 @budget_concepts_router.get(
     "/projects/{project_id}/breakdowns/export-excel/",
 )
+@require_authenticated
 def export_breakdown_excel(request: HttpRequest, project_id: UUID):
     """Export the project's CDU (unit cost breakdowns) to an .xlsx file."""
     from django.http import HttpResponse
@@ -588,6 +602,7 @@ def export_breakdown_excel(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/cdu-report/",
     response=CduReportSchema,
 )
+@require_authenticated
 def cdu_report(request: HttpRequest, project_id: UUID):
     """Full CDU (all concepts + breakdown lines + CDU totals) for PDF/print reports."""
     from apps.proyeccion.services import UnitCostBreakdownService
@@ -598,6 +613,7 @@ def cdu_report(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/breakdowns/analyze-excel/",
     response=AnalyzeBreakdownsResponseSchema,
 )
+@require_authenticated
 def analyze_breakdown_excel(
     request: HttpRequest,
     project_id: UUID,
@@ -612,6 +628,7 @@ def analyze_breakdown_excel(
     "/projects/{project_id}/breakdowns/import-excel/",
     response=ImportBreakdownsResponseSchema,
 )
+@require_authenticated
 def import_breakdown_excel(
     request: HttpRequest,
     project_id: UUID,
@@ -633,7 +650,7 @@ indirect_cost_details_router = Router(tags=["Indirect Cost Details"])
     "/projects/{project_id}/indirect-cost-details/",
     response=List[IndirectCostDetailSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_indirect_cost_details(
     request: HttpRequest,
     project_id: UUID,
@@ -648,7 +665,7 @@ def list_indirect_cost_details(
     "/projects/{project_id}/indirect-cost-details/",
     response={201: IndirectCostDetailSchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_indirect_cost_detail(request: HttpRequest, project_id: UUID, payload: CreateIndirectCostDetailDto):
     """Create a new indirect cost detail line."""
     payload.projectid = project_id
@@ -660,7 +677,7 @@ def create_indirect_cost_detail(request: HttpRequest, project_id: UUID, payload:
     "/indirect-cost-details/{detail_id}/",
     response=IndirectCostDetailSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_indirect_cost_detail(request: HttpRequest, detail_id: UUID, payload: UpdateIndirectCostDetailDto):
     """Update an indirect cost detail line."""
     detail = IndirectCostDetailService.update_detail(detail_id, payload, request.user)
@@ -671,7 +688,7 @@ def update_indirect_cost_detail(request: HttpRequest, detail_id: UUID, payload: 
     "/indirect-cost-details/{detail_id}/",
     response=IndirectCostDetailSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_indirect_cost_detail(request: HttpRequest, detail_id: UUID):
     """Soft delete an indirect cost detail line."""
     detail = IndirectCostDetailService.delete_detail(detail_id, request.user)
@@ -682,7 +699,7 @@ def delete_indirect_cost_detail(request: HttpRequest, detail_id: UUID):
     "/projects/{project_id}/indirect-cost-details/apply-template/",
     response={201: List[IndirectCostDetailSchema]},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def apply_indirect_cost_template(request: HttpRequest, project_id: UUID, payload: ApplyTemplateDto):
     """Apply an indirect cost template to a project."""
     details = IndirectCostDetailService.apply_template(project_id, payload.projectsize, request.user)
@@ -693,7 +710,7 @@ def apply_indirect_cost_template(request: HttpRequest, project_id: UUID, payload
     "/projects/{project_id}/indirect-cost-details/prorate/",
     response=List[BudgetConceptSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def prorate_indirect_costs(request: HttpRequest, project_id: UUID):
     """Prorate indirect costs proportionally across all active concepts."""
     concepts = IndirectCostDetailService.prorate_to_concepts(project_id, request.user)
@@ -704,7 +721,7 @@ def prorate_indirect_costs(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/indirect-cost-details/compute-bonds/",
     response=List[IndirectCostDetailSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def compute_bond_and_tax_lines(request: HttpRequest, project_id: UUID, payload: ComputeBondsOverridesDto):
     """Calcula (upsert) las líneas de fianzas, seguros e impuestos del estudio."""
     lines = IndirectCostDetailService.compute_bond_and_tax_lines(
@@ -717,7 +734,7 @@ def compute_bond_and_tax_lines(request: HttpRequest, project_id: UUID, payload: 
     "/indirect-cost-details/{detail_id}/checklist/",
     response=IndirectCostDetailSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def set_indirect_checklist_state(request: HttpRequest, detail_id: UUID, payload: SetChecklistStateDto):
     """Setea applies/percentofsale (vista checklist de externos) y recalcula importe."""
     return IndirectCostDetailService.set_checklist_state(
@@ -728,7 +745,7 @@ def set_indirect_checklist_state(request: HttpRequest, detail_id: UUID, payload:
     "/projects/{project_id}/indirect-cost-details/seed-externals/",
     response=List[IndirectCostDetailSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def seed_external_checklist(request: HttpRequest, project_id: UUID):
     """Siembra las líneas del checklist de externos (C7/C8) en applies=NA."""
     return IndirectCostDetailService.seed_external_checklist(project_id, request.user)
@@ -738,7 +755,7 @@ def seed_external_checklist(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/indirect-cost-details/total/",
     response=Decimal,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_indirect_cost_total(request: HttpRequest, project_id: UUID):
     """Get total indirect cost amount for a project."""
     total = IndirectCostDetailService.get_total(project_id, request.user)
@@ -751,6 +768,7 @@ def get_indirect_cost_total(request: HttpRequest, project_id: UUID):
 @indirect_cost_details_router.get(
     "/projects/{project_id}/indirect-cost-details/export-excel/",
 )
+@require_authenticated
 def export_indirect_excel(request: HttpRequest, project_id: UUID):
     """Export the project's indirect costs to an .xlsx file."""
     from django.http import HttpResponse
@@ -773,6 +791,7 @@ def export_indirect_excel(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/indirect-cost-details/analyze-excel/",
     response=AnalyzeIndirectsResponseSchema,
 )
+@require_authenticated
 def analyze_indirect_excel(
     request: HttpRequest,
     project_id: UUID,
@@ -787,6 +806,7 @@ def analyze_indirect_excel(
     "/projects/{project_id}/indirect-cost-details/import-excel/",
     response=ImportIndirectsResponseSchema,
 )
+@require_authenticated
 def import_indirect_excel(
     request: HttpRequest,
     project_id: UUID,
@@ -808,7 +828,7 @@ offer_alternatives_router = Router(tags=["Offer Alternatives"])
     "/projects/{project_id}/alternatives/",
     response=List[OfferAlternativeSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_alternatives(request: HttpRequest, project_id: UUID):
     """List all offer alternatives for a project."""
     alternatives = OfferAlternativeService.list_alternatives(project_id, request.user)
@@ -819,7 +839,7 @@ def list_alternatives(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/alternative-base-costs/",
     response=AlternativeBaseCostsSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_alternative_base_costs(request: HttpRequest, project_id: UUID):
     """Costos base (directo/indirecto) del proyecto para el resumen en vivo del form."""
     return OfferAlternativeService.get_base_costs(project_id)
@@ -829,7 +849,7 @@ def get_alternative_base_costs(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/alternatives/",
     response={201: OfferAlternativeSchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_alternative(request: HttpRequest, project_id: UUID, payload: CreateOfferAlternativeDto):
     """Create a new offer alternative."""
     payload.projectid = project_id
@@ -841,7 +861,7 @@ def create_alternative(request: HttpRequest, project_id: UUID, payload: CreateOf
     "/alternatives/{alternative_id}/",
     response=OfferAlternativeSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_alternative(request: HttpRequest, alternative_id: UUID, payload: UpdateOfferAlternativeDto):
     """Update an offer alternative."""
     alternative = OfferAlternativeService.update_alternative(alternative_id, payload, request.user)
@@ -852,7 +872,7 @@ def update_alternative(request: HttpRequest, alternative_id: UUID, payload: Upda
     "/alternatives/{alternative_id}/",
     response=OfferAlternativeSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_alternative(request: HttpRequest, alternative_id: UUID):
     """Soft delete an offer alternative."""
     alternative = OfferAlternativeService.delete_alternative(alternative_id, request.user)
@@ -863,7 +883,7 @@ def delete_alternative(request: HttpRequest, alternative_id: UUID):
     "/alternatives/{alternative_id}/choose/",
     response=OfferAlternativeSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def choose_alternative(request: HttpRequest, alternative_id: UUID):
     """Mark an alternative as chosen and unmark all others for the same project."""
     alternative = OfferAlternativeService.choose_alternative(alternative_id, request.user)
@@ -881,7 +901,7 @@ supply_explosion_router = Router(tags=["Supply Explosion"])
     "/projects/{project_id}/supply-explosion/auxiliary/",
     response=List[SupplyExplosionItemSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_auxiliary_supply_explosion(request: HttpRequest, project_id: UUID):
     """Get auxiliary supply explosion (per concept, per breakdown line)."""
     lines = SupplyExplosionService.generate_auxiliary(project_id, request.user)
@@ -892,7 +912,7 @@ def get_auxiliary_supply_explosion(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/supply-explosion/consolidated/",
     response=List[SupplyExplosionConsolidatedSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_consolidated_supply_explosion(request: HttpRequest, project_id: UUID):
     """Get consolidated supply explosion grouped by supply code."""
     lines = SupplyExplosionService.generate_consolidated(project_id, request.user)
@@ -903,7 +923,7 @@ def get_consolidated_supply_explosion(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/supply-explosion/lag/",
     response=dict,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def set_supply_lag(request: HttpRequest, project_id: UUID, payload: SetSupplyLagDto):
     """Setea el lag de pago de un insumo (bulk a todas sus líneas)."""
     n = SupplyExplosionService.set_supply_lag(
@@ -914,6 +934,7 @@ def set_supply_lag(request: HttpRequest, project_id: UUID, payload: SetSupplyLag
 @supply_explosion_router.get(
     "/projects/{project_id}/supply-explosion/export-excel/",
 )
+@require_authenticated
 def export_supply_explosion_excel(request: HttpRequest, project_id: UUID):
     """Export both Auxiliar and Consolidado supply explosion views to an .xlsx file.
 
@@ -947,7 +968,7 @@ workplan_router = Router(tags=["Work Plan"])
     "/projects/{project_id}/workplan/",
     response=List[WorkPlanEntrySchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_workplan_entries(
     request: HttpRequest,
     project_id: UUID,
@@ -965,6 +986,7 @@ def list_workplan_entries(
     "/projects/{project_id}/workplan/matrix/",
     response=WorkPlanMatrixSchema,
 )
+@require_authenticated
 def get_workplan_matrix(request: HttpRequest, project_id: UUID):
     """Return the full Plan de Obra matrix (family → subfamily → concept × period).
 
@@ -977,6 +999,7 @@ def get_workplan_matrix(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/workplan/summary/",
     response=WorkPlanSummarySchema,
 )
+@require_authenticated
 def get_workplan_summary(request: HttpRequest, project_id: UUID):
     """Return per-family summary: contract, planned, actual amounts + percent advance."""
     return WorkPlanService.get_summary(project_id, request.user)
@@ -986,7 +1009,7 @@ def get_workplan_summary(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/workplan/",
     response={201: WorkPlanEntrySchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_workplan_entry(request: HttpRequest, project_id: UUID, payload: CreateWorkPlanEntryDto):
     """Create a work plan entry."""
     payload.projectid = project_id
@@ -998,7 +1021,7 @@ def create_workplan_entry(request: HttpRequest, project_id: UUID, payload: Creat
     "/workplan/{entry_id}/",
     response=WorkPlanEntrySchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_workplan_entry(request: HttpRequest, entry_id: UUID, payload: UpdateWorkPlanEntryDto):
     """Update a work plan entry."""
     entry = WorkPlanService.update_entry(entry_id, payload, request.user)
@@ -1009,7 +1032,7 @@ def update_workplan_entry(request: HttpRequest, entry_id: UUID, payload: UpdateW
     "/workplan/{entry_id}/",
     response={204: None},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_workplan_entry(request: HttpRequest, entry_id: UUID):
     """Delete a work plan entry."""
     WorkPlanService.delete_entry(entry_id, request.user)
@@ -1020,7 +1043,7 @@ def delete_workplan_entry(request: HttpRequest, entry_id: UUID):
     "/projects/{project_id}/workplan/bulk-distribute/",
     response={201: List[WorkPlanEntrySchema]},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def bulk_distribute_workplan(request: HttpRequest, project_id: UUID, payload: BulkWorkPlanDto):
     """Bulk create/update work plan entries."""
     payload.projectid = project_id
@@ -1039,7 +1062,7 @@ analysis_router = Router(tags=["Budget Analysis"])
     "/projects/{project_id}/temporal-distribution/",
     response=List[TemporalDistributionSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_temporal_distribution(request: HttpRequest, project_id: UUID):
     """Get temporal distribution of invoiced, cost, and result per period."""
     distribution = TemporalDistributionService.calculate(project_id, request.user)
@@ -1050,7 +1073,7 @@ def get_temporal_distribution(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/budget-summary/",
     response=ProjectBudgetSummarySchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def get_budget_summary(request: HttpRequest, project_id: UUID):
     """Get project budget summary with totals and chosen alternative info."""
     from apps.proyeccion.models import (
@@ -1103,7 +1126,7 @@ supply_catalog_router = Router(tags=["Supply Catalog"])
     "/supply-catalog/",
     response=List[SupplyCatalogItemSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_supply_catalog_items(
     request: HttpRequest,
     search: Optional[str] = None,
@@ -1123,7 +1146,7 @@ def list_supply_catalog_items(
     "/supply-catalog/",
     response={201: SupplyCatalogItemSchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_supply_catalog_item(request: HttpRequest, payload: CreateSupplyCatalogItemDto):
     """Create a new supply catalog item."""
     item = SupplyCatalogService.create_item(payload, request.user)
@@ -1134,7 +1157,7 @@ def create_supply_catalog_item(request: HttpRequest, payload: CreateSupplyCatalo
     "/supply-catalog/{item_id}/",
     response=SupplyCatalogItemSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_supply_catalog_item(request: HttpRequest, item_id: UUID, payload: UpdateSupplyCatalogItemDto):
     """Update a supply catalog item."""
     item = SupplyCatalogService.update_item(item_id, payload, request.user)
@@ -1145,7 +1168,7 @@ def update_supply_catalog_item(request: HttpRequest, item_id: UUID, payload: Upd
     "/supply-catalog/{item_id}/",
     response=SupplyCatalogItemSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_supply_catalog_item(request: HttpRequest, item_id: UUID):
     """Soft delete a supply catalog item."""
     item = SupplyCatalogService.delete_item(item_id, request.user)
@@ -1163,7 +1186,7 @@ equipment_yields_router = Router(tags=["Equipment Yields"])
     "/equipment-yields/",
     response=List[EquipmentYieldSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_equipment_yields(
     request: HttpRequest,
     category: Optional[str] = None,
@@ -1177,7 +1200,7 @@ def list_equipment_yields(
     "/equipment-yields/",
     response={201: EquipmentYieldSchema},
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def create_equipment_yield(request: HttpRequest, payload: CreateEquipmentYieldDto):
     """Create a new equipment yield record."""
     eq_yield = EquipmentYieldService.create_yield(payload, request.user)
@@ -1188,7 +1211,7 @@ def create_equipment_yield(request: HttpRequest, payload: CreateEquipmentYieldDt
     "/equipment-yields/{yield_id}/",
     response=EquipmentYieldSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def update_equipment_yield(request: HttpRequest, yield_id: UUID, payload: UpdateEquipmentYieldDto):
     """Update an equipment yield record."""
     eq_yield = EquipmentYieldService.update_yield(yield_id, payload, request.user)
@@ -1199,7 +1222,7 @@ def update_equipment_yield(request: HttpRequest, yield_id: UUID, payload: Update
     "/equipment-yields/{yield_id}/",
     response=EquipmentYieldSchema,
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def delete_equipment_yield(request: HttpRequest, yield_id: UUID):
     """Soft delete an equipment yield record."""
     eq_yield = EquipmentYieldService.delete_yield(yield_id, request.user)
@@ -1217,7 +1240,7 @@ indirect_cost_templates_router = Router(tags=["Indirect Cost Templates"])
     "/indirect-cost-templates/",
     response=List[IndirectCostTemplateSchema],
 )
-# TODO: Add @require_permission decorator during integration
+@require_authenticated
 def list_indirect_cost_templates(
     request: HttpRequest,
     projectsize: Optional[int] = None,
@@ -1240,6 +1263,7 @@ concept_price_catalog_router = Router(tags=["Concept Price Catalog"])
     "/concept-price-catalog/",
     response=List[ConceptPriceCatalogItemListSchema],
 )
+@require_authenticated
 def list_concept_price_catalog(
     request: HttpRequest,
     search: Optional[str] = None,
@@ -1259,6 +1283,7 @@ def list_concept_price_catalog(
     "/concept-price-catalog/references/",
     response={201: ConceptPriceReferenceSchema},
 )
+@require_authenticated
 def create_concept_price_reference(
     request: HttpRequest, payload: CreateConceptPriceReferenceDto,
 ):
@@ -1271,6 +1296,7 @@ def create_concept_price_reference(
     "/concept-price-catalog/references/{reference_id}/",
     response=ConceptPriceReferenceSchema,
 )
+@require_authenticated
 def delete_concept_price_reference(request: HttpRequest, reference_id: UUID):
     """Soft delete a price reference."""
     return ConceptPriceCatalogService.delete_reference(reference_id, request.user)
@@ -1282,6 +1308,7 @@ def delete_concept_price_reference(request: HttpRequest, reference_id: UUID):
     "/concept-price-catalog/{item_id}/",
     response=ConceptPriceCatalogItemSchema,
 )
+@require_authenticated
 def get_concept_price_catalog_item(request: HttpRequest, item_id: UUID):
     """Get a single catalog item with all its price references."""
     return ConceptPriceCatalogService.get_item(item_id)
@@ -1291,6 +1318,7 @@ def get_concept_price_catalog_item(request: HttpRequest, item_id: UUID):
     "/concept-price-catalog/",
     response={201: ConceptPriceCatalogItemListSchema},
 )
+@require_authenticated
 def create_concept_price_catalog_item(
     request: HttpRequest, payload: CreateConceptPriceCatalogItemDto,
 ):
@@ -1303,6 +1331,7 @@ def create_concept_price_catalog_item(
     "/concept-price-catalog/{item_id}/",
     response=ConceptPriceCatalogItemListSchema,
 )
+@require_authenticated
 def update_concept_price_catalog_item(
     request: HttpRequest, item_id: UUID, payload: UpdateConceptPriceCatalogItemDto,
 ):
@@ -1314,6 +1343,7 @@ def update_concept_price_catalog_item(
     "/concept-price-catalog/{item_id}/",
     response=ConceptPriceCatalogItemListSchema,
 )
+@require_authenticated
 def delete_concept_price_catalog_item(request: HttpRequest, item_id: UUID):
     """Soft delete a concept price catalog item."""
     return ConceptPriceCatalogService.delete_item(item_id, request.user)
@@ -1323,6 +1353,7 @@ def delete_concept_price_catalog_item(request: HttpRequest, item_id: UUID):
     "/concept-price-catalog/{item_id}/references/",
     response=List[ConceptPriceReferenceSchema],
 )
+@require_authenticated
 def list_concept_price_references(request: HttpRequest, item_id: UUID):
     """List price references for a catalog item."""
     return list(ConceptPriceCatalogService.list_references(item_id))
@@ -1339,6 +1370,7 @@ family_templates_router = Router(tags=["Family Templates"])
     "/family-templates/",
     response=List[FamilyTemplateSetListSchema],
 )
+@require_authenticated
 def list_family_templates(
     request: HttpRequest, category: Optional[str] = None, search: Optional[str] = None
 ):
@@ -1351,6 +1383,7 @@ def list_family_templates(
     "/family-templates/save-from-project/",
     response={201: FamilyTemplateSetSchema},
 )
+@require_authenticated
 def save_project_as_template(request: HttpRequest, payload: SaveProjectAsTemplateDto):
     """Save a project's family/subfamily structure as a reusable template."""
     ts = FamilyTemplateService.save_project_as_template(payload, request.user)
@@ -1361,6 +1394,7 @@ def save_project_as_template(request: HttpRequest, payload: SaveProjectAsTemplat
     "/family-templates/apply-to-project/",
     response={201: List[ConceptFamilySchema]},
 )
+@require_authenticated
 def apply_template_to_project(request: HttpRequest, payload: ApplyFamilyTemplateDto):
     """Apply a family template to a project, creating families and subfamilies."""
     created = FamilyTemplateService.apply_template_to_project(payload, request.user)
@@ -1372,6 +1406,7 @@ def apply_template_to_project(request: HttpRequest, payload: ApplyFamilyTemplate
     "/family-templates/{template_set_id}/",
     response=FamilyTemplateSetSchema,
 )
+@require_authenticated
 def get_family_template(request: HttpRequest, template_set_id: UUID):
     """Get a single template set with all its items."""
     return FamilyTemplateService.get_template_set(template_set_id, request.user)
@@ -1381,6 +1416,7 @@ def get_family_template(request: HttpRequest, template_set_id: UUID):
     "/family-templates/{template_set_id}/",
     response=FamilyTemplateSetListSchema,
 )
+@require_authenticated
 def delete_family_template(request: HttpRequest, template_set_id: UUID):
     """Soft-delete a template set. System templates cannot be deleted."""
     return FamilyTemplateService.delete_template_set(template_set_id, request.user)
@@ -1397,6 +1433,7 @@ distribution_router = Router(tags=["Temporal Distribution"])
     "/projects/{project_id}/projection-periods/",
     response=List[ProjectionPeriodDto],
 )
+@require_authenticated
 def list_projection_periods(request: HttpRequest, project_id: UUID):
     """List all projection periods for an estimation project."""
     EstimationProjectService.get_project(project_id, request.user)  # raises NotFound if missing
@@ -1409,6 +1446,7 @@ def list_projection_periods(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/projection-periods/regenerate/",
     response={200: RegenerateResult, 400: dict, 409: dict},
 )
+@require_authenticated
 def regenerate_projection_periods(request: HttpRequest, project_id: UUID, confirm: bool = False):
     """Regenerate periods from estimatedstart/end + periodtype. Idempotent.
 
@@ -1429,6 +1467,7 @@ def regenerate_projection_periods(request: HttpRequest, project_id: UUID, confir
     "/projects/{project_id}/cost-distribution/",
     response=DistributionPayloadDto,
 )
+@require_authenticated
 def get_cost_distribution(request: HttpRequest, project_id: UUID):
     """Full distribution matrix + rollups for the project."""
     project = EstimationProjectService.get_project(project_id, request.user)
@@ -1439,6 +1478,7 @@ def get_cost_distribution(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/cost-distribution/bulk/",
     response={200: BulkEditOkResponse, 409: ConflictResponse, 400: dict},
 )
+@require_authenticated
 def patch_cost_distribution_bulk(request: HttpRequest, project_id: UUID, payload: BulkEditRequest):
     """Apply multiple cell edits and/or per-line lag edits atomically."""
     project = EstimationProjectService.get_project(project_id, request.user)
@@ -1474,6 +1514,7 @@ def patch_cost_distribution_bulk(request: HttpRequest, project_id: UUID, payload
     "/projects/{project_id}/cost-distribution/autofill/",
     response={200: AutofillResponse, 400: dict},
 )
+@require_authenticated
 def autofill_cost_distribution(request: HttpRequest, project_id: UUID, payload: AutofillRequest):
     """Fill distribution automatically with a given strategy + scope."""
     project = EstimationProjectService.get_project(project_id, request.user)
@@ -1499,6 +1540,7 @@ def autofill_cost_distribution(request: HttpRequest, project_id: UUID, payload: 
     "/projects/{project_id}/cost-distribution/reset-line/",
     response={200: dict},
 )
+@require_authenticated
 def reset_cost_distribution_line(request: HttpRequest, project_id: UUID, payload: ResetLineRequest):
     """Revert a line to derived values (discards manual edits for that line)."""
     project = EstimationProjectService.get_project(project_id, request.user)
@@ -1512,6 +1554,7 @@ def reset_cost_distribution_line(request: HttpRequest, project_id: UUID, payload
     "/projects/{project_id}/cost-distribution/presence/",
     response=PresenceResponse,
 )
+@require_authenticated
 def get_presence(request: HttpRequest, project_id: UUID):
     """List active users viewing/editing the distribution tab."""
     project = EstimationProjectService.get_project(project_id, request.user)
@@ -1533,6 +1576,7 @@ def get_presence(request: HttpRequest, project_id: UUID):
     "/projects/{project_id}/cost-distribution/presence/heartbeat/",
     response={200: dict},
 )
+@require_authenticated
 def presence_heartbeat(request: HttpRequest, project_id: UUID, payload: HeartbeatRequest):
     """Refresh user presence; call every ~30s from the frontend."""
     project = EstimationProjectService.get_project(project_id, request.user)
