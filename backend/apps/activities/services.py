@@ -90,10 +90,14 @@ class ActivityService:
             }
         # Meeting and Note types: base activity only, no child record needed
 
-        try:
-            owner = SystemUser.objects.get(systemuserid=payload.ownerid)
-        except SystemUser.DoesNotExist:
-            owner = None
+        # Avoid an extra SystemUser query when the owner is the acting user (common case).
+        if payload.ownerid == user.systemuserid:
+            owner = user
+        else:
+            try:
+                owner = SystemUser.objects.get(systemuserid=payload.ownerid)
+            except SystemUser.DoesNotExist:
+                owner = None
 
         if owner is not None:
             from apps.notifications.signals import activity_assigned
