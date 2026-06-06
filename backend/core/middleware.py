@@ -78,14 +78,16 @@ class DevAutoLoginMiddleware:
     Auto-authenticate requests with a SystemUser in DEBUG mode.
 
     Enables frontend development without a real login flow. Only active when
-    settings.DEBUG is True and the request is not already authenticated.
+    BOTH settings.DEBUG and settings.DEV_AUTOLOGIN are True and the request is
+    not already authenticated.
 
     Resolution order for the dev user:
       1. DEBUG_USER_EMAIL env var (if set) → lookup by emailaddress1
       2. First enabled SystemUser (fallback, preserves previous behavior)
 
-    Emits a WARNING log on activation and refuses to run if DEBUG is False —
-    belt-and-suspenders against misconfiguration reaching production.
+    Emits a WARNING log on activation and refuses to run unless DEV_AUTOLOGIN is
+    explicitly enabled (defaults to False) — so production fails CLOSED even if
+    DEBUG is accidentally left True.
 
     Must be placed AFTER AuthenticationMiddleware in MIDDLEWARE.
     """
@@ -114,7 +116,9 @@ class DevAutoLoginMiddleware:
     def __call__(self, request):
         from django.conf import settings
 
-        if not settings.DEBUG:
+        # Fail closed: require an explicit opt-in flag in addition to DEBUG, so a
+        # production deploy that accidentally leaves DEBUG=True does NOT auto-login.
+        if not (settings.DEBUG and getattr(settings, 'DEV_AUTOLOGIN', False)):
             return self.get_response(request)
 
         if hasattr(request, 'user') and not request.user.is_authenticated:
