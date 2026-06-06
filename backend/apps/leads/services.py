@@ -449,17 +449,25 @@ class LeadService(BaseReadService[Lead]):
         qualified_leads = queryset.filter(statecode=LeadStateCode.QUALIFIED).count()
         disqualified_leads = queryset.filter(statecode=LeadStateCode.DISQUALIFIED).count()
 
-        # Count by quality
-        leads_by_quality = {}
-        for quality_code in LeadQualityCode:
-            count = queryset.filter(leadqualitycode=quality_code.value).count()
-            leads_by_quality[quality_code.label] = count
+        # Count by quality — single GROUP BY instead of one COUNT per enum value
+        quality_counts = {
+            row['leadqualitycode']: row['count']
+            for row in queryset.values('leadqualitycode').annotate(count=Count('leadid'))
+        }
+        leads_by_quality = {
+            quality_code.label: quality_counts.get(quality_code.value, 0)
+            for quality_code in LeadQualityCode
+        }
 
-        # Count by source
-        leads_by_source = {}
-        for source_code in LeadSourceCode:
-            count = queryset.filter(leadsourcecode=source_code.value).count()
-            leads_by_source[source_code.label] = count
+        # Count by source — single GROUP BY
+        source_counts = {
+            row['leadsourcecode']: row['count']
+            for row in queryset.values('leadsourcecode').annotate(count=Count('leadid'))
+        }
+        leads_by_source = {
+            source_code.label: source_counts.get(source_code.value, 0)
+            for source_code in LeadSourceCode
+        }
 
         # Calculate value metrics
         value_aggregation = queryset.aggregate(

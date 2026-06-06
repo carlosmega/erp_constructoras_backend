@@ -230,11 +230,16 @@ class OpportunityService(BaseReadService[Opportunity]):
             avg_prob=Avg('probability')
         )
 
-        # Calculate weighted revenue
+        # Calculate weighted revenue. Fetch only the two columns we need instead of
+        # full model instances, and reuse the exact Decimal formula from
+        # Opportunity.weighted_revenue to avoid any precision divergence.
         weighted_revenue = Decimal('0.00')
-        for opp in queryset.filter(statecode=OpportunityStateCode.OPEN):
-            if opp.weighted_revenue:
-                weighted_revenue += opp.weighted_revenue
+        for est, prob in (
+            queryset.filter(statecode=OpportunityStateCode.OPEN)
+            .values_list('estimatedrevenue', 'probability')
+        ):
+            if est and prob is not None:
+                weighted_revenue += est * (Decimal(str(prob)) / Decimal('100'))
 
         # Calculate win rate
         win_rate = None
