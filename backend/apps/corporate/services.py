@@ -116,15 +116,18 @@ class CorporateBudgetService:
         )
         version.save()
 
-        # Create 9 empty budget lines (one per category)
-        for choice in CorporateExpenseCategoryCode:
+        # Create the budget lines (one per category) in a single bulk_create
+        # instead of one INSERT per line.
+        CorporateBudgetLine.objects.bulk_create([
             CorporateBudgetLine(
                 versionid=version,
                 categorycode=choice.value,
                 categoryname=choice.label,
                 createdby=user,
                 modifiedby=user,
-            ).save()
+            )
+            for choice in CorporateExpenseCategoryCode
+        ])
 
         return budget
 
