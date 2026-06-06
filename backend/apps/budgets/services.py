@@ -571,16 +571,24 @@ class BudgetLineService:
             key = (str(row['imputationcodeid']), row['periodid__label'])
             actual_map[key] = row['total']
 
-        updated = 0
+        # Collect changed lines and write them in one bulk_update instead of one
+        # UPDATE per line. bulk_update does not fire auto_now, so set modifiedon
+        # explicitly to preserve the previous save(update_fields=[...]) behavior.
+        from django.utils import timezone
+        now = timezone.now()
+        changed = []
         for bl in budget_lines:
             key = (str(bl.imputationcodeid_id), bl.periodlabel)
             new_actual = actual_map.get(key, 0)
             if bl.actualamount != new_actual:
                 bl.actualamount = new_actual
-                bl.save(update_fields=['actualamount', 'modifiedon'])
-                updated += 1
+                bl.modifiedon = now
+                changed.append(bl)
 
-        return updated
+        if changed:
+            ImputationCodeBudget.objects.bulk_update(changed, ['actualamount', 'modifiedon'])
+
+        return len(changed)
 
     @staticmethod
     def update_actual_volume(dto, user):
