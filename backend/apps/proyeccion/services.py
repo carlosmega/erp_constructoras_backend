@@ -1004,6 +1004,7 @@ class UnitCostBreakdownService:
         return {'concepts': report_concepts}
 
     @staticmethod
+    @transaction.atomic
     def create_breakdown(dto: CreateUnitCostBreakdownDto, user) -> UnitCostBreakdown:
         """Create a new breakdown line with computed amount and auto linenumber."""
         # Validate categorycode
@@ -1094,6 +1095,7 @@ class UnitCostBreakdownService:
         return created
 
     @staticmethod
+    @transaction.atomic
     def update_breakdown(breakdown_id: UUID, dto: UpdateUnitCostBreakdownDto, user) -> UnitCostBreakdown:
         """Update a breakdown line and recompute amount."""
         try:
@@ -1122,6 +1124,7 @@ class UnitCostBreakdownService:
         return breakdown
 
     @staticmethod
+    @transaction.atomic
     def delete_breakdown(breakdown_id: UUID, user) -> UnitCostBreakdown:
         """Soft delete a breakdown line (statecode=1)."""
         try:
