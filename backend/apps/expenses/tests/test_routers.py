@@ -287,3 +287,20 @@ class TestClientEstimates:
         estimate = ClientEstimateFactory(projectid=project, createdby=system_admin)
         response = admin_auth_client.delete(f'/api/estimates/estimates/{estimate.estimateid}/')
         assert response.status_code == 204
+
+
+@pytest.mark.contract
+class TestDownloadAttachmentAuth:
+    """download_attachment must require EXPENSE_READ (was unprotected — exfiltration vector)."""
+
+    def test_unauthenticated_returns_403(self, db):
+        from django.test import Client
+        fake_id = uuid.uuid4()
+        response = Client().get(f'/api/attachments/attachments/{fake_id}/download/')
+        assert response.status_code == 403
+
+    def test_authenticated_reaches_endpoint(self, auth_client):
+        """auth_client (salesperson) has EXPENSE_READ → passes the permission gate (not 403)."""
+        att = ExpenseAttachmentFactory()
+        response = auth_client.get(f'/api/attachments/attachments/{att.pk}/download/')
+        assert response.status_code != 403

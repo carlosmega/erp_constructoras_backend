@@ -141,9 +141,14 @@ class TestDeleteUser:
 
 @pytest.mark.contract
 class TestListRoles:
-    def test_returns_roles(self, db):
+    def test_unauthenticated_returns_403(self, db):
+        """Roles listing must require authentication (was a public leak)."""
         from django.test import Client
         response = Client().get('/api/roles/')
+        assert response.status_code == 403
+
+    def test_authenticated_returns_roles(self, auth_client):
+        response = auth_client.get('/api/roles/')
         assert response.status_code == 200
         data = response.json()
         assert len(data) >= 5

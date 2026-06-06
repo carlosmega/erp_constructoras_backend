@@ -322,6 +322,7 @@ roles_router = Router(tags=["Security Roles"])
 
 
 @roles_router.get("/", response=List[SecurityRoleSchema])
+@require_authenticated
 def list_security_roles(request: HttpRequest):
     """
     List all security roles.
