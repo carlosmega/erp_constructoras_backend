@@ -1004,15 +1004,14 @@ class AttendanceService:
     @staticmethod
     @transaction.atomic
     def bulk_create_attendance(entries: list, user: SystemUser) -> List[AttendanceRecord]:
-        """Create attendance records for multiple employees at once."""
-        records = []
-        for dto in entries:
-            try:
-                record = AttendanceService.create_attendance(dto, user)
-                records.append(record)
-            except (ValidationError, Exception):
-                continue
-        return records
+        """Create attendance records for multiple employees at once.
+
+        All-or-nothing: the method is @transaction.atomic, so a single invalid
+        entry raises and rolls back the whole batch instead of being silently
+        skipped (the previous bare ``except (ValidationError, Exception): continue``
+        hid every failure from the caller).
+        """
+        return [AttendanceService.create_attendance(dto, user) for dto in entries]
 
     @staticmethod
     def delete_attendance(record_id: UUID, user: SystemUser) -> None:

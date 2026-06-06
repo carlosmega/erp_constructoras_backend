@@ -720,6 +720,18 @@ class TestAttendanceService:
         records = AttendanceService.bulk_create_attendance(entries, salesperson)
         assert len(records) == 2
 
+    def test_bulk_create_attendance_rolls_back_on_invalid_entry(self, db, salesperson):
+        """A single invalid entry raises and rolls back the whole atomic batch
+        (no silent partial success — the old except/continue hid failures)."""
+        emp = EmployeeFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
+        entries = [
+            CreateAttendanceDto(employeeid=emp.employeeid, attendancedate=date(2026, 3, 22)),
+            CreateAttendanceDto(employeeid=uuid4(), attendancedate=date(2026, 3, 22)),  # no such employee
+        ]
+        with pytest.raises(ValidationError):
+            AttendanceService.bulk_create_attendance(entries, salesperson)
+        assert AttendanceRecord.objects.filter(employeeid=emp).count() == 0  # rolled back
+
     def test_get_attendance_summary(self, db, salesperson):
         emp = EmployeeFactory(ownerid=salesperson, createdby=salesperson, modifiedby=salesperson)
         AttendanceRecordFactory(
