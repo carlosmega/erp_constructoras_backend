@@ -97,10 +97,11 @@ class EmployeeService:
                 Q(curp__icontains=search)
             )
         if projectid:
-            employee_ids = EmployeeProjectAssignment.objects.filter(
-                projectid=projectid, statecode=AssignmentStateCode.ACTIVE
-            ).values_list('employeeid', flat=True)
-            queryset = queryset.filter(employeeid__in=employee_ids)
+            queryset = queryset.filter(
+                employeeid__in=EmployeeProjectAssignment.objects.filter(
+                    projectid=projectid, statecode=AssignmentStateCode.ACTIVE
+                ).values('employeeid')
+            )
 
         queryset = queryset.select_related('ownerid', 'createdby', 'modifiedby')
         return queryset
@@ -679,31 +680,33 @@ class PayrollRunService:
             createdby=user,
             modifiedby=user,
         )
-        run.save()
 
         # Get employees for this run
         employees = Employee.objects.filter(statecode=EmployeeStateCode.ACTIVE)
         if project:
-            assigned_ids = EmployeeProjectAssignment.objects.filter(
-                projectid=project, statecode=AssignmentStateCode.ACTIVE
-            ).values_list('employeeid', flat=True)
-            employees = employees.filter(employeeid__in=assigned_ids)
+            employees = employees.filter(
+                employeeid__in=EmployeeProjectAssignment.objects.filter(
+                    projectid=project, statecode=AssignmentStateCode.ACTIVE
+                ).values('employeeid')
+            )
 
-        # Create entries for each employee
-        entries = []
-        for emp in employees:
-            entry = PayrollEntry(
+        # Create entries for each employee (run PK is already assigned in memory)
+        entries = [
+            PayrollEntry(
                 payrollrunid=run,
                 employeeid=emp,
                 basepay=emp.basesalary,
                 createdby=user,
                 modifiedby=user,
             )
-            entries.append(entry)
+            for emp in employees
+        ]
+
+        # Set employeecount before the single save (avoids a redundant second save)
+        run.employeecount = len(entries)
+        run.save()
 
         PayrollEntry.objects.bulk_create(entries)
-        run.employeecount = len(entries)
-        run.save(update_fields=['employeecount'])
 
         return run
 

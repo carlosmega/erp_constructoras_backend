@@ -62,7 +62,9 @@ class InvoiceService:
             ValidationError: If order is not fulfilled or invoice already exists
         """
         # Get order with details
-        order = SalesOrder.objects.prefetch_related('order_details').get(salesorderid=order_id)
+        order = SalesOrder.objects.select_related(
+            'ownerid', 'accountid', 'contactid', 'opportunityid'
+        ).prefetch_related('order_details').get(salesorderid=order_id)
 
         # Verify order is fulfilled
         if order.statecode != OrderStateCode.FULFILLED:

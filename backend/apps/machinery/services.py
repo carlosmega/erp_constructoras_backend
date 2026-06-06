@@ -5,7 +5,8 @@ from uuid import UUID
 from decimal import Decimal
 
 from django.db import models, transaction
-from django.db.models import Max, Sum
+from django.db.models import Max, Sum, Count, Min, Q, F, Case, When, Value, DecimalField, IntegerField
+from django.db.models.functions import Coalesce, ExtractIsoWeekDay
 
 from apps.machinery.models import (
     EquipmentCategory,
@@ -894,53 +895,52 @@ class DailyEquipmentLogService:
     @staticmethod
     def get_period_summary(contract_id: UUID, estimation_number: int):
         """Compute period summary for a contract's estimation number."""
+        dec = DecimalField(max_digits=20, decimal_places=2)
+        zero = Value(Decimal('0'), output_field=dec)
+
+        # workedhours = hourmeterend - hourmeterstart (Decimal, per-row).
+        worked_expr = F('hourmeterend') - F('hourmeterstart')
+
+        # isimputable == IMPUTABLE iff any of:
+        #   - workedhours > 4
+        #   - justificationreasonid.imputabilityvalue == 1
+        #   - authorizedby is set
+        # (NULL FK -> imputabilityvalue lookup never equals 1; NULL authorizedby
+        #  -> isnull=False is False; matches the original Python truthiness checks.)
+        imputable_q = (
+            Q(workedhours__gt=Decimal('4'))
+            | Q(justificationreasonid__imputabilityvalue=1)
+            | Q(authorizedby__isnull=False)
+        )
+
         logs = DailyEquipmentLog.objects.filter(
             contractid=contract_id,
             estimationnumber=estimation_number,
             statecode=EquipmentStateCode.ACTIVE,
-        ).select_related('justificationreasonid', 'authorizedby')
+        ).annotate(
+            workedhours=worked_expr,
+            isoweekday=ExtractIsoWeekDay('logdate'),
+        )
 
-        totalhours = Decimal('0')
-        totaldays = 0
-        imputablehours = Decimal('0')
-        imputabledays = 0
-        nonimputablehours = Decimal('0')
-        nonimputabledays = 0
-        sundaycount = 0
-        periodstart = None
-        periodend = None
+        aggregates = logs.aggregate(
+            totalhours=Coalesce(Sum('workedhours'), zero),
+            totaldays=Count('logid'),
+            imputablehours=Coalesce(
+                Sum(Case(When(imputable_q, then='workedhours'), output_field=dec)),
+                zero,
+            ),
+            imputabledays=Count('logid', filter=imputable_q),
+            nonimputablehours=Coalesce(
+                Sum(Case(When(~imputable_q, then='workedhours'), output_field=dec)),
+                zero,
+            ),
+            nonimputabledays=Count('logid', filter=~imputable_q),
+            sundaycount=Count('logid', filter=Q(isoweekday=7)),
+            periodstart=Min('logdate'),
+            periodend=Max('logdate'),
+        )
 
-        for log in logs:
-            worked = log.workedhours
-            totalhours += worked
-            totaldays += 1
-
-            if log.isimputable == ImputabilityCode.IMPUTABLE:
-                imputablehours += worked
-                imputabledays += 1
-            else:
-                nonimputablehours += worked
-                nonimputabledays += 1
-
-            if log.dayofweek == 7:
-                sundaycount += 1
-
-            if periodstart is None or log.logdate < periodstart:
-                periodstart = log.logdate
-            if periodend is None or log.logdate > periodend:
-                periodend = log.logdate
-
-        return {
-            'totalhours': totalhours,
-            'totaldays': totaldays,
-            'imputablehours': imputablehours,
-            'imputabledays': imputabledays,
-            'nonimputablehours': nonimputablehours,
-            'nonimputabledays': nonimputabledays,
-            'sundaycount': sundaycount,
-            'periodstart': periodstart,
-            'periodend': periodend,
-        }
+        return aggregates
 
 
 # ============================================================================

@@ -40,7 +40,7 @@ def list_products(request: HttpRequest, state: int = None, search: str = None, l
     """
     from apps.products.models import Product
 
-    queryset = Product.objects.all()
+    queryset = Product.objects.select_related('createdby', 'modifiedby', 'parentproductid')
 
     if state is not None:
         queryset = queryset.filter(statecode=state)

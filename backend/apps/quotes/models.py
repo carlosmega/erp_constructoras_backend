@@ -199,12 +199,9 @@ class Quote(AuditMixin):
 
     def calculate_totals(self):
         """Calculate all totals from line items."""
-        details = self.quote_details.all()
-
-        # Calculate line item total
-        self.totallineitemamount = sum(
-            detail.extendedamount for detail in details
-        ) or Decimal('0.00')
+        # Calculate line item total via DB aggregation (avoids N+1 / loading rows)
+        agg = self.quote_details.aggregate(total=models.Sum('extendedamount'))
+        self.totallineitemamount = agg['total'] or Decimal('0.00')
 
         # Apply discount
         if self.discountpercentage > 0:

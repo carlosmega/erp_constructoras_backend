@@ -528,18 +528,68 @@ class BudgetLineService:
     @staticmethod
     @transaction.atomic
     def bulk_save(dto, user):
-        """Create or update budget lines for an imputation code."""
+        """Create or update budget lines for an imputation code.
+
+        Optimized to avoid one UPDATE/INSERT round-trip per line:
+          1. Fetch existing lines for the code in a single query.
+          2. Split incoming lines into updates and creates.
+          3. bulk_update the existing rows / bulk_create the new ones.
+        Semantics match the previous update_or_create loop (match by
+        (imputationcodeid, periodlabel); only plannedamount is written;
+        duplicate periodlabels in the payload follow last-write-wins) and the
+        returned list preserves the order of dto.lines.
+        """
         code = ImputationCode.objects.get(
             imputationcodeid=dto.imputationcodeid, statecode=0
         )
+
+        # Existing rows for this code, keyed by periodlabel (unique per code).
+        existing_by_label = {
+            obj.periodlabel: obj
+            for obj in ImputationCodeBudget.objects.filter(imputationcodeid=code)
+        }
+
+        # bulk_update does not fire auto_now, so set modifiedon explicitly to
+        # preserve the previous save()/update_or_create behavior. bulk_create
+        # does fire pre_save, so timestamps on new rows are left untouched.
+        from django.utils import timezone
+        now = timezone.now()
+
+        to_update = {}        # periodlabel -> existing obj with changed plannedamount
+        new_by_label = {}     # periodlabel -> obj pending creation
+        # Resolve the persistent object backing each line, in dto.lines order.
+        # A duplicate periodlabel reuses the same object (last write wins),
+        # mirroring the sequential update_or_create behavior.
         results = []
         for line in dto.lines:
-            obj, _ = ImputationCodeBudget.objects.update_or_create(
-                imputationcodeid=code,
-                periodlabel=line.periodlabel,
-                defaults={'plannedamount': line.plannedamount},
-            )
+            label = line.periodlabel
+            obj = existing_by_label.get(label)
+            if obj is not None:
+                # Update an existing persisted row.
+                obj.plannedamount = line.plannedamount
+                obj.modifiedon = now
+                to_update[label] = obj
+            else:
+                obj = new_by_label.get(label)
+                if obj is not None:
+                    # Already queued for creation: overwrite (last write wins).
+                    obj.plannedamount = line.plannedamount
+                else:
+                    obj = ImputationCodeBudget(
+                        imputationcodeid=code,
+                        periodlabel=label,
+                        plannedamount=line.plannedamount,
+                    )
+                    new_by_label[label] = obj
             results.append(obj)
+
+        if to_update:
+            ImputationCodeBudget.objects.bulk_update(
+                list(to_update.values()), ['plannedamount', 'modifiedon']
+            )
+        if new_by_label:
+            ImputationCodeBudget.objects.bulk_create(list(new_by_label.values()))
+
         return results
 
     @staticmethod

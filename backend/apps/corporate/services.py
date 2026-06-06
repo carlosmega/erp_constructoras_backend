@@ -8,6 +8,7 @@ from typing import Optional
 from django.db import models, transaction
 from django.db.models import Sum, Prefetch
 from django.db.models.functions import ExtractMonth
+from django.utils import timezone
 
 from apps.corporate.models import (
     CorporateBudget,
@@ -264,14 +265,37 @@ class CorporateBudgetService:
     @staticmethod
     @transaction.atomic
     def bulk_update_lines(budget_id: UUID, dto, user):
+        # Collect the requested line ids (skipping falsy ones, same as the
+        # original loop which did `if not line_id: continue`).
+        requested_ids = [
+            line_data.get('budgetlineid')
+            for line_data in dto.lines
+            if line_data.get('budgetlineid')
+        ]
+
+        # Fetch every existing line in a single query, keyed for O(1) lookup.
+        # Keys are normalised to str because dto.lines is List[dict] and
+        # budgetlineid arrives as a string from JSON, whereas the ORM returns
+        # UUID objects (a str key would otherwise never match a UUID key).
+        lines_by_id = {
+            str(line.budgetlineid): line
+            for line in CorporateBudgetLine.objects.filter(
+                budgetlineid__in=requested_ids
+            )
+        }
+
+        # bulk_update does NOT trigger auto_now, so set modifiedon explicitly
+        # to mirror the per-line save() behaviour of the original.
+        now = timezone.now()
+
         results = []
         for line_data in dto.lines:
             line_id = line_data.get('budgetlineid')
             if not line_id:
                 continue
-            try:
-                line = CorporateBudgetLine.objects.get(budgetlineid=line_id)
-            except CorporateBudgetLine.DoesNotExist:
+            line = lines_by_id.get(str(line_id))
+            if line is None:
+                # Line does not exist — skip silently, like the original.
                 continue
 
             for field in MONTH_FIELDS:
@@ -284,8 +308,22 @@ class CorporateBudgetService:
 
             line.annualamount = sum(getattr(line, f) for f in MONTH_FIELDS)
             line.modifiedby = user
-            line.save()
+            line.modifiedon = now
             results.append(line)
+
+        if results:
+            # Dedupe (preserving first occurrence) so a repeated id is not
+            # passed twice to bulk_update; the mutated object is shared anyway.
+            seen = set()
+            to_update = []
+            for line in results:
+                if line.budgetlineid not in seen:
+                    seen.add(line.budgetlineid)
+                    to_update.append(line)
+            CorporateBudgetLine.objects.bulk_update(
+                to_update,
+                MONTH_FIELDS + ['notes', 'annualamount', 'modifiedby', 'modifiedon'],
+            )
         return results
 
 

@@ -14,6 +14,7 @@ from uuid import UUID
 from typing import Optional, Any
 
 from django.db.models import Q, Model, QuerySet
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from apps.activities.models import Activity, Email, ActivityTypeCode, MatchMethod
@@ -139,16 +140,22 @@ class EmailMatchingService:
 
         model_class, pk_field = model_info
         try:
-            # Filter by UUID starting with the short_id
-            entities = model_class.objects.filter(
-                **{f'{pk_field}__startswith': short_id}
+            # Match the UUID prefix at the database level (no full table scan).
+            #
+            # Portability: `short_id` is the first 8 hex chars of the dashless
+            # UUID (the segment before the first dash, since UUIDs are
+            # `xxxxxxxx-...`). On SQLite Django stores UUIDField as 32-char
+            # dashless hex and `__startswith` strips dashes from the column,
+            # so the dashless prefix matches. On Postgres the native uuid casts
+            # to its dashed text form whose first 8 chars are identical to the
+            # dashless prefix, so the same prefix is valid there too.
+            entity = (
+                model_class.objects
+                .filter(**{f'{pk_field}__startswith': short_id})
+                .first()
             )
-            # UUID fields are stored as UUIDs, so we need string comparison
-            # Use raw queryset for prefix matching on UUID
-            for entity in model_class.objects.all().iterator():
-                entity_uuid = str(getattr(entity, pk_field)).replace('-', '')
-                if entity_uuid.startswith(short_id):
-                    return getattr(entity, pk_field)
+            if entity is not None:
+                return getattr(entity, pk_field)
         except Exception as e:
             logger.warning(f"Error finding entity by short_id: {e}")
 
@@ -213,25 +220,31 @@ class EmailMatchingService:
                     'parentcustomerid': str(contact.parentcustomerid_id) if hasattr(contact, 'parentcustomerid_id') and contact.parentcustomerid_id else None,
                 })
 
-        # Search accounts
-        for addr in addresses:
-            accounts = Account.objects.filter(emailaddress1__iexact=addr)
-            for account in accounts:
-                matched_accounts.append({
-                    'accountid': str(account.accountid),
-                    'name': account.name,
-                    'emailaddress1': account.emailaddress1,
-                })
+        # Search accounts (single query instead of one per address).
+        # `addresses` are already lowercased, so matching them against
+        # Lower(emailaddress1) reproduces the per-address __iexact behavior
+        # (case-insensitive on the column) and is portable (LOWER() exists on
+        # both SQLite and Postgres).
+        accounts = Account.objects.annotate(
+            _emaillower=Lower('emailaddress1')
+        ).filter(_emaillower__in=addresses)
+        for account in accounts:
+            matched_accounts.append({
+                'accountid': str(account.accountid),
+                'name': account.name,
+                'emailaddress1': account.emailaddress1,
+            })
 
-        # Search leads
-        for addr in addresses:
-            leads = Lead.objects.filter(emailaddress1__iexact=addr)
-            for lead in leads:
-                matched_leads.append({
-                    'leadid': str(lead.leadid),
-                    'fullname': f'{lead.firstname or ""} {lead.lastname or ""}'.strip(),
-                    'emailaddress1': lead.emailaddress1,
-                })
+        # Search leads (single query instead of one per address).
+        leads = Lead.objects.annotate(
+            _emaillower=Lower('emailaddress1')
+        ).filter(_emaillower__in=addresses)
+        for lead in leads:
+            matched_leads.append({
+                'leadid': str(lead.leadid),
+                'fullname': f'{lead.firstname or ""} {lead.lastname or ""}'.strip(),
+                'emailaddress1': lead.emailaddress1,
+            })
 
         # Try to find open opportunities linked to matched contacts/accounts
         candidate_opportunities = []

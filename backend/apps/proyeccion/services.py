@@ -1594,19 +1594,28 @@ class IndirectCostDetailService:
         existing = set(
             IndirectCostDetail.objects.filter(projectid=project_id)
             .values_list('categorycode', 'description'))
+        # Pre-compute max linenumber per categorycode in a single query, then
+        # accumulate locally so same-category seeds keep incrementing (matching
+        # the original per-iteration aggregate-then-save behavior) without N queries.
+        max_by_category = defaultdict(int)
+        for row in (IndirectCostDetail.objects
+                    .filter(projectid=project_id)
+                    .values('categorycode')
+                    .annotate(m=Max('linenumber'))):
+            max_by_category[row['categorycode']] = row['m'] or 0
+        to_create = []
         for categorycode, formulakey, area, description in DEFAULT_EXTERNAL_INDIRECT_SEEDS:
             if (categorycode, description) in existing:
                 continue
-            max_line = IndirectCostDetail.objects.filter(
-                projectid=project_id, categorycode=categorycode,
-            ).aggregate(m=Max('linenumber'))['m'] or 0
-            detail = IndirectCostDetail(
+            max_by_category[categorycode] += 1
+            to_create.append(IndirectCostDetail(
                 projectid_id=project_id, categorycode=categorycode,
-                linenumber=max_line + 1, formulakey=formulakey, area=area,
+                linenumber=max_by_category[categorycode], formulakey=formulakey, area=area,
                 description=description, monthlycost=Decimal('0'), units=Decimal('1'),
                 months=Decimal('1'), applies=ChecklistStatusCode.NA, percentofsale=None,
-                amount=Decimal('0'), createdby=user, modifiedby=user)
-            detail.save()
+                amount=Decimal('0'), createdby=user, modifiedby=user))
+        if to_create:
+            IndirectCostDetail.objects.bulk_create(to_create)
         return list(IndirectCostDetail.objects.filter(
             projectid=project_id,
             description__in=[s[3] for s in DEFAULT_EXTERNAL_INDIRECT_SEEDS]))
@@ -1840,7 +1849,7 @@ class OfferAlternativeService:
         return OfferAlternative.objects.filter(
             projectid=project_id,
             statecode=0,  # Active only — soft-deleted have statecode=1
-        ).select_related('createdby', 'modifiedby')
+        ).select_related('createdby', 'modifiedby').prefetch_related('cost_adjustments')
 
     @staticmethod
     @transaction.atomic
