@@ -723,6 +723,8 @@ class PayrollRunService:
 
         entries = PayrollEntry.objects.filter(payrollrunid=run).select_related('employeeid')
 
+        now = timezone.now()
+        updated_entries = []
         for entry in entries:
             emp = entry.employeeid
 
@@ -786,7 +788,16 @@ class PayrollRunService:
 
             # Net pay
             entry.netpay = (gross - total_deductions).quantize(Decimal('0.01'))
-            entry.save()
+            entry.modifiedon = now
+            updated_entries.append(entry)
+
+        # Write every entry in a single bulk_update instead of one UPDATE per
+        # iteration. modifiedon is set explicitly (bulk_update skips auto_now).
+        PayrollEntry.objects.bulk_update(
+            updated_entries,
+            ['grosspay', 'totaladditions', 'additions', 'totaldeductions',
+             'deductions', 'netpay', 'modifiedon'],
+        )
 
         # Recalculate run totals
         PayrollRunService._recalculate_totals(run)
