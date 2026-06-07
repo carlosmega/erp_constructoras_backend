@@ -16,6 +16,7 @@ from apps.orders.models import SalesOrder, SalesOrderDetail, OrderStateCode, Ord
 from apps.orders.schemas import CreateSalesOrderDto, FulfillOrderDto
 from apps.users.models import SystemUser
 from core.permissions import can_modify_record
+from core.numbering import create_with_retry
 
 
 class OrderService:
@@ -59,13 +60,12 @@ class OrderService:
         if SalesOrder.objects.filter(quoteid=quote).exists():
             raise ValidationError('Order already exists for this quote')
 
-        # Generate order number
-        ordernumber = OrderService.generate_order_number()
-
-        # Create order from quote data
-        order = SalesOrder.objects.create(
+        # Create order from quote data with a race-safe number: the unique
+        # ordernumber is regenerated and the insert retried on a concurrent
+        # collision (see core.numbering).
+        order = create_with_retry(lambda: SalesOrder.objects.create(
             name=quote.name,
-            ordernumber=ordernumber,
+            ordernumber=OrderService.generate_order_number(),
             quoteid=quote,
             opportunityid=quote.opportunityid,
             accountid=quote.accountid,
@@ -80,7 +80,7 @@ class OrderService:
             ownerid=user,
             createdby=user,
             modifiedby=user
-        )
+        ))
 
         # Copy quote details to order details
         for quote_detail in quote.quote_details.all():
@@ -102,8 +102,6 @@ class OrderService:
     @audit_action(action='create', entity='order', id_field='salesorderid')
     def create_order(dto: CreateSalesOrderDto, user: SystemUser) -> SalesOrder:
         """Create a new order manually."""
-        ordernumber = OrderService.generate_order_number()
-
         # Get related entities if provided
         quote = None
         opportunity = None
@@ -125,10 +123,11 @@ class OrderService:
             from core.customers import resolve_customer
             account, contact = resolve_customer(dto.customerid, dto.customeridtype)
 
-        # Create order
-        order = SalesOrder.objects.create(
+        # Create order with a race-safe number (retry on concurrent collision
+        # on the unique ordernumber -- see core.numbering).
+        order = create_with_retry(lambda: SalesOrder.objects.create(
             name=dto.name,
-            ordernumber=ordernumber,
+            ordernumber=OrderService.generate_order_number(),
             quoteid=quote,
             opportunityid=opportunity,
             accountid=account,
@@ -140,7 +139,7 @@ class OrderService:
             ownerid=user,
             createdby=user,
             modifiedby=user
-        )
+        ))
 
         return order
 

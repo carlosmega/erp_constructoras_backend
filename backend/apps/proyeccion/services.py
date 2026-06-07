@@ -8,6 +8,7 @@ from collections import defaultdict
 from django.db import models, transaction
 from django.db.models import QuerySet, Max, Sum, Q, F
 from django.utils import timezone
+from core.numbering import next_numbered_code, create_with_retry
 
 from apps.proyeccion.models import (
     EstimationProject,
@@ -171,35 +172,42 @@ class EstimationProjectService:
 
     @staticmethod
     def create_project(dto, user):
-        """Create a new estimation project with auto-generated number (EST-YYYY-NNN)."""
-        year = datetime.now().year
-        max_num = EstimationProject.objects.filter(
-            estimationnumber__startswith=f'EST-{year}-'
-        ).count()
-        next_num = max_num + 1
-        estimation_number = f'EST-{year}-{next_num:03d}'
+        """Create a new estimation project with auto-generated number (EST-YYYY-NNN).
 
-        project = EstimationProject(
-            estimationnumber=estimation_number,
-            name=dto.name,
-            description=dto.description,
-            accountid_id=dto.accountid,
-            opportunityid_id=dto.opportunityid,
-            presentationdate=dto.presentationdate,
-            estimatedstartdate=dto.estimatedstartdate,
-            estimatedenddate=dto.estimatedenddate,
-            durationmonths=dto.durationmonths or 0,
-            projecttype=dto.projecttype or 0,
-            biddingtype=dto.biddingtype or 0,
-            periodtype=dto.periodtype or 0,
-            estimatedcontractamount=dto.estimatedcontractamount or 0,
-            exchangerate_mxn_usd=dto.exchangerate_mxn_usd,
-            ownerid=user,
-            createdby=user,
-            modifiedby=user,
-        )
-        project.save()
-        return project
+        Race-safe: the number is derived from the current max suffix (robust to
+        deletions) and the create is retried on a concurrent unique collision.
+        See ``core.numbering``.
+        """
+        def _create():
+            estimation_number = next_numbered_code(
+                EstimationProject,
+                'estimationnumber',
+                f'EST-{datetime.now().year}-',
+                width=3,
+            )
+            project = EstimationProject(
+                estimationnumber=estimation_number,
+                name=dto.name,
+                description=dto.description,
+                accountid_id=dto.accountid,
+                opportunityid_id=dto.opportunityid,
+                presentationdate=dto.presentationdate,
+                estimatedstartdate=dto.estimatedstartdate,
+                estimatedenddate=dto.estimatedenddate,
+                durationmonths=dto.durationmonths or 0,
+                projecttype=dto.projecttype or 0,
+                biddingtype=dto.biddingtype or 0,
+                periodtype=dto.periodtype or 0,
+                estimatedcontractamount=dto.estimatedcontractamount or 0,
+                exchangerate_mxn_usd=dto.exchangerate_mxn_usd,
+                ownerid=user,
+                createdby=user,
+                modifiedby=user,
+            )
+            project.save()
+            return project
+
+        return create_with_retry(_create)
 
     @staticmethod
     def update_project(project_id, dto, user):
