@@ -16,7 +16,7 @@ from uuid import UUID
 from apps.audit.services import audit_action
 from apps.quotes.models import Quote, QuoteDetail, QuoteStateCode, QuoteStatusCode
 from apps.quotes.schemas import (
-    CreateQuoteDto, UpdateQuoteDto, CreateQuoteDetailDto,
+    CreateQuoteDto, UpdateQuoteDto, CreateQuoteDetailDto, UpdateQuoteDetailDto,
     ActivateQuoteDto, CloseQuoteDto, ReviseQuoteDto
 )
 from apps.users.models import SystemUser
@@ -244,6 +244,71 @@ class QuoteService:
         quote.calculate_totals()
         quote.modifiedby = user
         quote.save()
+
+    @staticmethod
+    def _get_owned_quote_line(detail_id: UUID, user: SystemUser) -> QuoteDetail:
+        """Fetch a quote line, enforcing ownership of its parent quote.
+
+        Ownership lives on the parent Quote (lines have no ownerid), so it is
+        checked against detail.quoteid.ownerid via can_modify_record.
+        """
+        try:
+            detail = QuoteDetail.objects.select_related(
+                'quoteid', 'quoteid__ownerid'
+            ).get(quotedetailid=detail_id)
+        except QuoteDetail.DoesNotExist:
+            raise NotFound('Quote detail not found')
+
+        if not can_modify_record(user, detail.quoteid.ownerid):
+            raise PermissionDenied('You do not have permission to access this quote')
+
+        return detail
+
+    @staticmethod
+    def get_quote_detail(detail_id: UUID, user: SystemUser) -> QuoteDetail:
+        """Get a single quote line by ID (ownership-checked)."""
+        return QuoteService._get_owned_quote_line(detail_id, user)
+
+    @staticmethod
+    def list_quote_details(quote_id: UUID, user: SystemUser):
+        """List a quote's line items (ownership-checked via the parent quote)."""
+        quote = QuoteService.get_quote_by_id(quote_id, user)
+        return list(quote.quote_details.all().order_by('sequencenumber'))
+
+    @staticmethod
+    @transaction.atomic
+    def update_quote_detail(detail_id: UUID, dto: UpdateQuoteDetailDto, user: SystemUser) -> QuoteDetail:
+        """Update a quote line item (ownership-checked)."""
+        detail = QuoteService._get_owned_quote_line(detail_id, user)
+        quote = detail.quoteid
+
+        # Cannot modify if quote is won or closed
+        if quote.statecode in [QuoteStateCode.WON, QuoteStateCode.CLOSED]:
+            raise ValidationError('Cannot modify a won or closed quote')
+
+        if dto.productname is not None:
+            detail.productname = dto.productname
+        if dto.productdescription is not None:
+            detail.productdescription = dto.productdescription
+        if dto.quantity is not None:
+            detail.quantity = dto.quantity
+        if dto.priceperunit is not None:
+            detail.priceperunit = dto.priceperunit
+        if dto.manualdiscountamount is not None:
+            detail.manualdiscountamount = dto.manualdiscountamount
+        if dto.tax is not None:
+            detail.tax = dto.tax
+        if dto.sequencenumber is not None:
+            detail.sequencenumber = dto.sequencenumber
+
+        detail.save()
+
+        # Recalculate quote totals
+        quote.calculate_totals()
+        quote.modifiedby = user
+        quote.save()
+
+        return detail
 
     @staticmethod
     @transaction.atomic

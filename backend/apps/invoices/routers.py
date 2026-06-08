@@ -208,12 +208,8 @@ def delete_invoice(request: HttpRequest, invoice_id: UUID):
 @invoices_router.get('/{invoice_id}/details', response=List[InvoiceDetailSchema])
 @require_permission(Permission.INVOICE_READ)
 def list_invoice_details(request: HttpRequest, invoice_id: UUID):
-    """List all line items for an invoice."""
-    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
-    details = InvoiceDetailModel.objects.filter(
-        invoiceid_id=invoice_id
-    ).select_related('imputationcodeid').order_by('sequencenumber')
-    return list(details)
+    """List all line items for an invoice (ownership-checked)."""
+    return InvoiceService.list_invoice_details(invoice_id, request.user)
 
 
 @invoices_router.post('/{invoice_id}/details', response={201: InvoiceDetailSchema})
@@ -227,67 +223,22 @@ def add_invoice_detail(request: HttpRequest, invoice_id: UUID, payload: CreateIn
 @invoices_router.get('/details/{detail_id}', response=InvoiceDetailSchema)
 @require_permission(Permission.INVOICE_READ)
 def get_invoice_detail(request: HttpRequest, detail_id: UUID):
-    """Get a single invoice detail by ID."""
-    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
-    from django.shortcuts import get_object_or_404
-    detail = get_object_or_404(
-        InvoiceDetailModel.objects.select_related('imputationcodeid'),
-        invoicedetailid=detail_id
-    )
-    return detail
+    """Get a single invoice detail by ID (ownership-checked)."""
+    return InvoiceService.get_invoice_detail(detail_id, request.user)
 
 
 @invoices_router.patch('/details/{detail_id}', response=InvoiceDetailSchema)
 @require_permission(Permission.INVOICE_UPDATE)
 def update_invoice_detail(request: HttpRequest, detail_id: UUID, payload: UpdateInvoiceDetailDto):
-    """Update an invoice detail line item."""
-    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
-    from django.shortcuts import get_object_or_404
-
-    detail = get_object_or_404(
-        InvoiceDetailModel.objects.select_related('imputationcodeid'),
-        invoicedetailid=detail_id
-    )
-
-    if payload.productdescription is not None:
-        detail.productdescription = payload.productdescription
-    if payload.quantity is not None:
-        detail.quantity = payload.quantity
-    if payload.priceperunit is not None:
-        detail.priceperunit = payload.priceperunit
-    if payload.manualdiscountamount is not None:
-        detail.manualdiscountamount = payload.manualdiscountamount
-    if payload.tax is not None:
-        detail.tax = payload.tax
-    if payload.imputationcodeid is not None:
-        from apps.budgets.models import ImputationCode
-        if not ImputationCode.objects.filter(imputationcodeid=payload.imputationcodeid).exists():
-            from core.exceptions import ValidationError
-            raise ValidationError(f'Imputation code {payload.imputationcodeid} not found')
-        detail.imputationcodeid_id = payload.imputationcodeid
-    elif payload.clear_imputationcodeid:
-        detail.imputationcodeid = None
-
-    detail.save()
-
-    # Recalculate invoice totals
-    invoice = detail.invoiceid
-    invoice.calculate_totals()
-    invoice.save()
-
-    return detail
+    """Update an invoice detail line item (ownership-checked)."""
+    return InvoiceService.update_invoice_detail(detail_id, payload, request.user)
 
 
 @invoices_router.delete('/details/{detail_id}', response={204: None})
 @require_permission(Permission.INVOICE_UPDATE)
 def remove_invoice_detail_by_id(request: HttpRequest, detail_id: UUID):
-    """Remove a line item from an invoice by detail ID."""
-    from apps.invoices.models import InvoiceDetail as InvoiceDetailModel
-    from django.shortcuts import get_object_or_404
-
-    detail = get_object_or_404(InvoiceDetailModel, invoicedetailid=detail_id)
-    invoice = detail.invoiceid
-    detail.delete()
+    """Remove a line item from an invoice by detail ID (ownership-checked)."""
+    InvoiceService.remove_invoice_detail_by_id(detail_id, request.user)
     return 204, None
 
 
