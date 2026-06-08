@@ -19,6 +19,11 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-CHANGE-THIS-IN-PRODUC
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
+# Dev-only auto-login (DevAutoLoginMiddleware). Defaults to False so production
+# fails CLOSED even if DEBUG is accidentally left True. Enable explicitly in local
+# dev via DEV_AUTOLOGIN=true in .env.
+DEV_AUTOLOGIN = config('DEV_AUTOLOGIN', default=False, cast=bool)
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # Application definition

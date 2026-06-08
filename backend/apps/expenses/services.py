@@ -253,6 +253,7 @@ class ExpenseService:
         return expense
 
     @staticmethod
+    @transaction.atomic
     @audit_action(action='cancel', entity='expense', record_arg='expense_id', id_field='expenseid')
     def cancel_expense(expense_id: UUID, user) -> ProjectExpense:
         """Cancel a project expense."""

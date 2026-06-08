@@ -13,7 +13,7 @@ from django.db.models import Sum, Q
 from apps.audit.services import audit_action
 from apps.invoices.models import Invoice, InvoiceDetail, InvoiceStateCode, InvoiceStatusCode
 from apps.invoices.schemas import (
-    CreateInvoiceDto, UpdateInvoiceDto, CreateInvoiceDetailDto,
+    CreateInvoiceDto, UpdateInvoiceDto, CreateInvoiceDetailDto, UpdateInvoiceDetailDto,
     RecordPaymentDto, CancelInvoiceDto, InvoiceStatsSchema
 )
 from apps.orders.models import SalesOrder, OrderStateCode
@@ -62,7 +62,9 @@ class InvoiceService:
             ValidationError: If order is not fulfilled or invoice already exists
         """
         # Get order with details
-        order = SalesOrder.objects.prefetch_related('order_details').get(salesorderid=order_id)
+        order = SalesOrder.objects.select_related(
+            'ownerid', 'accountid', 'contactid', 'opportunityid'
+        ).prefetch_related('order_details').get(salesorderid=order_id)
 
         # Verify order is fulfilled
         if order.statecode != OrderStateCode.FULFILLED:
@@ -271,6 +273,99 @@ class InvoiceService:
             raise NotFound(f"Invoice detail with ID {detail_id} not found")
 
         # Recalculate invoice totals
+        invoice.calculate_totals()
+        invoice.modifiedby = user
+        invoice.save()
+
+    @staticmethod
+    def _get_owned_invoice_line(detail_id: UUID, user: SystemUser) -> InvoiceDetail:
+        """Fetch an invoice line, enforcing ownership of its parent invoice.
+
+        Ownership lives on the parent Invoice (lines have no ownerid), so it is
+        checked against detail.invoiceid.ownerid via can_modify_record.
+        """
+        try:
+            detail = InvoiceDetail.objects.select_related(
+                'invoiceid', 'invoiceid__ownerid', 'imputationcodeid'
+            ).get(invoicedetailid=detail_id)
+        except InvoiceDetail.DoesNotExist:
+            raise NotFound(f"Invoice detail with ID {detail_id} not found")
+
+        if not can_modify_record(user, detail.invoiceid.ownerid):
+            raise PermissionDenied("You don't have permission to access this invoice")
+
+        return detail
+
+    @staticmethod
+    def get_invoice_detail(detail_id: UUID, user: SystemUser) -> InvoiceDetail:
+        """Get a single invoice line by ID (ownership-checked)."""
+        return InvoiceService._get_owned_invoice_line(detail_id, user)
+
+    @staticmethod
+    def list_invoice_details(invoice_id: UUID, user: SystemUser):
+        """List an invoice's line items (ownership-checked via the parent invoice)."""
+        invoice = InvoiceService.get_invoice_by_id(invoice_id, user)
+        return list(
+            invoice.invoice_details.select_related('imputationcodeid').order_by('sequencenumber')
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def update_invoice_detail(detail_id: UUID, dto: UpdateInvoiceDetailDto, user: SystemUser) -> InvoiceDetail:
+        """Update an invoice line item (ownership-checked)."""
+        detail = InvoiceService._get_owned_invoice_line(detail_id, user)
+        invoice = detail.invoiceid
+
+        # Can't modify paid or canceled invoices
+        if invoice.statecode in [InvoiceStateCode.PAID, InvoiceStateCode.CANCELED]:
+            raise ValidationError('Cannot modify paid or canceled invoices')
+
+        if dto.productdescription is not None:
+            detail.productdescription = dto.productdescription
+        if dto.quantity is not None:
+            detail.quantity = dto.quantity
+        if dto.priceperunit is not None:
+            detail.priceperunit = dto.priceperunit
+        if dto.manualdiscountamount is not None:
+            detail.manualdiscountamount = dto.manualdiscountamount
+        if dto.tax is not None:
+            detail.tax = dto.tax
+        if dto.imputationcodeid is not None:
+            from apps.budgets.models import ImputationCode
+            if not ImputationCode.objects.filter(imputationcodeid=dto.imputationcodeid).exists():
+                raise ValidationError(f'Imputation code {dto.imputationcodeid} not found')
+            detail.imputationcodeid_id = dto.imputationcodeid
+        elif dto.clear_imputationcodeid:
+            detail.imputationcodeid = None
+
+        detail.save()
+
+        # Recalculate invoice totals
+        invoice.calculate_totals()
+        invoice.modifiedby = user
+        invoice.save()
+
+        return detail
+
+    @staticmethod
+    @transaction.atomic
+    def remove_invoice_detail_by_id(detail_id: UUID, user: SystemUser) -> None:
+        """Remove a line item by its detail ID (ownership-checked).
+
+        The parent invoice is resolved FROM the line, so this also recalculates
+        the parent totals — the old flat router handler deleted the line but left
+        the invoice's stored totals stale.
+        """
+        detail = InvoiceService._get_owned_invoice_line(detail_id, user)
+        invoice = detail.invoiceid
+
+        # Can't modify paid or canceled invoices
+        if invoice.statecode in [InvoiceStateCode.PAID, InvoiceStateCode.CANCELED]:
+            raise ValidationError('Cannot modify paid or canceled invoices')
+
+        detail.delete()
+
+        # Recalculate invoice totals (fixes the stale-totals bug)
         invoice.calculate_totals()
         invoice.modifiedby = user
         invoice.save()

@@ -126,16 +126,8 @@ def update_order(request: HttpRequest, order_id: UUID, payload: UpdateSalesOrder
 @orders_router.delete('/{order_id}', response={204: None})
 @require_permission(Permission.ORDER_DELETE)
 def delete_order(request: HttpRequest, order_id: UUID):
-    """Delete an order (only active/draft orders)."""
-    from apps.orders.models import SalesOrder, OrderStateCode
-    from django.shortcuts import get_object_or_404
-    from core.exceptions import ValidationError
-
-    order = get_object_or_404(SalesOrder, salesorderid=order_id)
-    if order.statecode not in (OrderStateCode.ACTIVE,):
-        raise ValidationError('Can only delete active orders')
-    order.statecode = OrderStateCode.CANCELED
-    order.save()
+    """Delete an order (only active orders, ownership-checked)."""
+    OrderService.delete_order(order_id, request.user)
     return 204, None
 
 
@@ -144,81 +136,29 @@ def delete_order(request: HttpRequest, order_id: UUID):
 @orders_router.post('/{order_id}/details', response={201: SalesOrderDetailSchema})
 @require_permission(Permission.ORDER_UPDATE)
 def add_order_detail(request: HttpRequest, order_id: UUID, payload: CreateOrderDetailDto):
-    """Add a line item to an order."""
-    from apps.orders.models import SalesOrder, SalesOrderDetail
-    from django.shortcuts import get_object_or_404
-
-    order = get_object_or_404(SalesOrder, salesorderid=order_id)
-
-    detail = SalesOrderDetail(
-        salesorderid=order,
-        productname=payload.productdescription or payload.productname or 'Product',
-        productdescription=payload.productdescription,
-        quantity=payload.quantity,
-        priceperunit=payload.priceperunit,
-        manualdiscountamount=payload.manualdiscountamount,
-        tax=payload.tax,
-    )
-    detail.save()
-
-    # Recalculate order totals
-    _recalculate_order_totals(order)
-
-    return 201, detail
+    """Add a line item to an order (ownership-checked)."""
+    return 201, OrderService.add_order_detail(order_id, payload, request.user)
 
 
 @orders_router.get('/details/{detail_id}', response=SalesOrderDetailSchema)
 @require_permission(Permission.ORDER_READ)
 def get_order_detail(request: HttpRequest, detail_id: UUID):
-    """Get a single order detail by ID."""
-    from apps.orders.models import SalesOrderDetail
-    from django.shortcuts import get_object_or_404
-    detail = get_object_or_404(SalesOrderDetail, salesorderdetailid=detail_id)
-    return detail
+    """Get a single order detail by ID (ownership-checked)."""
+    return OrderService.get_order_detail(detail_id, request.user)
 
 
 @orders_router.patch('/details/{detail_id}', response=SalesOrderDetailSchema)
 @require_permission(Permission.ORDER_UPDATE)
 def update_order_detail(request: HttpRequest, detail_id: UUID, payload: UpdateOrderDetailDto):
-    """Update an order detail line item."""
-    from apps.orders.models import SalesOrderDetail
-    from django.shortcuts import get_object_or_404
-
-    detail = get_object_or_404(SalesOrderDetail, salesorderdetailid=detail_id)
-
-    if payload.productdescription is not None:
-        detail.productdescription = payload.productdescription
-    if payload.quantity is not None:
-        detail.quantity = payload.quantity
-    if payload.priceperunit is not None:
-        detail.priceperunit = payload.priceperunit
-    if payload.manualdiscountamount is not None:
-        detail.manualdiscountamount = payload.manualdiscountamount
-    if payload.tax is not None:
-        detail.tax = payload.tax
-
-    detail.save()
-
-    # Recalculate order totals
-    _recalculate_order_totals(detail.salesorderid)
-
-    return detail
+    """Update an order detail line item (ownership-checked)."""
+    return OrderService.update_order_detail(detail_id, payload, request.user)
 
 
 @orders_router.delete('/details/{detail_id}', response={204: None})
 @require_permission(Permission.ORDER_UPDATE)
 def remove_order_detail(request: HttpRequest, detail_id: UUID):
-    """Remove a line item from an order."""
-    from apps.orders.models import SalesOrderDetail
-    from django.shortcuts import get_object_or_404
-
-    detail = get_object_or_404(SalesOrderDetail, salesorderdetailid=detail_id)
-    order = detail.salesorderid
-    detail.delete()
-
-    # Recalculate order totals
-    _recalculate_order_totals(order)
-
+    """Remove a line item from an order (ownership-checked)."""
+    OrderService.remove_order_detail(detail_id, request.user)
     return 204, None
 
 
@@ -256,21 +196,3 @@ def get_order_stats(request: HttpRequest):
     return stats
 
 
-def _recalculate_order_totals(order):
-    """Recalculate order totals from line items."""
-    from django.db.models import Sum
-    from decimal import Decimal
-
-    details = order.order_details.all()
-    totals = details.aggregate(
-        line_total=Sum('extendedamount'),
-        tax_total=Sum('tax'),
-        discount_total=Sum('manualdiscountamount'),
-        base_total=Sum('baseamount'),
-    )
-
-    order.totallineitemamount = totals['base_total'] or Decimal('0.00')
-    order.totaltax = totals['tax_total'] or Decimal('0.00')
-    order.totaldiscountamount = totals['discount_total'] or Decimal('0.00')
-    order.totalamount = totals['line_total'] or Decimal('0.00')
-    order.save(update_fields=['totallineitemamount', 'totaltax', 'totaldiscountamount', 'totalamount'])

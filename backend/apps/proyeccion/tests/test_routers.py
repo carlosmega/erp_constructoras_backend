@@ -34,12 +34,11 @@ class TestListEstimationProjects:
         data = response.json()
         assert len(data) >= 1
 
-    def test_unauthenticated_returns_redirect_or_200(self, db):
-        """Estimation projects may not require auth (no @require_permission)."""
+    def test_unauthenticated_returns_403(self, db):
+        """Estimation projects now require authentication (@require_authenticated)."""
         from django.test import Client
         response = Client().get('/api/estimation-projects/')
-        # Endpoint may not require authentication
-        assert response.status_code in (200, 302, 403)
+        assert response.status_code == 403
 
 
 @pytest.mark.contract
@@ -962,3 +961,16 @@ class TestCopyFromConceptEndpoint:
         assert response.status_code == 201
         data = response.json()
         assert len(data) == 2
+
+
+@pytest.mark.contract
+class TestProyeccionRequiresAuth:
+    """Every proyeccion endpoint now requires authentication (no anonymous access)."""
+
+    def test_concept_price_catalog_unauthenticated_403(self, db):
+        from django.test import Client
+        assert Client().get('/api/proyeccion/concept-price-catalog/').status_code == 403
+
+    def test_family_templates_unauthenticated_403(self, db):
+        from django.test import Client
+        assert Client().get('/api/proyeccion/family-templates/').status_code == 403

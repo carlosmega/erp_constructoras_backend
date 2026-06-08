@@ -64,3 +64,43 @@ class TestAuditMiddleware:
         assert get_current_user() == salesperson
         set_current_user(None)
         assert get_current_user() is None
+
+
+@pytest.mark.unit
+class TestDevAutoLoginMiddleware:
+    """DevAutoLoginMiddleware must fail CLOSED: auto-login only when BOTH
+    DEBUG and DEV_AUTOLOGIN are True, so a prod deploy with DEBUG mis-set to
+    True does not silently authenticate anonymous callers."""
+
+    def _anon_request(self):
+        from django.contrib.auth.models import AnonymousUser
+        req = RequestFactory().get('/api/estimation-projects/')
+        req.user = AnonymousUser()
+        return req
+
+    def test_no_autologin_when_flag_off_even_in_debug(self, db, settings):
+        from core.middleware import DevAutoLoginMiddleware
+        settings.DEBUG = True
+        settings.DEV_AUTOLOGIN = False
+        mw = DevAutoLoginMiddleware(lambda r: r)
+        req = self._anon_request()
+        mw(req)
+        assert not req.user.is_authenticated  # stayed anonymous
+
+    def test_no_autologin_when_debug_off(self, db, settings):
+        from core.middleware import DevAutoLoginMiddleware
+        settings.DEBUG = False
+        settings.DEV_AUTOLOGIN = True
+        mw = DevAutoLoginMiddleware(lambda r: r)
+        req = self._anon_request()
+        mw(req)
+        assert not req.user.is_authenticated
+
+    def test_autologin_when_both_enabled(self, db, settings, system_admin):
+        from core.middleware import DevAutoLoginMiddleware
+        settings.DEBUG = True
+        settings.DEV_AUTOLOGIN = True
+        mw = DevAutoLoginMiddleware(lambda r: r)
+        req = self._anon_request()
+        mw(req)
+        assert req.user.is_authenticated  # dev user injected

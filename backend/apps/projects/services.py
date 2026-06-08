@@ -5,6 +5,7 @@ from uuid import UUID
 from datetime import date
 from django.db import models
 from django.db.models import Q, QuerySet, Prefetch
+from core.numbering import create_with_retry
 from apps.projects.models import (
     ConstructionProject, ProjectStateCode,
     ProjectTeamMember, ProjectRoleCode,
@@ -94,10 +95,7 @@ class ProjectService:
             except SystemUser.DoesNotExist:
                 raise ValidationError(f"Owner with ID {dto.ownerid} not found")
 
-        project_number = ProjectService.generate_project_number()
-
         project = ConstructionProject(
-            projectnumber=project_number,
             name=dto.name,
             description=dto.description,
             statecode=ProjectStateCode.DRAFT,
@@ -154,8 +152,14 @@ class ProjectService:
             project.liabilityinsurance_validitystartdate = dto.liabilityinsurance.validitystartdate
             project.liabilityinsurance_validityenddate = dto.liabilityinsurance.validityenddate
 
-        project.save()
-        return project
+        # Assign the number + save under retry so a concurrent collision on the
+        # unique projectnumber resolves to the next free value (core.numbering).
+        def _save():
+            project.projectnumber = ProjectService.generate_project_number()
+            project.save()
+            return project
+
+        return create_with_retry(_save)
 
     @staticmethod
     def get_project_by_id(project_id: UUID, user: SystemUser) -> ConstructionProject:

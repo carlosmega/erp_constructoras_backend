@@ -97,10 +97,11 @@ class EmployeeService:
                 Q(curp__icontains=search)
             )
         if projectid:
-            employee_ids = EmployeeProjectAssignment.objects.filter(
-                projectid=projectid, statecode=AssignmentStateCode.ACTIVE
-            ).values_list('employeeid', flat=True)
-            queryset = queryset.filter(employeeid__in=employee_ids)
+            queryset = queryset.filter(
+                employeeid__in=EmployeeProjectAssignment.objects.filter(
+                    projectid=projectid, statecode=AssignmentStateCode.ACTIVE
+                ).values('employeeid')
+            )
 
         queryset = queryset.select_related('ownerid', 'createdby', 'modifiedby')
         return queryset
@@ -679,31 +680,33 @@ class PayrollRunService:
             createdby=user,
             modifiedby=user,
         )
-        run.save()
 
         # Get employees for this run
         employees = Employee.objects.filter(statecode=EmployeeStateCode.ACTIVE)
         if project:
-            assigned_ids = EmployeeProjectAssignment.objects.filter(
-                projectid=project, statecode=AssignmentStateCode.ACTIVE
-            ).values_list('employeeid', flat=True)
-            employees = employees.filter(employeeid__in=assigned_ids)
+            employees = employees.filter(
+                employeeid__in=EmployeeProjectAssignment.objects.filter(
+                    projectid=project, statecode=AssignmentStateCode.ACTIVE
+                ).values('employeeid')
+            )
 
-        # Create entries for each employee
-        entries = []
-        for emp in employees:
-            entry = PayrollEntry(
+        # Create entries for each employee (run PK is already assigned in memory)
+        entries = [
+            PayrollEntry(
                 payrollrunid=run,
                 employeeid=emp,
                 basepay=emp.basesalary,
                 createdby=user,
                 modifiedby=user,
             )
-            entries.append(entry)
+            for emp in employees
+        ]
+
+        # Set employeecount before the single save (avoids a redundant second save)
+        run.employeecount = len(entries)
+        run.save()
 
         PayrollEntry.objects.bulk_create(entries)
-        run.employeecount = len(entries)
-        run.save(update_fields=['employeecount'])
 
         return run
 
@@ -723,6 +726,8 @@ class PayrollRunService:
 
         entries = PayrollEntry.objects.filter(payrollrunid=run).select_related('employeeid')
 
+        now = timezone.now()
+        updated_entries = []
         for entry in entries:
             emp = entry.employeeid
 
@@ -786,7 +791,16 @@ class PayrollRunService:
 
             # Net pay
             entry.netpay = (gross - total_deductions).quantize(Decimal('0.01'))
-            entry.save()
+            entry.modifiedon = now
+            updated_entries.append(entry)
+
+        # Write every entry in a single bulk_update instead of one UPDATE per
+        # iteration. modifiedon is set explicitly (bulk_update skips auto_now).
+        PayrollEntry.objects.bulk_update(
+            updated_entries,
+            ['grosspay', 'totaladditions', 'additions', 'totaldeductions',
+             'deductions', 'netpay', 'modifiedon'],
+        )
 
         # Recalculate run totals
         PayrollRunService._recalculate_totals(run)
@@ -990,15 +1004,14 @@ class AttendanceService:
     @staticmethod
     @transaction.atomic
     def bulk_create_attendance(entries: list, user: SystemUser) -> List[AttendanceRecord]:
-        """Create attendance records for multiple employees at once."""
-        records = []
-        for dto in entries:
-            try:
-                record = AttendanceService.create_attendance(dto, user)
-                records.append(record)
-            except (ValidationError, Exception):
-                continue
-        return records
+        """Create attendance records for multiple employees at once.
+
+        All-or-nothing: the method is @transaction.atomic, so a single invalid
+        entry raises and rolls back the whole batch instead of being silently
+        skipped (the previous bare ``except (ValidationError, Exception): continue``
+        hid every failure from the caller).
+        """
+        return [AttendanceService.create_attendance(dto, user) for dto in entries]
 
     @staticmethod
     def delete_attendance(record_id: UUID, user: SystemUser) -> None:

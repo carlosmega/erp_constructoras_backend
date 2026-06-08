@@ -16,6 +16,7 @@ from apps.orders.models import SalesOrder, SalesOrderDetail, OrderStateCode, Ord
 from apps.orders.schemas import CreateSalesOrderDto, FulfillOrderDto
 from apps.users.models import SystemUser
 from core.permissions import can_modify_record
+from core.numbering import create_with_retry
 
 
 class OrderService:
@@ -59,13 +60,12 @@ class OrderService:
         if SalesOrder.objects.filter(quoteid=quote).exists():
             raise ValidationError('Order already exists for this quote')
 
-        # Generate order number
-        ordernumber = OrderService.generate_order_number()
-
-        # Create order from quote data
-        order = SalesOrder.objects.create(
+        # Create order from quote data with a race-safe number: the unique
+        # ordernumber is regenerated and the insert retried on a concurrent
+        # collision (see core.numbering).
+        order = create_with_retry(lambda: SalesOrder.objects.create(
             name=quote.name,
-            ordernumber=ordernumber,
+            ordernumber=OrderService.generate_order_number(),
             quoteid=quote,
             opportunityid=quote.opportunityid,
             accountid=quote.accountid,
@@ -80,7 +80,7 @@ class OrderService:
             ownerid=user,
             createdby=user,
             modifiedby=user
-        )
+        ))
 
         # Copy quote details to order details
         for quote_detail in quote.quote_details.all():
@@ -102,8 +102,6 @@ class OrderService:
     @audit_action(action='create', entity='order', id_field='salesorderid')
     def create_order(dto: CreateSalesOrderDto, user: SystemUser) -> SalesOrder:
         """Create a new order manually."""
-        ordernumber = OrderService.generate_order_number()
-
         # Get related entities if provided
         quote = None
         opportunity = None
@@ -125,10 +123,11 @@ class OrderService:
             from core.customers import resolve_customer
             account, contact = resolve_customer(dto.customerid, dto.customeridtype)
 
-        # Create order
-        order = SalesOrder.objects.create(
+        # Create order with a race-safe number (retry on concurrent collision
+        # on the unique ordernumber -- see core.numbering).
+        order = create_with_retry(lambda: SalesOrder.objects.create(
             name=dto.name,
-            ordernumber=ordernumber,
+            ordernumber=OrderService.generate_order_number(),
             quoteid=quote,
             opportunityid=opportunity,
             accountid=account,
@@ -140,7 +139,7 @@ class OrderService:
             ownerid=user,
             createdby=user,
             modifiedby=user
-        )
+        ))
 
         return order
 
@@ -159,6 +158,93 @@ class OrderService:
             raise PermissionDenied('You do not have permission to view this order')
 
         return order
+
+    @staticmethod
+    def recalculate_order_totals(order: SalesOrder) -> None:
+        """Recalculate an order's totals from its line items."""
+        totals = order.order_details.aggregate(
+            line_total=Sum('extendedamount'),
+            tax_total=Sum('tax'),
+            discount_total=Sum('manualdiscountamount'),
+            base_total=Sum('baseamount'),
+        )
+        order.totallineitemamount = totals['base_total'] or Decimal('0.00')
+        order.totaltax = totals['tax_total'] or Decimal('0.00')
+        order.totaldiscountamount = totals['discount_total'] or Decimal('0.00')
+        order.totalamount = totals['line_total'] or Decimal('0.00')
+        order.save(update_fields=[
+            'totallineitemamount', 'totaltax', 'totaldiscountamount', 'totalamount',
+        ])
+
+    @staticmethod
+    def delete_order(order_id: UUID, user: SystemUser) -> None:
+        """Cancel an active order (ownership-checked)."""
+        order = OrderService.get_order_by_id(order_id, user)
+        if order.statecode != OrderStateCode.ACTIVE:
+            raise ValidationError('Can only delete active orders')
+        order.statecode = OrderStateCode.CANCELED
+        order.save(update_fields=['statecode'])
+
+    @staticmethod
+    def _get_owned_detail(detail_id: UUID, user: SystemUser) -> SalesOrderDetail:
+        """Fetch an order detail, enforcing ownership of its parent order."""
+        try:
+            detail = SalesOrderDetail.objects.select_related(
+                'salesorderid__ownerid'
+            ).get(salesorderdetailid=detail_id)
+        except SalesOrderDetail.DoesNotExist:
+            raise NotFound('Order detail not found')
+        if not can_modify_record(user, detail.salesorderid.ownerid):
+            raise PermissionDenied('You do not have permission to access this order')
+        return detail
+
+    @staticmethod
+    def add_order_detail(order_id: UUID, payload, user: SystemUser) -> SalesOrderDetail:
+        """Add a line item to an order (ownership-checked), then recalc totals."""
+        order = OrderService.get_order_by_id(order_id, user)
+        detail = SalesOrderDetail(
+            salesorderid=order,
+            productname=payload.productdescription or payload.productname or 'Product',
+            productdescription=payload.productdescription,
+            quantity=payload.quantity,
+            priceperunit=payload.priceperunit,
+            manualdiscountamount=payload.manualdiscountamount,
+            tax=payload.tax,
+        )
+        detail.save()
+        OrderService.recalculate_order_totals(order)
+        return detail
+
+    @staticmethod
+    def get_order_detail(detail_id: UUID, user: SystemUser) -> SalesOrderDetail:
+        """Get a single order detail (ownership-checked via its parent order)."""
+        return OrderService._get_owned_detail(detail_id, user)
+
+    @staticmethod
+    def update_order_detail(detail_id: UUID, payload, user: SystemUser) -> SalesOrderDetail:
+        """Update an order detail (ownership-checked), then recalc totals."""
+        detail = OrderService._get_owned_detail(detail_id, user)
+        if payload.productdescription is not None:
+            detail.productdescription = payload.productdescription
+        if payload.quantity is not None:
+            detail.quantity = payload.quantity
+        if payload.priceperunit is not None:
+            detail.priceperunit = payload.priceperunit
+        if payload.manualdiscountamount is not None:
+            detail.manualdiscountamount = payload.manualdiscountamount
+        if payload.tax is not None:
+            detail.tax = payload.tax
+        detail.save()
+        OrderService.recalculate_order_totals(detail.salesorderid)
+        return detail
+
+    @staticmethod
+    def remove_order_detail(detail_id: UUID, user: SystemUser) -> None:
+        """Remove an order line item (ownership-checked), then recalc totals."""
+        detail = OrderService._get_owned_detail(detail_id, user)
+        order = detail.salesorderid
+        detail.delete()
+        OrderService.recalculate_order_totals(order)
 
     @staticmethod
     @transaction.atomic

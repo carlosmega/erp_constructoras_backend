@@ -104,10 +104,8 @@ def delete_quote(request: HttpRequest, quote_id: UUID):
 @quotes_router.get('/{quote_id}/details', response=List[QuoteDetailSchema])
 @require_permission(Permission.QUOTE_READ)
 def list_quote_details(request: HttpRequest, quote_id: UUID):
-    """List all line items for a quote."""
-    from apps.quotes.models import QuoteDetail as QuoteDetailModel
-    details = QuoteDetailModel.objects.filter(quoteid_id=quote_id).order_by('sequencenumber')
-    return list(details)
+    """List all line items for a quote (ownership-checked)."""
+    return QuoteService.list_quote_details(quote_id, request.user)
 
 
 @quotes_router.post('/{quote_id}/details', response={201: QuoteDetailSchema})
@@ -121,42 +119,15 @@ def add_quote_detail(request: HttpRequest, quote_id: UUID, payload: CreateQuoteD
 @quotes_router.get('/details/{detail_id}', response=QuoteDetailSchema)
 @require_permission(Permission.QUOTE_READ)
 def get_quote_detail(request: HttpRequest, detail_id: UUID):
-    """Get a single quote detail by ID."""
-    from apps.quotes.models import QuoteDetail as QuoteDetailModel
-    from django.shortcuts import get_object_or_404
-    detail = get_object_or_404(QuoteDetailModel, quotedetailid=detail_id)
-    return detail
+    """Get a single quote detail by ID (ownership-checked)."""
+    return QuoteService.get_quote_detail(detail_id, request.user)
 
 
 @quotes_router.patch('/details/{detail_id}', response=QuoteDetailSchema)
 @require_permission(Permission.QUOTE_UPDATE)
 def update_quote_detail(request: HttpRequest, detail_id: UUID, payload: UpdateQuoteDetailDto):
-    """Update a quote detail line item."""
-    from apps.quotes.models import QuoteDetail as QuoteDetailModel
-    from django.shortcuts import get_object_or_404
-    detail = get_object_or_404(QuoteDetailModel, quotedetailid=detail_id)
-
-    if payload.productname is not None:
-        detail.productname = payload.productname
-    if payload.productdescription is not None:
-        detail.productdescription = payload.productdescription
-    if payload.quantity is not None:
-        detail.quantity = payload.quantity
-    if payload.priceperunit is not None:
-        detail.priceperunit = payload.priceperunit
-    if payload.manualdiscountamount is not None:
-        detail.manualdiscountamount = payload.manualdiscountamount
-    if payload.tax is not None:
-        detail.tax = payload.tax
-    if payload.sequencenumber is not None:
-        detail.sequencenumber = payload.sequencenumber
-
-    detail.save()
-
-    # Recalculate quote totals
-    detail.quoteid.calculate_totals()
-
-    return detail
+    """Update a quote detail line item (ownership-checked)."""
+    return QuoteService.update_quote_detail(detail_id, payload, request.user)
 
 
 @quotes_router.delete('/details/{detail_id}', response={204: None})

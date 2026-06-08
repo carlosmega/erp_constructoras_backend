@@ -338,6 +338,7 @@ def add_attachment(
 @attachments_router.get(
     "/attachments/{attachment_id}/download/",
 )
+@require_permission(Permission.EXPENSE_READ)
 def download_attachment(request: HttpRequest, attachment_id: UUID):
     """Download an attachment file."""
     attachment = AttachmentService.get_attachment(attachment_id)

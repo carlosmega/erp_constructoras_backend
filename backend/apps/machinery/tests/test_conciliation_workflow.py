@@ -82,7 +82,7 @@ class TestFullConciliationWorkflow:
 
         # 6. Verify period summary shows 10 imputable days
         summary = DailyEquipmentLogService.get_period_summary(
-            contract.contractid, estimation_number=1
+            contract.contractid, estimation_number=1, user=user
         )
         assert summary['totaldays'] == 10
         assert summary['imputabledays'] == 10

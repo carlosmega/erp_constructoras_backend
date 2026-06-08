@@ -605,3 +605,11 @@ class TestGetLeadStats:
         stats = LeadService.get_lead_stats(salesperson)
 
         assert stats.total_leads == 3  # Only own leads
+
+    def test_get_lead_stats_bounded_queries(self, db, salesperson, django_assert_max_num_queries):
+        """Quality/source counts must use a single GROUP BY each, not one COUNT
+        per enum value (the old N+1 fired ~20 queries regardless of data)."""
+        HotLeadFactory.create_batch(2, ownerid=salesperson)
+        LeadFactory.create_batch(3, ownerid=salesperson, leadqualitycode=LeadQualityCode.WARM)
+        with django_assert_max_num_queries(10):
+            LeadService.get_lead_stats(salesperson)
