@@ -46,8 +46,8 @@ from apps.machinery.schemas import (
     CreateEstimationDeductionDto,
     UpdateEstimationStatusDto,
 )
-from core.exceptions import ValidationError, NotFound
-from core.permissions import filter_by_ownership
+from core.exceptions import ValidationError, NotFound, PermissionDenied
+from core.permissions import filter_by_ownership, can_modify_record
 
 
 # ============================================================================
@@ -59,8 +59,8 @@ class EquipmentCategoryService:
 
     @staticmethod
     def list_categories(user, statecode: Optional[int] = None):
+        # Global catalog: visible to any MACHINERY_READ user (no ownership scoping).
         qs = EquipmentCategory.objects.all()
-        qs = filter_by_ownership(qs, user)
         if statecode is not None:
             qs = qs.filter(statecode=statecode)
         return qs.select_related('ownerid')
@@ -124,8 +124,8 @@ class EquipmentBrandService:
 
     @staticmethod
     def list_brands(user, statecode: Optional[int] = None):
+        # Global catalog: visible to any MACHINERY_READ user (no ownership scoping).
         qs = EquipmentBrand.objects.all()
-        qs = filter_by_ownership(qs, user)
         if statecode is not None:
             qs = qs.filter(statecode=statecode)
         return qs.select_related('ownerid')
@@ -189,8 +189,8 @@ class EquipmentModelService:
 
     @staticmethod
     def list_models(user, brandid: Optional[UUID] = None, statecode: Optional[int] = None):
+        # Global catalog: visible to any MACHINERY_READ user (no ownership scoping).
         qs = EquipmentModel.objects.all()
-        qs = filter_by_ownership(qs, user)
         if brandid is not None:
             qs = qs.filter(brandid=brandid)
         if statecode is not None:
@@ -303,12 +303,15 @@ class EquipmentService:
     @staticmethod
     def get_equipment(equipment_id: UUID, user):
         try:
-            return Equipment.objects.select_related(
+            equipment = Equipment.objects.select_related(
                 'categoryid', 'brandid', 'modelid', 'currentprojectid',
                 'supplierid', 'ownerid'
             ).get(equipmentid=equipment_id)
         except Equipment.DoesNotExist:
             raise NotFound(f"Equipment {equipment_id} not found")
+        if not can_modify_record(user, equipment.ownerid):
+            raise PermissionDenied("You don't have permission to access this equipment")
+        return equipment
 
     @staticmethod
     def generate_equipment_number() -> str:
@@ -513,11 +516,15 @@ class EquipmentInsuranceService:
 
     @staticmethod
     def list_insurance(equipment_id: UUID, user):
-        # Validate equipment exists
+        # Validate equipment exists + enforce ownership of the parent equipment
         try:
-            Equipment.objects.get(equipmentid=equipment_id)
+            equipment = Equipment.objects.select_related('ownerid').get(
+                equipmentid=equipment_id
+            )
         except Equipment.DoesNotExist:
             raise NotFound(f"Equipment {equipment_id} not found")
+        if not can_modify_record(user, equipment.ownerid):
+            raise PermissionDenied("You don't have permission to access this equipment")
 
         return EquipmentInsurance.objects.filter(
             equipmentid=equipment_id
@@ -526,19 +533,26 @@ class EquipmentInsuranceService:
     @staticmethod
     def get_insurance(insurance_id: UUID, user):
         try:
-            return EquipmentInsurance.objects.select_related(
-                'equipmentid'
+            insurance = EquipmentInsurance.objects.select_related(
+                'equipmentid', 'equipmentid__ownerid'
             ).get(insuranceid=insurance_id)
         except EquipmentInsurance.DoesNotExist:
             raise NotFound(f"Equipment insurance {insurance_id} not found")
+        if not can_modify_record(user, insurance.equipmentid.ownerid):
+            raise PermissionDenied("You don't have permission to access this insurance")
+        return insurance
 
     @staticmethod
     def create_insurance(equipment_id: UUID, dto: CreateEquipmentInsuranceDto, user):
-        # Validate equipment exists
+        # Validate equipment exists + enforce ownership of the parent equipment
         try:
-            equipment = Equipment.objects.get(equipmentid=equipment_id)
+            equipment = Equipment.objects.select_related('ownerid').get(
+                equipmentid=equipment_id
+            )
         except Equipment.DoesNotExist:
             raise NotFound(f"Equipment {equipment_id} not found")
+        if not can_modify_record(user, equipment.ownerid):
+            raise PermissionDenied("You don't have permission to access this equipment")
 
         # Validate dates
         if dto.expirydate <= dto.startdate:
@@ -682,11 +696,13 @@ class RentalContractService:
 
     @staticmethod
     def list_contracts(
+        user,
         equipment_id: Optional[UUID] = None,
         statuscode: Optional[int] = None,
         statecode: Optional[int] = None,
     ):
         qs = RentalContract.objects.all()
+        qs = filter_by_ownership(qs, user)
         if equipment_id is not None:
             qs = qs.filter(equipmentid=equipment_id)
         if statuscode is not None:
@@ -696,13 +712,16 @@ class RentalContractService:
         return qs.select_related('equipmentid', 'ownerid')
 
     @staticmethod
-    def get_contract(contract_id: UUID):
+    def get_contract(contract_id: UUID, user):
         try:
-            return RentalContract.objects.select_related(
+            contract = RentalContract.objects.select_related(
                 'equipmentid', 'projectid', 'ownerid'
             ).get(contractid=contract_id)
         except RentalContract.DoesNotExist:
             raise NotFound(f"Rental contract {contract_id} not found")
+        if not can_modify_record(user, contract.ownerid):
+            raise PermissionDenied("You don't have permission to access this rental contract")
+        return contract
 
     @staticmethod
     @transaction.atomic
@@ -747,7 +766,7 @@ class RentalContractService:
 
     @staticmethod
     def update_contract(contract_id: UUID, dto: UpdateRentalContractDto, user):
-        contract = RentalContractService.get_contract(contract_id)
+        contract = RentalContractService.get_contract(contract_id, user)
         data = dto.dict(exclude_unset=True)
         for field, value in data.items():
             if field == 'equipmentid':
@@ -780,11 +799,13 @@ class DailyEquipmentLogService:
 
     @staticmethod
     def list_logs(
+        user,
         contract_id: Optional[UUID] = None,
         estimation_number: Optional[int] = None,
         statecode: Optional[int] = None,
     ):
         qs = DailyEquipmentLog.objects.all()
+        qs = filter_by_ownership(qs, user)
         if contract_id is not None:
             qs = qs.filter(contractid=contract_id)
         if estimation_number is not None:
@@ -797,20 +818,23 @@ class DailyEquipmentLogService:
         )
 
     @staticmethod
-    def get_log(log_id: UUID):
+    def get_log(log_id: UUID, user):
         try:
-            return DailyEquipmentLog.objects.select_related(
+            log = DailyEquipmentLog.objects.select_related(
                 'contractid', 'equipmentid', 'justificationreasonid',
                 'authorizedby', 'ownerid'
             ).get(logid=log_id)
         except DailyEquipmentLog.DoesNotExist:
             raise NotFound(f"Daily equipment log {log_id} not found")
+        if not can_modify_record(user, log.ownerid):
+            raise PermissionDenied("You don't have permission to access this daily log")
+        return log
 
     @staticmethod
     @transaction.atomic
     def create_log(dto: CreateDailyEquipmentLogDto, user):
-        # Get contract
-        contract = RentalContractService.get_contract(dto.contractid)
+        # Get contract (enforces ownership of the parent contract)
+        contract = RentalContractService.get_contract(dto.contractid, user)
 
         # Validate hourmeter
         if dto.hourmeterend < dto.hourmeterstart:
@@ -867,7 +891,7 @@ class DailyEquipmentLogService:
 
     @staticmethod
     def update_log(log_id: UUID, dto: UpdateDailyEquipmentLogDto, user):
-        log = DailyEquipmentLogService.get_log(log_id)
+        log = DailyEquipmentLogService.get_log(log_id, user)
         data = dto.dict(exclude_unset=True)
         for field, value in data.items():
             if field == 'justificationreasonid':
@@ -885,7 +909,7 @@ class DailyEquipmentLogService:
                 else:
                     log.authorizedby = None
             elif field == 'contractid':
-                log.contractid = RentalContractService.get_contract(value)
+                log.contractid = RentalContractService.get_contract(value, user)
             else:
                 setattr(log, field, value)
         log.modifiedby = user
@@ -893,8 +917,10 @@ class DailyEquipmentLogService:
         return log
 
     @staticmethod
-    def get_period_summary(contract_id: UUID, estimation_number: int):
+    def get_period_summary(contract_id: UUID, estimation_number: int, user):
         """Compute period summary for a contract's estimation number."""
+        # Enforce ownership of the parent contract before aggregating its logs.
+        RentalContractService.get_contract(contract_id, user)
         dec = DecimalField(max_digits=20, decimal_places=2)
         zero = Value(Decimal('0'), output_field=dec)
 
@@ -952,10 +978,12 @@ class BillingEstimationService:
 
     @staticmethod
     def list_estimations(
+        user,
         contract_id: Optional[UUID] = None,
         statuscode: Optional[int] = None,
     ):
         qs = BillingEstimation.objects.all()
+        qs = filter_by_ownership(qs, user)
         if contract_id is not None:
             qs = qs.filter(contractid=contract_id)
         if statuscode is not None:
@@ -963,23 +991,26 @@ class BillingEstimationService:
         return qs.select_related('contractid', 'ownerid')
 
     @staticmethod
-    def get_estimation(estimation_id: UUID):
+    def get_estimation(estimation_id: UUID, user):
         try:
-            return BillingEstimation.objects.select_related(
+            estimation = BillingEstimation.objects.select_related(
                 'contractid', 'ownerid'
             ).prefetch_related('deductions').get(
                 estimationid=estimation_id
             )
         except BillingEstimation.DoesNotExist:
             raise NotFound(f"Billing estimation {estimation_id} not found")
+        if not can_modify_record(user, estimation.ownerid):
+            raise PermissionDenied("You don't have permission to access this billing estimation")
+        return estimation
 
     @staticmethod
     @transaction.atomic
     def generate_estimation(dto: GenerateEstimationDto, user):
         """Generate or regenerate a billing estimation from daily logs."""
-        contract = RentalContractService.get_contract(dto.contractid)
+        contract = RentalContractService.get_contract(dto.contractid, user)
         summary = DailyEquipmentLogService.get_period_summary(
-            dto.contractid, dto.estimationnumber
+            dto.contractid, dto.estimationnumber, user
         )
 
         if summary['totaldays'] <= 0:
@@ -1070,7 +1101,7 @@ class BillingEstimationService:
 
     @staticmethod
     def update_status(estimation_id: UUID, dto: UpdateEstimationStatusDto, user):
-        estimation = BillingEstimationService.get_estimation(estimation_id)
+        estimation = BillingEstimationService.get_estimation(estimation_id, user)
         estimation.statuscode = dto.statuscode
         estimation.modifiedby = user
         estimation.save()
@@ -1078,13 +1109,15 @@ class BillingEstimationService:
 
     @staticmethod
     def add_deduction(dto: CreateEstimationDeductionDto, user):
-        # Validate estimation exists
-        estimation = BillingEstimationService.get_estimation(dto.estimationid)
+        # Validate estimation exists (enforces ownership of the parent estimation)
+        estimation = BillingEstimationService.get_estimation(dto.estimationid, user)
         deduction = EstimationDeduction(
             estimationid=estimation,
             concept=dto.concept,
             amount=dto.amount,
             statecode=EquipmentStateCode.ACTIVE,
+            createdby=user,
+            modifiedby=user,
         )
         deduction.save()
         return deduction

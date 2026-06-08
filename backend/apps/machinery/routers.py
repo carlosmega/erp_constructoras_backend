@@ -336,6 +336,7 @@ def list_contracts(
 ):
     """List rental contracts with optional filtering."""
     return list(RentalContractService.list_contracts(
+        request.user,
         equipment_id=equipment_id,
         statuscode=statuscode,
         statecode=statecode,
@@ -347,14 +348,14 @@ def list_contracts(
 def create_contract(request: HttpRequest, payload: CreateRentalContractDto):
     """Create a new rental contract."""
     contract = RentalContractService.create_contract(payload, request.user)
-    return 201, RentalContractService.get_contract(contract.contractid)
+    return 201, RentalContractService.get_contract(contract.contractid, request.user)
 
 
 @contracts_router.get("/rental-contracts/{contract_id}/", response=RentalContractSchema)
 @require_permission(Permission.MACHINERY_READ)
 def get_contract(request: HttpRequest, contract_id: UUID):
     """Get rental contract by ID."""
-    return RentalContractService.get_contract(contract_id)
+    return RentalContractService.get_contract(contract_id, request.user)
 
 
 @contracts_router.patch("/rental-contracts/{contract_id}/", response=RentalContractSchema)
@@ -362,7 +363,7 @@ def get_contract(request: HttpRequest, contract_id: UUID):
 def update_contract(request: HttpRequest, contract_id: UUID, payload: UpdateRentalContractDto):
     """Update a rental contract."""
     RentalContractService.update_contract(contract_id, payload, request.user)
-    return RentalContractService.get_contract(contract_id)
+    return RentalContractService.get_contract(contract_id, request.user)
 
 
 # =============================================================================
@@ -382,6 +383,7 @@ def list_logs(
 ):
     """List daily equipment logs with optional filtering."""
     return list(DailyEquipmentLogService.list_logs(
+        request.user,
         contract_id=contract_id,
         estimation_number=estimation_number,
         statecode=statecode,
@@ -393,7 +395,7 @@ def list_logs(
 def create_log(request: HttpRequest, payload: CreateDailyEquipmentLogDto):
     """Create a new daily equipment log entry."""
     log = DailyEquipmentLogService.create_log(payload, request.user)
-    return 201, DailyEquipmentLogService.get_log(log.logid)
+    return 201, DailyEquipmentLogService.get_log(log.logid, request.user)
 
 
 @daily_logs_router.get("/daily-logs/summary/", response=dict)
@@ -404,14 +406,14 @@ def get_period_summary(
     estimation_number: int,
 ):
     """Get period summary for a contract's estimation number."""
-    return DailyEquipmentLogService.get_period_summary(contract_id, estimation_number)
+    return DailyEquipmentLogService.get_period_summary(contract_id, estimation_number, request.user)
 
 
 @daily_logs_router.get("/daily-logs/{log_id}/", response=DailyEquipmentLogSchema)
 @require_permission(Permission.MACHINERY_READ)
 def get_log(request: HttpRequest, log_id: UUID):
     """Get daily equipment log by ID."""
-    return DailyEquipmentLogService.get_log(log_id)
+    return DailyEquipmentLogService.get_log(log_id, request.user)
 
 
 @daily_logs_router.patch("/daily-logs/{log_id}/", response=DailyEquipmentLogSchema)
@@ -419,7 +421,7 @@ def get_log(request: HttpRequest, log_id: UUID):
 def update_log(request: HttpRequest, log_id: UUID, payload: UpdateDailyEquipmentLogDto):
     """Update a daily equipment log entry."""
     DailyEquipmentLogService.update_log(log_id, payload, request.user)
-    return DailyEquipmentLogService.get_log(log_id)
+    return DailyEquipmentLogService.get_log(log_id, request.user)
 
 
 # =============================================================================
@@ -438,6 +440,7 @@ def list_estimations(
 ):
     """List billing estimations with optional filtering."""
     return list(BillingEstimationService.list_estimations(
+        request.user,
         contract_id=contract_id,
         statuscode=statuscode,
     ))
@@ -448,14 +451,14 @@ def list_estimations(
 def generate_estimation(request: HttpRequest, payload: GenerateEstimationDto):
     """Generate or regenerate a billing estimation from daily logs."""
     estimation = BillingEstimationService.generate_estimation(payload, request.user)
-    return 201, BillingEstimationService.get_estimation(estimation.estimationid)
+    return 201, BillingEstimationService.get_estimation(estimation.estimationid, request.user)
 
 
 @estimations_router.get("/billing-estimations/{estimation_id}/", response=BillingEstimationSchema)
 @require_permission(Permission.MACHINERY_READ)
 def get_estimation(request: HttpRequest, estimation_id: UUID):
     """Get billing estimation by ID."""
-    return BillingEstimationService.get_estimation(estimation_id)
+    return BillingEstimationService.get_estimation(estimation_id, request.user)
 
 
 @estimations_router.patch("/billing-estimations/{estimation_id}/status/", response=BillingEstimationSchema)
@@ -463,7 +466,7 @@ def get_estimation(request: HttpRequest, estimation_id: UUID):
 def update_estimation_status(request: HttpRequest, estimation_id: UUID, payload: UpdateEstimationStatusDto):
     """Update the status of a billing estimation."""
     BillingEstimationService.update_status(estimation_id, payload, request.user)
-    return BillingEstimationService.get_estimation(estimation_id)
+    return BillingEstimationService.get_estimation(estimation_id, request.user)
 
 
 @estimations_router.post("/billing-estimations/{estimation_id}/deductions/", response={201: EstimationDeductionSchema})
