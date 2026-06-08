@@ -95,24 +95,14 @@ def delete_product(request: HttpRequest, product_id: UUID):
 @require_permission(Permission.PRODUCT_UPDATE)
 def activate_product(request: HttpRequest, product_id: UUID):
     """Activate a product (set statecode to Active)."""
-    from apps.products.models import Product
-    from django.shortcuts import get_object_or_404
-    product = get_object_or_404(Product, productid=product_id)
-    product.statecode = 0  # Active
-    product.save()
-    return product
+    return ProductService.activate_product(product_id, request.user)
 
 
 @products_router.post('/{product_id}/deactivate', response=ProductSchema)
 @require_permission(Permission.PRODUCT_UPDATE)
 def deactivate_product(request: HttpRequest, product_id: UUID):
     """Deactivate a product (set statecode to Inactive)."""
-    from apps.products.models import Product
-    from django.shortcuts import get_object_or_404
-    product = get_object_or_404(Product, productid=product_id)
-    product.statecode = 1  # Inactive
-    product.save()
-    return product
+    return ProductService.deactivate_product(product_id, request.user)
 
 
 @products_router.get('/stats/summary', response=ProductStatsSchema)

@@ -99,6 +99,26 @@ class ProductService:
         product.save()
 
     @staticmethod
+    @audit_action(action='activate', entity='product', record_arg='product_id')
+    def activate_product(product_id: UUID, user: SystemUser) -> Product:
+        """Activate a product (set state to Active)."""
+        product = get_object_or_404(Product, productid=product_id)
+        product.statecode = ProductStateCode.ACTIVE
+        product.modifiedby = user
+        product.save()
+        return product
+
+    @staticmethod
+    @audit_action(action='deactivate', entity='product', record_arg='product_id')
+    def deactivate_product(product_id: UUID, user: SystemUser) -> Product:
+        """Deactivate a product (set state to Inactive)."""
+        product = get_object_or_404(Product, productid=product_id)
+        product.statecode = ProductStateCode.INACTIVE
+        product.modifiedby = user
+        product.save()
+        return product
+
+    @staticmethod
     def get_product_stats(user: SystemUser):
         """Get product inventory statistics."""
         queryset = Product.objects.all()

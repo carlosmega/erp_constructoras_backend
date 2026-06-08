@@ -144,6 +144,34 @@ class TestDeleteProduct:
 
 
 @pytest.mark.unit
+class TestActivateDeactivateProduct:
+    """Tests for ProductService.activate_product / deactivate_product (state transitions moved from the router)."""
+
+    def test_activate_sets_active(self, db, salesperson):
+        """Activating an inactive product sets statecode to ACTIVE and stamps modifiedby."""
+        product = ProductFactory(statecode=ProductStateCode.INACTIVE)
+        result = ProductService.activate_product(product.productid, salesperson)
+        assert result.statecode == ProductStateCode.ACTIVE
+        product.refresh_from_db()
+        assert product.statecode == ProductStateCode.ACTIVE
+        assert product.modifiedby == salesperson
+
+    def test_deactivate_sets_inactive(self, db, salesperson):
+        """Deactivating an active product sets statecode to INACTIVE and stamps modifiedby."""
+        product = ProductFactory(statecode=ProductStateCode.ACTIVE)
+        result = ProductService.deactivate_product(product.productid, salesperson)
+        assert result.statecode == ProductStateCode.INACTIVE
+        product.refresh_from_db()
+        assert product.statecode == ProductStateCode.INACTIVE
+        assert product.modifiedby == salesperson
+
+    def test_activate_nonexistent_raises_404(self, db, salesperson):
+        from django.http import Http404
+        with pytest.raises(Http404):
+            ProductService.activate_product(uuid4(), salesperson)
+
+
+@pytest.mark.unit
 class TestGetProductStats:
     """Tests for ProductService.get_product_stats."""
 
