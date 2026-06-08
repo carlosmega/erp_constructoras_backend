@@ -122,11 +122,9 @@ from apps.proyeccion.services import (
 )
 from apps.proyeccion.models import (
     IndirectCostTemplate,
-    EstimationProject,
     ProjectionPeriod,
 )
 from core.permissions import Permission, require_permission, require_authenticated
-from core.exceptions import NotFound
 
 
 # =============================================================================
@@ -1076,43 +1074,7 @@ def get_temporal_distribution(request: HttpRequest, project_id: UUID):
 @require_authenticated
 def get_budget_summary(request: HttpRequest, project_id: UUID):
     """Get project budget summary with totals and chosen alternative info."""
-    from apps.proyeccion.models import (
-        BudgetConcept as BudgetConceptModel,
-        ConceptFamily as ConceptFamilyModel,
-        ConceptSubfamily as ConceptSubfamilyModel,
-        OfferAlternative as OfferAlternativeModel,
-    )
-    from django.db.models import Sum, F, Count
-    from django.db import models
-
-    concepts = BudgetConceptModel.objects.filter(
-        projectid=project_id,
-        statecode=0,
-    )
-
-    totals = concepts.aggregate(
-        totaldirectcost=Sum(F('directunitcost') * F('quantity'), output_field=models.DecimalField()),
-        totalindirectcost=Sum(F('indirectunitcost') * F('quantity'), output_field=models.DecimalField()),
-        totalconcepts=Count('conceptid'),
-    )
-
-    direct = totals['totaldirectcost'] or Decimal('0')
-    indirect = totals['totalindirectcost'] or Decimal('0')
-
-    chosen = OfferAlternativeModel.objects.filter(
-        projectid=project_id,
-        ischosen=True,
-    ).first()
-
-    return {
-        'projectid': project_id,
-        'totalconcepts': totals['totalconcepts'],
-        'totaldirectcost': direct,
-        'totalindirectcost': indirect,
-        'totalconstructioncost': direct + indirect,
-        'chosensaleprice': chosen.salepricetotal if chosen else None,
-        'profitpercent': chosen.profitpercent if chosen else None,
-    }
+    return EstimationProjectService.get_budget_summary(project_id)
 
 
 # =============================================================================
@@ -1616,11 +1578,8 @@ def _serialize_settings(s) -> dict:
 @require_permission(Permission.ESTIMATION_PNT_READ)
 def get_financial_settings(request: HttpRequest, project_id: UUID):
     """Get (or lazily create with defaults) the financial settings for a project."""
-    try:
-        EstimationProject.objects.get(pk=project_id)
-    except EstimationProject.DoesNotExist:
-        raise NotFound(f"EstimationProject with ID {project_id} not found")
-    settings = EstimationFinancialSettingsService.get_or_create(project_id)
+    project = EstimationProjectService.get_project(project_id, request.user)
+    settings = EstimationFinancialSettingsService.get_or_create(project_id, project=project)
     return _serialize_settings(settings)
 
 
@@ -1633,12 +1592,9 @@ def patch_financial_settings(
     request: HttpRequest, project_id: UUID, payload: UpdateFinancialSettingsDto
 ):
     """Update whitelisted financial settings fields for a project."""
-    try:
-        EstimationProject.objects.get(pk=project_id)
-    except EstimationProject.DoesNotExist:
-        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    project = EstimationProjectService.get_project(project_id, request.user)
     dto = payload.dict(exclude_unset=True)
-    updated = EstimationFinancialSettingsService.update(project_id, dto, user=request.user)
+    updated = EstimationFinancialSettingsService.update(project_id, dto, user=request.user, project=project)
     return _serialize_settings(updated)
 
 
@@ -1657,10 +1613,7 @@ def _serialize_rule(r) -> dict:
 @require_permission(Permission.ESTIMATION_PNT_READ)
 def get_billing_rules(request: HttpRequest, project_id: UUID):
     """List billing rules for a project (ordered by sequence)."""
-    try:
-        EstimationProject.objects.get(pk=project_id)
-    except EstimationProject.DoesNotExist:
-        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    EstimationProjectService.get_project(project_id, request.user)  # raises NotFound if missing
     rules = EstimationBillingRuleService.list(project_id)
     return [_serialize_rule(r) for r in rules]
 
@@ -1674,15 +1627,13 @@ def put_billing_rules(
     request: HttpRequest, project_id: UUID, payload: ReplaceBillingRulesDto
 ):
     """Replace the full set of billing rules for a project (atomic, validates Σ=100%)."""
-    try:
-        EstimationProject.objects.get(pk=project_id)
-    except EstimationProject.DoesNotExist:
-        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    project = EstimationProjectService.get_project(project_id, request.user)
     try:
         rules = EstimationBillingRuleService.replace(
             project_id,
             [r.dict() for r in payload.rules],
             user=request.user,
+            project=project,
         )
     except ValueError as e:
         raise HttpError(400, str(e))
@@ -1723,10 +1674,7 @@ def get_pnt(
     overrides: str | None = None,
 ):
     """Compute the PNT report. 409 when no periods. Optional base64-JSON overrides."""
-    try:
-        EstimationProject.objects.get(pk=project_id)
-    except EstimationProject.DoesNotExist:
-        raise NotFound(f"EstimationProject with ID {project_id} not found")
+    project = EstimationProjectService.get_project(project_id, request.user)
     overrides_dict = None
     if overrides:
         try:
@@ -1734,7 +1682,7 @@ def get_pnt(
         except Exception:
             raise HttpError(400, 'overrides must be base64-encoded JSON')
     try:
-        calc = EstimationPNTCalculator(project_id)
+        calc = EstimationPNTCalculator(project_id, project=project)
     except ValueError as e:
         # No periods → 409
         raise HttpError(409, json.dumps({'detail': str(e), 'code': 'no_periods'}))

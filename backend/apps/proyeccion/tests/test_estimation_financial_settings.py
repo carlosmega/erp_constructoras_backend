@@ -94,3 +94,27 @@ class TestEstimationFinancialSettingsService:
         )
         assert updated.financecostrate == Decimal('0.002000')
         assert updated.imssretentionrate == Decimal('0.0500')  # default
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+class TestFinancialSettingsQueryConsolidation:
+    """Pins the PNT fetch dedup: passing an already-fetched project into
+    get_or_create avoids re-querying EstimationProject (the router used to fetch
+    the project once for a 404 check and then the service fetched it again)."""
+
+    def test_get_or_create_with_project_skips_project_fetch(self, django_assert_num_queries):
+        project = EstimationProjectFactory()
+        EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)  # materialize
+        # With the instance passed in: only the settings lookup, no EstimationProject SELECT.
+        with django_assert_num_queries(1):
+            EstimationFinancialSettingsService.get_or_create(
+                project.estimationprojectid, project=project
+            )
+
+    def test_get_or_create_without_project_refetches(self, django_assert_num_queries):
+        project = EstimationProjectFactory()
+        EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)  # materialize
+        # Without the instance: EstimationProject SELECT + settings lookup = 2 queries.
+        with django_assert_num_queries(2):
+            EstimationFinancialSettingsService.get_or_create(project.estimationprojectid)

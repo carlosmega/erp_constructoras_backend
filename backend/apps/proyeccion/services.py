@@ -171,6 +171,35 @@ class EstimationProjectService:
             raise NotFound(f"Estimation project with ID {project_id} not found")
 
     @staticmethod
+    def get_budget_summary(project_id):
+        """Aggregate a project's budget totals + chosen-alternative sale price.
+
+        Pure aggregation: one Sum/Count over BudgetConcept + one OfferAlternative
+        lookup; no parent fetch, no N+1. Does NOT validate project existence — a
+        bogus id yields zeros + null chosen alternative (HTTP 200), preserving the
+        endpoint's historical behavior (moved verbatim from the router).
+        """
+        from django.db.models import Sum, F, Count
+        concepts = BudgetConcept.objects.filter(projectid=project_id, statecode=0)
+        totals = concepts.aggregate(
+            totaldirectcost=Sum(F('directunitcost') * F('quantity'), output_field=models.DecimalField()),
+            totalindirectcost=Sum(F('indirectunitcost') * F('quantity'), output_field=models.DecimalField()),
+            totalconcepts=Count('conceptid'),
+        )
+        direct = totals['totaldirectcost'] or Decimal('0')
+        indirect = totals['totalindirectcost'] or Decimal('0')
+        chosen = OfferAlternative.objects.filter(projectid=project_id, ischosen=True).first()
+        return {
+            'projectid': project_id,
+            'totalconcepts': totals['totalconcepts'],
+            'totaldirectcost': direct,
+            'totalindirectcost': indirect,
+            'totalconstructioncost': direct + indirect,
+            'chosensaleprice': chosen.salepricetotal if chosen else None,
+            'profitpercent': chosen.profitpercent if chosen else None,
+        }
+
+    @staticmethod
     def create_project(dto, user):
         """Create a new estimation project with auto-generated number (EST-YYYY-NNN).
 
@@ -4330,16 +4359,20 @@ class EstimationFinancialSettingsService:
     })
 
     @staticmethod
-    def get_or_create(project_id):
-        """Idempotent. Materializes defaults on first call."""
-        project = EstimationProject.objects.get(pk=project_id)
+    def get_or_create(project_id, *, project=None):
+        """Idempotent. Materializes defaults on first call.
+
+        ``project`` lets a caller that already fetched the EstimationProject pass
+        it in to avoid a redundant fetch (the router does this).
+        """
+        project = project or EstimationProject.objects.get(pk=project_id)
         settings, _created = EstimationFinancialSettings.objects.get_or_create(projectid=project)
         return settings
 
     @classmethod
-    def update(cls, project_id, dto, user=None):
+    def update(cls, project_id, dto, user=None, *, project=None):
         """Apply only whitelisted fields. Ignore unknown keys silently."""
-        settings = cls.get_or_create(project_id)
+        settings = cls.get_or_create(project_id, project=project)
         for key, value in (dto or {}).items():
             if key in cls._WHITELIST:
                 setattr(settings, key, value)
@@ -4368,7 +4401,7 @@ class EstimationBillingRuleService:
 
     @classmethod
     @transaction.atomic
-    def replace(cls, project_id, rules, user=None):
+    def replace(cls, project_id, rules, user=None, *, project=None):
         """All-or-nothing replacement. Validates count, sum, sequences."""
         if not rules:
             raise ValueError('Debe proporcionar al menos 1 regla de facturación.')
@@ -4385,7 +4418,7 @@ class EstimationBillingRuleService:
                 f'La suma de porcentajes debe ser 100% (±0.01%). Suma actual: {total * 100:.4f}%.'
             )
 
-        project = EstimationProject.objects.get(pk=project_id)
+        project = project or EstimationProject.objects.get(pk=project_id)
         EstimationBillingRule.objects.filter(projectid=project).delete()
         created = []
         for r in rules:
@@ -4469,8 +4502,8 @@ class EstimationPNTCalculator:
     })
     _CUMULATIVE_CODES = frozenset({'CAJA_ACUMULADA', 'SALDO_ANTICIPO'})
 
-    def __init__(self, project_id):
-        self.project = EstimationProject.objects.get(pk=project_id)
+    def __init__(self, project_id, *, project=None):
+        self.project = project or EstimationProject.objects.get(pk=project_id)
         self.periods = list(
             ProjectionPeriod.objects.filter(projectid=project_id).order_by('periodnumber')
         )
@@ -4479,7 +4512,7 @@ class EstimationPNTCalculator:
             raise ValueError(
                 'No hay periodos. Inicializa el Plan de Obra (Paso 9) antes de consultar el PNT.'
             )
-        self.settings = EstimationFinancialSettingsService.get_or_create(project_id)
+        self.settings = EstimationFinancialSettingsService.get_or_create(project_id, project=self.project)
         self.billing_rules = self._load_billing_rules()
         self.rollups = CostDistributionService.compute_rollups(self.project)
 
