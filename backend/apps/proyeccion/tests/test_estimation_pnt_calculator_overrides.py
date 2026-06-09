@@ -14,10 +14,10 @@ class TestEstimationPNTCalculatorOverridesEffect:
     def test_override_imss_changes_ret_imss(self):
         project, _ = build_pnt_ready_project(periods=2)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+            entrytype=0, distributedquantity=Decimal('1000'),
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         base = calc.compute()
@@ -31,10 +31,10 @@ class TestEstimationPNTCalculatorOverridesEffect:
         project, _ = build_pnt_ready_project(periods=4)
         EstimationBillingRuleFactory(projectid=project, sequence=1, percent=Decimal('1.0'), lagperiods=0)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+            entrytype=0, distributedquantity=Decimal('1000'),
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         sim = calc.compute(overrides={
