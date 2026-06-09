@@ -174,6 +174,85 @@ def test_compute_rollups_with_chosen_alternative_retiros():
 
 @pytest.mark.django_db
 @pytest.mark.unit
+def test_compute_rollups_sale_is_live_and_scaled_to_chosen_salepricenet():
+    """'Venta Plan' must reflect the chosen alternative's salepricenet (incl.
+    transversal), distributed by the work-plan timing computed LIVE from
+    distributedquantity × current unitprice -- never the stale stored
+    distributedamount snapshot."""
+    from apps.proyeccion.models import OfferAlternative, WorkPlanEntry, WorkPlanEntryType
+    project = EstimationProjectFactory(periodcount=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("10"), unitprice=Decimal("100"))
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name="Base", ischosen=True,
+        salepricenet=Decimal("2000"), transversalpercent=Decimal("0"), profitpercent=Decimal("0"),
+    )
+    # Stored distributedamount is STALE (snapshot from when unitprice == directcost).
+    WorkPlanEntry.objects.create(
+        projectid=project, conceptid=concept, periodnumber=1, periodlabel="P1",
+        entrytype=WorkPlanEntryType.PLANNED,
+        distributedquantity=Decimal("4"), distributedamount=Decimal("999"),
+    )
+    WorkPlanEntry.objects.create(
+        projectid=project, conceptid=concept, periodnumber=2, periodlabel="P2",
+        entrytype=WorkPlanEntryType.PLANNED,
+        distributedquantity=Decimal("6"), distributedamount=Decimal("999"),
+    )
+
+    rollups = CostDistributionService.compute_rollups(project)
+    # live shape: p1 = 4×100 = 400, p2 = 6×100 = 600 (total 1000)
+    # scaled to salepricenet 2000 -> factor 2 -> [800, 1200]
+    assert rollups['sale_total'] == Decimal("2000")
+    assert rollups['sale_by_period'] == [Decimal("800"), Decimal("1200")]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_compute_rollups_sale_live_without_chosen_alternative():
+    """No chosen alternative -> Venta Plan = live concept venta (distributedquantity
+    × current unitprice), still not the stale stored amount."""
+    from apps.proyeccion.models import WorkPlanEntry, WorkPlanEntryType
+    project = EstimationProjectFactory(periodcount=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("10"), unitprice=Decimal("100"))
+    WorkPlanEntry.objects.create(
+        projectid=project, conceptid=concept, periodnumber=1, periodlabel="P1",
+        entrytype=WorkPlanEntryType.PLANNED,
+        distributedquantity=Decimal("4"), distributedamount=Decimal("999"),
+    )
+    rollups = CostDistributionService.compute_rollups(project)
+    assert rollups['sale_by_period'][0] == Decimal("400")
+    assert rollups['sale_total'] == Decimal("400")
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_compute_rollups_excludes_soft_deleted_cost_lines():
+    """Soft-deleted (statecode=1) breakdown and indirect lines must NOT inflate
+    the distributed cost. Same bug class as the indirect-cost list: compute_rollups
+    queried these models without filtering statecode."""
+    project = EstimationProjectFactory(periodcount=1)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
+    bd_active = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"), statecode=0)
+    bd_deleted = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("500"), statecode=1)
+    for bd in (bd_active, bd_deleted):
+        CostDistribution.objects.create(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+            breakdownid=bd, periodnumber=1, fraction=Decimal("1"),
+        )
+    ind_active = IndirectCostDetailFactory(projectid=project, amount=Decimal("100"), statecode=0)
+    ind_deleted = IndirectCostDetailFactory(projectid=project, amount=Decimal("50"), statecode=1)
+    for ind in (ind_active, ind_deleted):
+        CostDistribution.objects.create(
+            projectid=project, linetype=CostLineType.INDIRECT,
+            indirectcostid=ind, periodnumber=1, fraction=Decimal("1"),
+        )
+
+    rollups = CostDistributionService.compute_rollups(project)
+    assert rollups['direct_total'] == Decimal("1000")   # not 1500 (excludes soft-deleted 500)
+    assert rollups['indirect_total'] == Decimal("100")  # not 150 (excludes soft-deleted 50)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
 def test_compute_rollups_scales_by_concept_quantity():
     """``UnitCostBreakdown.amount`` is per-unit-of-concept (Σ quantity × unitprice
     × yieldvalue of an APU ingredient line). The project-level cost a breakdown

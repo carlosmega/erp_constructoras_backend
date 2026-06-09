@@ -3765,6 +3765,7 @@ class CostDistributionService:
         # scale as the alternative totals.
         breakdowns = UnitCostBreakdown.objects.filter(
             conceptid__projectid=project,
+            statecode=0,
         ).select_related('conceptid')
         bd_dist_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.BREAKDOWN,
@@ -3791,7 +3792,7 @@ class CostDistributionService:
         indirect_by_period = list(zeros)
         indirect_by_period_by_line: dict[str, list[Decimal]] = {}
 
-        indirects = IndirectCostDetail.objects.filter(projectid=project)
+        indirects = IndirectCostDetail.objects.filter(projectid=project, statecode=0)
         ind_dist_qs = CostDistribution.objects.filter(
             projectid=project, linetype=CostLineType.INDIRECT,
         ).values('indirectcostid_id', 'periodnumber', 'fraction')
@@ -3828,15 +3829,41 @@ class CostDistributionService:
         utility_by_period = [_round2(c * prof_factor) for c in base_cost]
         total_cost_by_period = [b + r + u for b, r, u in zip(base_cost, retiro_by_period, utility_by_period)]
 
-        # Sale from WorkPlanEntry (PLANNED)
+        # Sale ("Venta Plan"): timed by the work plan but computed LIVE from
+        # distributedquantity × the concept's CURRENT unitprice. The stored
+        # WorkPlanEntry.distributedamount is a snapshot taken at distribution
+        # time and goes stale when pricing changes (e.g. it equals the direct
+        # cost if the plan was distributed before indirects/utility were applied),
+        # so we never read it here. The live per-period shape is then scaled to
+        # the chosen alternative's net sale price so the total matches the offer
+        # (which also includes the transversal). With no chosen alternative the
+        # value stays at the live concept-level venta.
         sale_by_period = list(zeros)
-        sale_qs = WorkPlanEntry.objects.filter(
-            projectid=project, entrytype=WorkPlanEntryType.PLANNED,
-        ).values('periodnumber').annotate(total=Coalesce(Sum('distributedamount'), Decimal("0")))
+        sale_qs = (
+            WorkPlanEntry.objects.filter(
+                projectid=project, entrytype=WorkPlanEntryType.PLANNED,
+            )
+            .values('periodnumber')
+            .annotate(total=Coalesce(
+                Sum(
+                    F('distributedquantity') * F('conceptid__unitprice'),
+                    output_field=models.DecimalField(max_digits=20, decimal_places=6),
+                ),
+                Decimal("0"),
+            ))
+        )
         for row in sale_qs:
             p = row['periodnumber']
             if 1 <= p <= N:
                 sale_by_period[p - 1] = Decimal(row['total'] or 0)
+
+        planned_total = sum(sale_by_period, Decimal("0"))
+        sale_total_value = planned_total
+        target_sale = Decimal(chosen.salepricenet) if (chosen and chosen.salepricenet) else Decimal("0")
+        if target_sale > 0 and planned_total > 0:
+            factor = target_sale / planned_total
+            sale_by_period = [v * factor for v in sale_by_period]
+            sale_total_value = target_sale
 
         return {
             'sale_by_period': sale_by_period,
@@ -3853,7 +3880,7 @@ class CostDistributionService:
             'retiro_total': sum(retiro_by_period, Decimal("0")),
             'utility_total': sum(utility_by_period, Decimal("0")),
             'cost_total': sum(total_cost_by_period, Decimal("0")),
-            'sale_total': sum(sale_by_period, Decimal("0")),
+            'sale_total': sale_total_value,
             'chosen_alternative_id': chosen.alternativeid if chosen else None,
             'transversalpercent': trans_pct,
             'profitpercent': prof_pct,

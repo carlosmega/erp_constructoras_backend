@@ -436,14 +436,18 @@ def build_pnt_ready_project(*, periods=4, periodtype=0):
         transversalpercent=Decimal('5'), profitpercent=Decimal('10'),
         coefficient=Decimal('1.15'),
         directcosttotal=Decimal('100000'), indirectcosttotal=Decimal('20000'),
-        constructioncost=Decimal('120000'), salepricenet=Decimal('138000'),
+        constructioncost=Decimal('120000'),
+        # salepricenet=0 so compute_rollups does NOT scale 'producción' to the
+        # offer sale price here -- the cobros tests drive producción directly via
+        # the work plan. The sale-scaling behaviour is covered in test_cost_distribution.
+        salepricenet=Decimal('0'),
         taxamount=Decimal('22080'), salepricetotal=Decimal('160080'),
         ischosen=True,
     )
     return project, period_list
 
 
-def make_concept_for_project(project, code='C-001', description='Test', unit='m2'):
+def make_concept_for_project(project, code='C-001', description='Test', unit='m2', unitprice=Decimal('0')):
     """Helper: create a BudgetConcept attached to project with required relations."""
     family = ConceptFamilyFactory(projectid=project)
     subfamily = ConceptSubfamilyFactory(familyid=family, projectid=project)
@@ -455,4 +459,5 @@ def make_concept_for_project(project, code='C-001', description='Test', unit='m2
         description=description,
         unit=unit,
         quantity=Decimal('1'),
+        unitprice=unitprice,
     )

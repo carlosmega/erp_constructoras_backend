@@ -81,14 +81,13 @@ class TestEstimationPNTCalculatorCobros:
     def test_cobro_facturacion_default_rule_lag_zero(self):
         project, periods = build_pnt_ready_project(periods=4)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         for i, amt in enumerate([100, 200, 300, 400]):
             WorkPlanEntry.objects.create(
                 conceptid=concept, projectid=project,
                 periodnumber=i + 1, periodlabel=f'P{i + 1:02d}',
                 entrytype=0,
-                distributedquantity=Decimal('1'),
-                distributedamount=Decimal(amt),
+                distributedquantity=Decimal(amt),
             )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
@@ -103,11 +102,11 @@ class TestEstimationPNTCalculatorCobros:
         EstimationBillingRuleFactory(projectid=project, sequence=1, percent=Decimal('0.5'), lagperiods=1)
         EstimationBillingRuleFactory(projectid=project, sequence=2, percent=Decimal('0.5'), lagperiods=2)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         # Total produccion = 1000 (regardless of which period(s) it's spread across).
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+            entrytype=0, distributedquantity=Decimal('1000'),
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
@@ -132,10 +131,10 @@ class TestEstimationPNTCalculatorCobros:
     def test_retencion_imss_is_negative_fraction_of_facturacion(self):
         project, _ = build_pnt_ready_project(periods=2)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+            entrytype=0, distributedquantity=Decimal('1000'),
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute()
@@ -145,10 +144,10 @@ class TestEstimationPNTCalculatorCobros:
     def test_devolucion_returns_at_specified_period(self):
         project, _ = build_pnt_ready_project(periods=4)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+            entrytype=0, distributedquantity=Decimal('1000'),
         )
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
@@ -164,11 +163,11 @@ class TestEstimationPNTCalculatorCobros:
     def test_saldo_anticipo_is_cumulative_amortization(self):
         project, _ = build_pnt_ready_project(periods=3)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         for i in range(3):
             WorkPlanEntry.objects.create(
                 conceptid=concept, projectid=project, periodnumber=i + 1, periodlabel=f'P{i+1:02d}',
-                entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
+                entrytype=0, distributedquantity=Decimal('100'),
             )
         # Anticipo grande para que el cap no se active y se vea la acumulación pura.
         EstimationFinancialSettingsService.update(
@@ -187,10 +186,10 @@ class TestEstimationPNTCalculatorCobros:
         """SALDO_ANTICIPO is reported but NOT summed into COBRO_TOTAL (avoid double-count)."""
         project, _ = build_pnt_ready_project(periods=2)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
+            entrytype=0, distributedquantity=Decimal('100'),
         )
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
@@ -209,12 +208,12 @@ class TestEstimationPNTCalculatorCobros:
         """Una vez que el saldo acumulado iguala el monto del anticipo, no más amortización."""
         project, _ = build_pnt_ready_project(periods=4)
         from apps.proyeccion.models import WorkPlanEntry
-        concept = make_concept_for_project(project)
-        # 4 periodos con distributedamount=100 cada uno → cobro_facturacion = [100, 100, 100, 100]
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
+        # 4 periodos con producción=100 cada uno → cobro_facturacion = [100, 100, 100, 100]
         for i in range(4):
             WorkPlanEntry.objects.create(
                 conceptid=concept, projectid=project, periodnumber=i + 1, periodlabel=f'P{i+1:02d}',
-                entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
+                entrytype=0, distributedquantity=Decimal('100'),
             )
         EstimationFinancialSettingsService.update(
             project.estimationprojectid,
