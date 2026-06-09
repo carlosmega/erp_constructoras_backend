@@ -1579,8 +1579,12 @@ class IndirectCostDetailService:
         user,
         categorycode: Optional[str] = None,
     ) -> QuerySet[IndirectCostDetail]:
-        """List indirect cost details for a project, optionally filtered by category."""
-        queryset = IndirectCostDetail.objects.filter(projectid=project_id)
+        """List indirect cost details for a project, optionally filtered by category.
+
+        Excludes soft-deleted lines (statecode=1) so a deleted row disappears from
+        the UI and stops counting toward CI/cierre totals.
+        """
+        queryset = IndirectCostDetail.objects.filter(projectid=project_id, statecode=0)
 
         if categorycode is not None:
             queryset = queryset.filter(categorycode=categorycode)
