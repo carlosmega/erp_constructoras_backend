@@ -601,6 +601,19 @@ class TestIndirectCostDetailService:
         )
         assert result.count() == 2
 
+    def test_list_details_excludes_soft_deleted(self):
+        """A soft-deleted (statecode=1) detail must NOT be returned, so a deleted
+        row disappears from the UI and stops counting toward totals."""
+        project = EstimationProjectFactory()
+        user = project.ownerid
+        IndirectCostDetailFactory(projectid=project, categorycode='C8', statecode=0)
+        deleted = IndirectCostDetailFactory(projectid=project, categorycode='C8', statecode=0)
+        IndirectCostDetailService.delete_detail(deleted.indirectcostid, user)
+
+        result = IndirectCostDetailService.list_details(project.estimationprojectid, user)
+        assert result.count() == 1
+        assert deleted.indirectcostid not in [d.indirectcostid for d in result]
+
     def test_create_detail(self):
         project = EstimationProjectFactory()
         user = project.ownerid
