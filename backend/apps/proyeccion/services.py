@@ -1,5 +1,7 @@
 """Budget estimation (proyeccion) business logic service layer."""
 
+import unicodedata
+from difflib import SequenceMatcher
 from typing import Optional
 from uuid import UUID
 from decimal import Decimal, ROUND_HALF_UP
@@ -25,6 +27,7 @@ from apps.proyeccion.models import (
     WorkPlanEntry,
     WorkPlanEntryType,
     BreakdownCategoryCode,
+    SupplyTypeCode,
     ChecklistStatusCode,
     ProjectSizeCode,
     ConceptPriceCatalogItem,
@@ -58,6 +61,34 @@ from apps.proyeccion.schemas import (
     ApplyFamilyTemplateDto,
 )
 from core.exceptions import ValidationError, NotFound
+
+# --- Auto-linking CDU breakdown lines to the supply catalog ---------------
+# Maps a breakdown category to its supply type + catalog code prefix. Formula
+# categories (Minor Tools, PPE) are intentionally absent -> they are not
+# purchasable supplies, so match_or_create_supply skips them.
+_CATEGORY_TO_SUPPLY = {
+    BreakdownCategoryCode.MATERIALS: (SupplyTypeCode.MATERIAL, 'MAT-'),
+    BreakdownCategoryCode.HAULING: (SupplyTypeCode.HAULING, 'ACA-'),
+    BreakdownCategoryCode.MACHINERY: (SupplyTypeCode.MACHINERY, 'EQ-'),
+    BreakdownCategoryCode.LABOR: (SupplyTypeCode.LABOR, 'MO-'),
+    BreakdownCategoryCode.SUBCONTRACTS: (SupplyTypeCode.SUBCONTRACT, 'SUB-'),
+}
+
+# Similarity at/above this links to an existing catalog item instead of
+# creating a new one. Flexible enough to fold typos/variants, conservative
+# enough not to merge clearly-different descriptors (e.g. aceite de motor vs
+# aceite hidraulico). Wrong guesses are visible and re-linkable in 1 click.
+SUPPLY_MATCH_THRESHOLD = 0.82
+
+
+def _normalize_supply_text(s: str) -> str:
+    """Lowercase, strip accents, collapse whitespace -- for catalog matching."""
+    s = (s or '').strip().lower()
+    s = ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
+    return ' '.join(s.split())
 
 
 # ---------------------------------------------------------------------------
@@ -1061,6 +1092,17 @@ class UnitCostBreakdownService:
         yieldvalue = dto.yieldvalue or Decimal('1')
         amount = quantity * unitprice * yieldvalue
 
+        # Auto-link to the supply catalog when the caller didn't pick one, so
+        # the line shows up in the Explosion de Insumos (match-or-create flexible;
+        # None for formula categories like Minor Tools / PPE).
+        supply_fk = dto.supplyid
+        if supply_fk is None:
+            auto = SupplyCatalogService.match_or_create_supply(
+                dto.description, dto.categorycode, dto.unit, unitprice, user,
+            )
+            if auto is not None:
+                supply_fk = auto.supplyid
+
         breakdown = UnitCostBreakdown(
             conceptid_id=dto.conceptid,
             categorycode=dto.categorycode,
@@ -1071,7 +1113,7 @@ class UnitCostBreakdownService:
             unitprice=unitprice,
             yieldvalue=yieldvalue,
             amount=amount,
-            supplyid_id=dto.supplyid,
+            supplyid_id=supply_fk,
         )
         breakdown.save()
         UnitCostBreakdownService._recalc_concept(dto.conceptid, user)
@@ -1152,6 +1194,16 @@ class UnitCostBreakdownService:
         # Handle supplyid FK separately (can be set to None)
         if dto.supplyid is not None:
             breakdown.supplyid_id = dto.supplyid
+        elif breakdown.supplyid_id is None:
+            # Auto-link an unlinked line on edit so it reaches the Explosion de
+            # Insumos (match-or-create flexible; None for formula categories).
+            # An existing link is left untouched.
+            auto = SupplyCatalogService.match_or_create_supply(
+                breakdown.description, breakdown.categorycode,
+                breakdown.unit, breakdown.unitprice, user,
+            )
+            if auto is not None:
+                breakdown.supplyid_id = auto.supplyid
 
         # Recompute amount
         breakdown.amount = breakdown.quantity * breakdown.unitprice * breakdown.yieldvalue
@@ -2132,6 +2184,38 @@ class SupplyExplosionService:
 
     @staticmethod
     @transaction.atomic
+    def backfill_supplies(project_id, user) -> dict:
+        """Link existing unlinked breakdown lines to the supply catalog.
+
+        Runs the same match-or-create engine used on save, over every active
+        line of the project that has no supply yet. Formula lines (Minor Tools /
+        PPE) are skipped. Idempotent: a re-run only touches still-unlinked lines.
+        Returns ``{'linked', 'created', 'skipped'}``.
+        """
+        lines = list(
+            UnitCostBreakdown.objects.filter(
+                conceptid__projectid=project_id, statecode=0, supplyid__isnull=True,
+            ).select_related('conceptid')
+        )
+        before = SupplyCatalogItem.objects.count()
+        linked = 0
+        skipped = 0
+        for ln in lines:
+            supply = SupplyCatalogService.match_or_create_supply(
+                ln.description, ln.categorycode, ln.unit, ln.unitprice, user,
+            )
+            if supply is None:
+                skipped += 1
+                continue
+            ln.supplyid = supply
+            ln.modifiedby = user
+            ln.save(update_fields=['supplyid', 'modifiedby', 'modifiedon'])
+            linked += 1
+        created = SupplyCatalogItem.objects.count() - before
+        return {'linked': linked, 'created': created, 'skipped': skipped}
+
+    @staticmethod
+    @transaction.atomic
     def set_supply_lag(project_id, supplyid, paymentlagperiods, user):
         """Bulk: setea paymentlagperiods en todas las líneas de un insumo. Lag ∈ [0,120] ∪ {None}."""
         if paymentlagperiods is not None and not (0 <= paymentlagperiods <= 120):
@@ -2651,6 +2735,61 @@ class TemporalDistributionService:
 
 class SupplyCatalogService:
     """Service class for SupplyCatalogItem business logic."""
+
+    @staticmethod
+    def match_or_create_supply(description, categorycode, unit, unitprice, user):
+        """Find an existing catalog item matching ``description`` (flexible), or
+        create one. Returns the ``SupplyCatalogItem``, or ``None`` for formula
+        categories (Minor Tools / PPE) which are not purchasable supplies.
+
+        Matching is type-gated (each breakdown category maps to one supply type)
+        and uses normalized text: an exact-normalized hit, token containment
+        (one generalizes the other), or a difflib ratio >= ``SUPPLY_MATCH_THRESHOLD``.
+        Creation auto-numbers the code by type prefix (race-safe).
+        """
+        mapping = _CATEGORY_TO_SUPPLY.get(categorycode)
+        if mapping is None:
+            return None
+        supplytype, prefix = mapping
+
+        norm = _normalize_supply_text(description)
+        if not norm:
+            return None
+        tokens = set(norm.split())
+
+        best = None
+        best_score = 0.0
+        for item in SupplyCatalogItem.objects.filter(supplytype=supplytype, statecode=0):
+            cnorm = _normalize_supply_text(item.description)
+            if not cnorm:
+                continue
+            if cnorm == norm:
+                return item  # exact (normalized) match -> reuse
+            ctokens = set(cnorm.split())
+            if tokens <= ctokens or ctokens <= tokens:
+                score = 0.99  # one description generalizes the other
+            else:
+                score = SequenceMatcher(None, norm, cnorm).ratio()
+            if score > best_score:
+                best_score = score
+                best = item
+
+        if best is not None and best_score >= SUPPLY_MATCH_THRESHOLD:
+            return best
+
+        def _create():
+            code = next_numbered_code(SupplyCatalogItem, 'code', prefix, width=4)
+            return SupplyCatalogItem.objects.create(
+                code=code,
+                description=(description or '').strip(),
+                unit=unit or '',
+                supplytype=supplytype,
+                referenceprice=unitprice or Decimal('0'),
+                createdby=user,
+                modifiedby=user,
+            )
+
+        return create_with_retry(_create)
 
     @staticmethod
     def list_items(
