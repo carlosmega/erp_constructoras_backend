@@ -929,6 +929,20 @@ def set_supply_lag(request: HttpRequest, project_id: UUID, payload: SetSupplyLag
     return {"updated": n}
 
 
+@supply_explosion_router.post(
+    "/projects/{project_id}/supply-explosion/backfill-supplies/",
+    response=dict,
+)
+@require_authenticated
+def backfill_supplies(request: HttpRequest, project_id: UUID):
+    """Link existing unlinked breakdown lines to the supply catalog.
+
+    Runs match-or-create over every active line without a supply (formula lines
+    skipped). Idempotent. Returns {linked, created, skipped}.
+    """
+    return SupplyExplosionService.backfill_supplies(project_id, request.user)
+
+
 @supply_explosion_router.get(
     "/projects/{project_id}/supply-explosion/export-excel/",
 )
