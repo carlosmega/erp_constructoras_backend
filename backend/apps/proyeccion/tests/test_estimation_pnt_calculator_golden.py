@@ -44,7 +44,10 @@ def test_golden_end_to_end():
     )
 
     # 3. One direct line: $1000 distributed 25% per period
-    concept = make_concept_for_project(project, code='C-001', description='Concrete', unit='m3')
+    # Sale price per unit = 1380; WorkPlan distributes 0.25 units/period → 345/period
+    # (live venta = distributedquantity × unitprice). Total 1380 = chosen salepricenet,
+    # so the scale-to-offer factor is exactly 1.
+    concept = make_concept_for_project(project, code='C-001', description='Concrete', unit='m3', unitprice=Decimal('1380'))
     breakdown = UnitCostBreakdown.objects.create(
         conceptid=concept, categorycode=1, linenumber=1, description='Concrete',
         unit='m3', quantity=Decimal('1'), unitprice=Decimal('1000'),
@@ -70,7 +73,7 @@ def test_golden_end_to_end():
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=n,
             periodlabel=f'P{n:02d}',
-            entrytype=0, distributedquantity=Decimal('0.25'), distributedamount=Decimal('345'),
+            entrytype=0, distributedquantity=Decimal('0.25'),
         )
 
     # 5. Settings: 5% IMSS retention, return at period 4, 50% advance amortization, 100 advance

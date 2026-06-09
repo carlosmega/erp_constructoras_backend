@@ -181,10 +181,10 @@ class TestPNTRoute:
         from apps.proyeccion.tests.factories import build_pnt_ready_project, make_concept_for_project
         from apps.proyeccion.models import WorkPlanEntry
         project, _ = build_pnt_ready_project(periods=2)
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('1000'),
+            entrytype=0, distributedquantity=Decimal('1000'),
         )
         ovr = base64.b64encode(json.dumps({'imssretentionrate': '0.20'}).encode()).decode()
         r = admin_auth_client.get(

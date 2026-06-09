@@ -37,14 +37,14 @@ class TestEstimationPNTCalculatorMonthly:
                 startdate=date(2026, 1, 1 + (n - 1) * 14),
                 enddate=date(2026, 1, 14 + (n - 1) * 14),
             )
-        concept = make_concept_for_project(project)
+        concept = make_concept_for_project(project, unitprice=Decimal('1'))
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=1, periodlabel='P01',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('100'),
+            entrytype=0, distributedquantity=Decimal('100'),
         )
         WorkPlanEntry.objects.create(
             conceptid=concept, projectid=project, periodnumber=2, periodlabel='P02',
-            entrytype=0, distributedquantity=Decimal('1'), distributedamount=Decimal('200'),
+            entrytype=0, distributedquantity=Decimal('200'),
         )
         calc = EstimationPNTCalculator(project.estimationprojectid)
         report = calc.compute(granularity='month')
