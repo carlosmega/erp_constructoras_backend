@@ -473,6 +473,50 @@ def test_compute_rollups_emits_by_line_and_lag_by_line():
     assert lag_by_line[str(indirect.indirectcostid)] is None
 
 
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_build_payload_excludes_soft_deleted_lines():
+    """Las líneas soft-deleted (statecode=1) no deben aparecer como filas en el
+    payload de Distribución Temporal — misma clase de bug que compute_rollups:
+    el CDU las filtra pero _build_families_hierarchy las seguía listando
+    (visto en prod: 'DIESEL EXCAVADORA 366D' en EST-2026-004)."""
+    from apps.proyeccion.tests.factories import ProjectionPeriodFactory
+    project = EstimationProjectFactory(periodcount=1)
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
+    UnitCostBreakdownFactory(conceptid=concept, description="LINEA VIVA", statecode=0)
+    UnitCostBreakdownFactory(conceptid=concept, description="LINEA FANTASMA", statecode=1)
+    IndirectCostDetailFactory(projectid=project, description="IND VIVA", statecode=0)
+    IndirectCostDetailFactory(projectid=project, description="IND FANTASMA", statecode=1)
+
+    payload = CostDistributionService.build_payload(project)
+    descs = [line['description'] for fam in payload['families'] for line in fam['lines']]
+    assert "LINEA VIVA" in descs
+    assert "IND VIVA" in descs
+    assert "LINEA FANTASMA" not in descs
+    assert "IND FANTASMA" not in descs
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_autofill_skips_soft_deleted_lines():
+    """Autofill no debe crear celdas de distribución para líneas soft-deleted."""
+    from apps.proyeccion.tests.factories import ProjectionPeriodFactory
+    project = EstimationProjectFactory(periodcount=2)
+    for i in (1, 2):
+        ProjectionPeriodFactory(projectid=project, periodnumber=i)
+    concept = BudgetConceptFactory(projectid=project)
+    bd_deleted = UnitCostBreakdownFactory(conceptid=concept, statecode=1)
+    ind_deleted = IndirectCostDetailFactory(projectid=project, statecode=1)
+
+    CostDistributionService.autofill(
+        project, strategy='uniform', only_empty=False, scope='all',
+    )
+
+    assert CostDistribution.objects.filter(breakdownid=bd_deleted).count() == 0
+    assert CostDistribution.objects.filter(indirectcostid=ind_deleted).count() == 0
+
+
 @pytest.mark.unit
 @pytest.mark.django_db
 def test_compute_rollups_no_longer_emits_by_category():

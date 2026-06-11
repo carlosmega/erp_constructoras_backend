@@ -496,6 +496,30 @@ class TestEstimationConversionDirectBudgets:
         assert budget_first.plannedamount == Decimal('1000.00')
         assert all(b.plannedamount == Decimal('0.00') for b in budget_others)
 
+    def test_planned_amount_excludes_soft_deleted_breakdowns(self, db, salesperson):
+        """Una línea CDU soft-deleted (statecode=1) con celdas de distribución NO
+        debe sumar al plannedamount del presupuesto generado en la conversión."""
+        estimation = _accepted_estimation(salesperson)
+        family = ConceptFamilyFactory(projectid=estimation, name='F', sortorder=1)
+        concept = self._seed_concept_with_distribution(estimation, family, salesperson=salesperson)
+        bd_deleted = UnitCostBreakdownFactory(
+            conceptid=concept,
+            quantity=Decimal('1'), unitprice=Decimal('50'), yieldvalue=Decimal('1'),
+            amount=Decimal('50'), statecode=1,
+        )
+        CostDistribution.objects.create(
+            projectid=estimation, linetype=CostLineType.BREAKDOWN,
+            breakdownid=bd_deleted, periodnumber=1, fraction=Decimal('1'),
+        )
+
+        project = EstimationConversionService.convert(estimation.estimationprojectid, user=salesperson)
+        code = ImputationCode.objects.get(projectid=project, contractcode='A1')
+        first_period = ImputationPeriod.objects.filter(projectid=project).order_by('sortorder').first()
+        budget_first = ImputationCodeBudget.objects.get(imputationcodeid=code, periodid=first_period)
+
+        # Solo la línea viva: 100 × 10 × 1 = 1000 (la soft-deleted de $50 NO agrega 500).
+        assert budget_first.plannedamount == Decimal('1000.00')
+
     def test_planned_volume_comes_from_workplan_entry(self, db, salesperson):
         estimation = _accepted_estimation(salesperson)
         family = ConceptFamilyFactory(projectid=estimation, name='F', sortorder=1)

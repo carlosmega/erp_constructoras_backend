@@ -552,7 +552,9 @@ class EstimationConversionService:
 
             # Build per-period budget rows.
             breakdown_ids_for_concept = list(
-                UnitCostBreakdown.objects.filter(conceptid=concept).values_list('breakdownid', 'amount')
+                UnitCostBreakdown.objects.filter(
+                    conceptid=concept, statecode=0,
+                ).values_list('breakdownid', 'amount')
             )
             concept_qty = concept.quantity or Decimal('0')
 
@@ -3913,7 +3915,9 @@ class CostDistributionService:
         breakdowns = []
         indirects = []
         if scope in ('all', 'direct_only') or scope.startswith('family:'):
-            bq = UnitCostBreakdown.objects.filter(conceptid__projectid=project).select_related('conceptid')
+            bq = UnitCostBreakdown.objects.filter(
+                conceptid__projectid=project, statecode=0,
+            ).select_related('conceptid')
             if scope.startswith('family:'):
                 fam_code = scope.split(':', 1)[1]
                 category_value = next(
@@ -3929,7 +3933,7 @@ class CostDistributionService:
                 bq = bq.filter(categorycode=category_value)
             breakdowns = list(bq)
         if scope in ('all', 'indirect_only'):
-            indirects = list(IndirectCostDetail.objects.filter(projectid=project))
+            indirects = list(IndirectCostDetail.objects.filter(projectid=project, statecode=0))
 
         # Process breakdowns
         for bd in breakdowns:
@@ -4327,6 +4331,7 @@ class CostDistributionService:
         bds_by_cat = defaultdict(list)
         bds = UnitCostBreakdown.objects.filter(
             conceptid__projectid=project,
+            statecode=0,
         ).select_related('conceptid')
         for bd in bds:
             bds_by_cat[bd.categorycode].append(bd)
@@ -4365,7 +4370,7 @@ class CostDistributionService:
 
         # INDIRECT: group by categorycode; use `area` field for the family name
         ind_by_cat = defaultdict(list)
-        for ind in IndirectCostDetail.objects.filter(projectid=project):
+        for ind in IndirectCostDetail.objects.filter(projectid=project, statecode=0):
             ind_by_cat[ind.categorycode or 'OTHER'].append(ind)
         for cat in sorted(ind_by_cat.keys()):
             inds = ind_by_cat[cat]
