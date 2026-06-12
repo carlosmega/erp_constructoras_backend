@@ -1,12 +1,13 @@
 import pytest
 from decimal import Decimal
 from django.db import IntegrityError
-from apps.proyeccion.models import EstimationVersion, OfferAlternative
+from apps.proyeccion.models import EstimationVersion, OfferAlternative, UnitCostBreakdown
 from apps.proyeccion.tests.factories import (
     EstimationProjectFactory,
     BudgetConceptFactory,
     UnitCostBreakdownFactory,
     IndirectCostDetailFactory,
+    ProjectionPeriodFactory,
 )
 
 
@@ -112,3 +113,101 @@ def test_create_version_writes_audit_log():
     v = EstimationVersionService.create_version(project, user=None, note="x")
     log = AuditLog.objects.get(entity='estimationversion', recordid=v.versionid)
     assert log.action == 'create'
+
+
+# ---------------------------------------------------------------------------
+# Task 4: restore_version tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+@pytest.mark.workflow
+def test_restore_round_trip_restores_identical_graph():
+    """El test central del feature: crear versión → mutar todo → restaurar →
+    el grafo queda idéntico (UUIDs incluidos) y los rollups cuadran."""
+    from apps.proyeccion.versioning import EstimationVersionService
+    from apps.proyeccion.services import CostDistributionService
+    from apps.proyeccion.models import CostLineType, CostDistribution
+
+    project = EstimationProjectFactory(periodcount=2)
+    ProjectionPeriodFactory(projectid=project, periodnumber=1)
+    ProjectionPeriodFactory(projectid=project, periodnumber=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
+    bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
+    CostDistribution.objects.create(
+        projectid=project, linetype=CostLineType.BREAKDOWN,
+        breakdownid=bd, periodnumber=1, fraction=Decimal("1"), isderived=False,
+    )
+    rollups_before = CostDistributionService.compute_rollups(project)
+    original_bd_id = bd.breakdownid
+
+    v1 = EstimationVersionService.create_version(project, user=None, note="hito")
+
+    # Mutar: borrar la línea, cambiar el concepto, agregar basura
+    bd.delete()
+    concept.description = "MUTADO"
+    concept.save()
+    UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("999"))
+
+    result = EstimationVersionService.restore_version(project, v1.versionnumber, user=None)
+
+    # Respaldo automático creado ANTES de restaurar (captura el estado mutado)
+    backup = EstimationVersion.objects.get(projectid=project, versionnumber=result['backup_versionnumber'])
+    assert backup.isauto is True
+    assert any(Decimal(b["amount"]) == Decimal("999")
+               for b in backup.snapshot["breakdowns"])
+
+    # Grafo restaurado: UUID original de la línea de vuelta, mutación deshecha
+    assert UnitCostBreakdown.objects.filter(breakdownid=original_bd_id).exists()
+    concept.refresh_from_db()
+    assert concept.description != "MUTADO"
+    assert UnitCostBreakdown.objects.filter(conceptid=concept).count() == 1
+    # La celda manual de distribución regresó
+    cell = CostDistribution.objects.get(breakdownid=original_bd_id, periodnumber=1)
+    assert cell.isderived is False
+    # Rollups idénticos al momento del snapshot
+    rollups_after = CostDistributionService.compute_rollups(project)
+    assert rollups_after['direct_total'] == rollups_before['direct_total']
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_restore_blocked_when_project_converted():
+    from apps.proyeccion.versioning import EstimationVersionService
+    from apps.projects.tests.factories import ConstructionProjectFactory
+    project = EstimationProjectFactory()
+    v = EstimationVersionService.create_version(project, user=None)
+    project.generatedprojectid = ConstructionProjectFactory()
+    project.save()
+    with pytest.raises(ValueError, match="convertido"):
+        EstimationVersionService.restore_version(project, v.versionnumber, user=None)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_restore_rejects_newer_schema_version():
+    from apps.proyeccion.versioning import EstimationVersionService
+    project = EstimationProjectFactory()
+    v = EstimationVersionService.create_version(project, user=None)
+    EstimationVersion.objects.filter(pk=v.pk).update(schema_version=999)
+    with pytest.raises(ValueError, match="schema"):
+        EstimationVersionService.restore_version(project, v.versionnumber, user=None)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_restore_nulls_supply_link_if_catalog_item_gone():
+    from apps.proyeccion.versioning import EstimationVersionService
+    from apps.proyeccion.models import SupplyCatalogItem
+    project = EstimationProjectFactory()
+    concept = BudgetConceptFactory(projectid=project)
+    supply = SupplyCatalogItem.objects.create(
+        code='SUP-X', description='Insumo X', unit='lt', supplytype=1,
+    )
+    bd = UnitCostBreakdownFactory(conceptid=concept, supplyid=supply)
+    original_bd_id = bd.breakdownid  # save before delete() sets pk to None
+    v = EstimationVersionService.create_version(project, user=None)
+    bd.delete()
+    supply.delete()
+    EstimationVersionService.restore_version(project, v.versionnumber, user=None)
+    restored = UnitCostBreakdown.objects.get(breakdownid=original_bd_id)
+    assert restored.supplyid_id is None

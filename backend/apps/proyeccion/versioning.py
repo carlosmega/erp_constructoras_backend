@@ -128,3 +128,89 @@ class EstimationVersionService:
             message=f'Versión {nxt} de {project.estimationnumber}: {note}'.strip(),
         )
         return version
+
+    @staticmethod
+    def _coerce(model, data: dict) -> dict:
+        """Convierte el dict del snapshot a kwargs del modelo vigente.
+        Ignora attnames que ya no existen (forward-compat tras renames con adapter)."""
+        valid = {f.attname: f for f in model._meta.concrete_fields}
+        out = {}
+        for attname, raw in data.items():
+            f = valid.get(attname)
+            if f is None:
+                continue
+            if raw is None:
+                out[attname] = None
+            else:
+                out[attname] = f.to_python(raw)
+        return out
+
+    @staticmethod
+    @transaction.atomic
+    def restore_version(project, versionnumber: int, *, user) -> dict:
+        project = EstimationProject.objects.select_for_update().get(pk=project.pk)
+        if project.generatedprojectid_id:
+            raise ValueError(
+                "El estudio ya fue convertido a proyecto de obra; no se puede restaurar."
+            )
+        version = EstimationVersion.objects.get(projectid=project, versionnumber=versionnumber)
+
+        snap = dict(version.snapshot)
+        snap_ver = version.schema_version  # use model field, not snapshot JSON
+        if snap_ver > SCHEMA_VERSION:
+            raise ValueError(
+                f"El snapshot tiene schema {snap_ver}, mayor al soportado ({SCHEMA_VERSION})."
+            )
+        while snap_ver < SCHEMA_VERSION:
+            snap = ADAPTERS[snap_ver](snap)
+            snap_ver += 1
+
+        # 1) Respaldo automático del estado vigente.
+        backup = EstimationVersionService.create_version(
+            project, user=user, isauto=True,
+            note=f"Respaldo antes de restaurar v{versionnumber}",
+        )
+
+        # 2) Borrar el grafo vigente (hijo -> padre) + presencia efímera.
+        DistributionPresence.objects.filter(projectid=project).delete()
+        for key, model, qs_fn in reversed(GRAPH_SPEC):
+            qs_fn(project).delete()
+
+        # 3) Recrear desde el snapshot (padre -> hijo) con los UUIDs originales.
+        existing_supplies = set(SupplyCatalogItem.objects.values_list('supplyid', flat=True))
+        for key, model, _qs_fn in GRAPH_SPEC:
+            rows = []
+            for data in snap.get(key, []):
+                kwargs = EstimationVersionService._coerce(model, data)
+                # Insumo de catálogo borrado después del snapshot: soltar la liga.
+                if model is UnitCostBreakdown and kwargs.get('supplyid_id') is not None:
+                    if kwargs['supplyid_id'] not in existing_supplies:
+                        kwargs['supplyid_id'] = None
+                rows.append(model(**kwargs))
+            model.objects.bulk_create(rows)
+            # Fidelidad de timestamps: auto_now/auto_now_add pisan los valores al
+            # insertar; restaurarlos con update() (que no dispara auto_now).
+            ts_fields = {f.attname for f in model._meta.concrete_fields} & {'createdon', 'modifiedon'}
+            if ts_fields:
+                for data in snap.get(key, []):
+                    pk_field = model._meta.pk.attname
+                    updates = {t: data[t] for t in ts_fields if data.get(t)}
+                    if updates:
+                        model.objects.filter(pk=data[pk_field]).update(**updates)
+
+        # 4) Campos propios del proyecto (sin tocar PK ni FKs estructurales).
+        proj_kwargs = EstimationVersionService._coerce(EstimationProject, snap['project'])
+        skip = {'estimationprojectid', 'createdon', 'createdby_id'}
+        for attname, val in proj_kwargs.items():
+            if attname not in skip:
+                setattr(project, attname, val)
+        project.modifiedby = user
+        project.save()
+
+        log_action(
+            action='update', entity='estimationversion', record_id=version.versionid,
+            user=user, record_name=f'v{versionnumber}',
+            message=f'Estudio {project.estimationnumber} restaurado a v{versionnumber} '
+                    f'(respaldo: v{backup.versionnumber})',
+        )
+        return {'restored': versionnumber, 'backup_versionnumber': backup.versionnumber}
