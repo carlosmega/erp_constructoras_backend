@@ -64,9 +64,11 @@ def test_dump_graph_captures_all_sections_and_preserves_uuids():
     states = {b["breakdownid"]: b["statecode"] for b in snap["breakdowns"]}
     assert states[str(bd.breakdownid)] == 0
     assert states[str(bd_deleted.breakdownid)] == 1
+    # Indirectos presentes
+    assert any(i["indirectcostid"] == str(ind.indirectcostid) for i in snap["indirects"])
     # Decimales como string (sin pérdida)
     bd_row = next(b for b in snap["breakdowns"] if b["breakdownid"] == str(bd.breakdownid))
-    assert Decimal(bd_row["amount"]) == Decimal("123.4567")
+    assert bd_row["amount"] == "123.4567"
     # Todo el snapshot es JSON-serializable
     import json
     json.dumps(snap)

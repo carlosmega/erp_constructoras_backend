@@ -4,6 +4,7 @@ Spec: docs/superpowers/specs/2026-06-12-versionamiento-estudios-design.md (monor
 Separado de services.py a propósito (ese archivo ya supera las 10k líneas).
 """
 import uuid as _uuid
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -23,7 +24,7 @@ SCHEMA_VERSION = 1
 
 # Adaptadores snapshot viejo -> siguiente schema_version. Se aplican en cadena
 # al restaurar. Ej. futuro: {1: _adapt_v1_to_v2}
-ADAPTERS: dict = {}
+ADAPTERS: dict[int, Callable[[dict], dict]] = {}
 
 # Grafo del estudio en orden padre -> hijo. El restore borra en orden inverso
 # y recrea en este orden. Catálogos globales (SupplyCatalogItem, templates,
@@ -55,6 +56,8 @@ def _jsonable(value):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
+    if isinstance(value, (list, dict)):
+        return value  # JSONField nativo: ya es JSON-serializable
     return str(value)
 
 
