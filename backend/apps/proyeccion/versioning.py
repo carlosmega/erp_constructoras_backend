@@ -3,6 +3,7 @@
 Spec: docs/superpowers/specs/2026-06-12-versionamiento-estudios-design.md (monorepo raíz).
 Separado de services.py a propósito (ese archivo ya supera las 10k líneas).
 """
+import json
 import uuid as _uuid
 from collections.abc import Callable
 from datetime import date, datetime
@@ -155,13 +156,17 @@ class EstimationVersionService:
             )
         version = EstimationVersion.objects.get(projectid=project, versionnumber=versionnumber)
 
-        snap = dict(version.snapshot)
+        snap = json.loads(json.dumps(version.snapshot))  # deep copy: los ADAPTERS pueden mutar sin tocar el original
         snap_ver = version.schema_version  # use model field, not snapshot JSON
         if snap_ver > SCHEMA_VERSION:
             raise ValueError(
                 f"El snapshot tiene schema {snap_ver}, mayor al soportado ({SCHEMA_VERSION})."
             )
         while snap_ver < SCHEMA_VERSION:
+            if snap_ver not in ADAPTERS:
+                raise ValueError(
+                    f"No existe adaptador para migrar schema {snap_ver} -> {snap_ver + 1}."
+                )
             snap = ADAPTERS[snap_ver](snap)
             snap_ver += 1
 
@@ -190,6 +195,8 @@ class EstimationVersionService:
             model.objects.bulk_create(rows)
             # Fidelidad de timestamps: auto_now/auto_now_add pisan los valores al
             # insertar; restaurarlos con update() (que no dispara auto_now).
+            # Deuda conocida (docs/deuda/011): O(N) UPDATEs por fila — aceptable
+            # porque restaurar es infrecuente, pero en estudios grandes suma ~1-2s.
             ts_fields = {f.attname for f in model._meta.concrete_fields} & {'createdon', 'modifiedon'}
             if ts_fields:
                 for data in snap.get(key, []):
@@ -200,7 +207,9 @@ class EstimationVersionService:
 
         # 4) Campos propios del proyecto (sin tocar PK ni FKs estructurales).
         proj_kwargs = EstimationVersionService._coerce(EstimationProject, snap['project'])
-        skip = {'estimationprojectid', 'createdon', 'createdby_id'}
+        # generatedprojectid_id: el guard de arriba garantiza que es None; no
+        # restaurarlo desde el snapshot (podría re-ligar a un proyecto borrado).
+        skip = {'estimationprojectid', 'createdon', 'createdby_id', 'generatedprojectid_id'}
         for attname, val in proj_kwargs.items():
             if attname not in skip:
                 setattr(project, attname, val)

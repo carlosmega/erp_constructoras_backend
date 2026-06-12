@@ -139,6 +139,7 @@ def test_restore_round_trip_restores_identical_graph():
     )
     rollups_before = CostDistributionService.compute_rollups(project)
     original_bd_id = bd.breakdownid
+    original_createdon = bd.createdon
 
     v1 = EstimationVersionService.create_version(project, user=None, note="hito")
 
@@ -167,6 +168,8 @@ def test_restore_round_trip_restores_identical_graph():
     # Rollups idénticos al momento del snapshot
     rollups_after = CostDistributionService.compute_rollups(project)
     assert rollups_after['direct_total'] == rollups_before['direct_total']
+    # Timestamps restaurados con fidelidad (auto_now_add no los pisó)
+    assert UnitCostBreakdown.objects.get(breakdownid=original_bd_id).createdon == original_createdon
 
 
 @pytest.mark.django_db
