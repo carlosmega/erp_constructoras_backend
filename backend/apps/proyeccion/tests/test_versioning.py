@@ -1,5 +1,6 @@
 import pytest
 from decimal import Decimal
+from django.db import IntegrityError
 from apps.proyeccion.models import EstimationVersion
 from apps.proyeccion.tests.factories import EstimationProjectFactory
 
@@ -26,7 +27,7 @@ def test_estimation_version_number_unique_per_project():
     EstimationVersion.objects.create(
         projectid=project, versionnumber=1, schema_version=1, snapshot={},
     )
-    with pytest.raises(Exception):  # IntegrityError por unique_together
+    with pytest.raises(IntegrityError):
         EstimationVersion.objects.create(
             projectid=project, versionnumber=1, schema_version=1, snapshot={},
         )

@@ -1791,7 +1791,12 @@ class EstimationVersion(AuditMixin):
     class Meta:
         db_table = 'estimationversion'
         ordering = ['-versionnumber']
-        unique_together = [('projectid', 'versionnumber')]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['projectid', 'versionnumber'],
+                name='uniq_estimationversion_project_number',
+            )
+        ]
         indexes = [models.Index(fields=['projectid', '-versionnumber'])]
 
     def __str__(self):
