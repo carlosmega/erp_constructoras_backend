@@ -110,4 +110,5 @@ def test_create_version_writes_audit_log():
     from apps.audit.models import AuditLog
     project = EstimationProjectFactory()
     v = EstimationVersionService.create_version(project, user=None, note="x")
-    assert AuditLog.objects.filter(entity='estimationversion').exists()
+    log = AuditLog.objects.get(entity='estimationversion', recordid=v.versionid)
+    assert log.action == 'create'

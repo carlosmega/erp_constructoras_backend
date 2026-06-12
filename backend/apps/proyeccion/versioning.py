@@ -80,17 +80,27 @@ class EstimationVersionService:
     """Crear, listar y restaurar versiones de un estudio."""
 
     @staticmethod
-    def _summary(project) -> dict:
-        chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
-        sale = (chosen.salepricenet if chosen and chosen.salepricenet else Decimal('0'))
+    def _summary_from_snapshot(snap: dict) -> dict:
+        """Resumen congelado calculado del MISMO snapshot (sin queries extra),
+        garantizando que totales y snapshot sean consistentes entre sí.
+
+        En el snapshot los Decimal vienen como string, los bool como bool
+        nativo y los nulls como None.
+        """
+        chosen = next((a for a in snap['alternatives'] if a.get('ischosen')), None)
+        sale = Decimal(chosen['salepricenet'] or '0') if chosen else Decimal('0')
         direct = Decimal('0')
         count = 0
-        for c in BudgetConcept.objects.filter(projectid=project, statecode=0):
-            direct += (c.directunitcost or Decimal('0')) * (c.quantity or Decimal('0'))
+        # El resumen solo cuenta filas ACTIVAS (statecode=0); el snapshot sí
+        # incluye las soft-deleted por fidelidad de restauración.
+        for c in snap['concepts']:
+            if c['statecode'] != 0:
+                continue
+            direct += Decimal(c['directunitcost'] or '0') * Decimal(c['quantity'] or '0')
             count += 1
         indirect = sum(
-            (i.amount or Decimal('0')
-             for i in IndirectCostDetail.objects.filter(projectid=project, statecode=0)),
+            (Decimal(i['amount'] or '0')
+             for i in snap['indirects'] if i['statecode'] == 0),
             Decimal('0'),
         )
         return {
@@ -105,11 +115,12 @@ class EstimationVersionService:
         project = EstimationProject.objects.select_for_update().get(pk=project.pk)
         nxt = (EstimationVersion.objects.filter(projectid=project)
                .aggregate(m=Max('versionnumber'))['m'] or 0) + 1
+        snap = dump_graph(project)
         version = EstimationVersion.objects.create(
             projectid=project, versionnumber=nxt, note=note[:500], isauto=isauto,
-            schema_version=SCHEMA_VERSION, snapshot=dump_graph(project),
+            schema_version=SCHEMA_VERSION, snapshot=snap,
             createdby=user, modifiedby=user,
-            **EstimationVersionService._summary(project),
+            **EstimationVersionService._summary_from_snapshot(snap),
         )
         log_action(
             action='create', entity='estimationversion', record_id=version.versionid,
