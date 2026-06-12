@@ -3632,19 +3632,31 @@ class PeriodService:
 
     @staticmethod
     def _iter_periods(startdate, enddate, periodtype):
-        """Yield (startdate, enddate) tuples covering [startdate, enddate]."""
-        delta_days = 7 if periodtype == 0 else 15  # weekly or fortnightly
-        cursor = startdate
+        """Yield (start, end) calendar-anchored periods covering the months of
+        [startdate, enddate] — same convention as Operations' ImputationPeriod
+        (apps.budgets.PeriodService._generate_periods), so the 1-1 mapping at
+        conversion time holds: fortnightly Q1=1–15 / Q2=16–EOM; weekly S1=1–7,
+        S2=8–14, S3=15–21, S4=22–EOM. Full months: the first period starts on
+        day 1 of startdate's month. (The old generator stepped a fixed 15/7
+        days from startdate, so 31-day months produced a third 'fortnight'.)"""
+        import calendar as _calendar
+
+        year, month = startdate.year, startdate.month
         n = 0
-        while cursor <= enddate:
-            period_end = cursor + timedelta(days=delta_days - 1)
-            if period_end > enddate:
-                period_end = enddate
-            yield (cursor, period_end)
-            cursor = period_end + timedelta(days=1)
-            n += 1
-            if n > 500:
-                raise RuntimeError("Period generation exceeded 500 periods — aborting")
+        while (year, month) <= (enddate.year, enddate.month):
+            last_day = _calendar.monthrange(year, month)[1]
+            if periodtype == 1:  # fortnightly
+                bounds = [(1, 15), (16, last_day)]
+            else:  # weekly
+                bounds = [(1, 7), (8, 14), (15, 21), (22, last_day)]
+            for d1, d2 in bounds:
+                yield (date(year, month, d1), date(year, month, d2))
+                n += 1
+                if n > 500:
+                    raise RuntimeError("Period generation exceeded 500 periods — aborting")
+            month += 1
+            if month == 13:
+                month, year = 1, year + 1
 
     @staticmethod
     def _label(periodnumber, start, periodtype):
