@@ -1,7 +1,7 @@
 import pytest
 from decimal import Decimal
 from django.db import IntegrityError
-from apps.proyeccion.models import EstimationVersion
+from apps.proyeccion.models import EstimationVersion, OfferAlternative
 from apps.proyeccion.tests.factories import (
     EstimationProjectFactory,
     BudgetConceptFactory,
@@ -72,3 +72,42 @@ def test_dump_graph_captures_all_sections_and_preserves_uuids():
     # Todo el snapshot es JSON-serializable
     import json
     json.dumps(snap)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_create_version_assigns_sequential_numbers_and_summary():
+    from apps.proyeccion.versioning import EstimationVersionService
+    project = EstimationProjectFactory()
+    concept = BudgetConceptFactory(
+        projectid=project, quantity=Decimal("10"),
+        directunitcost=Decimal("100"),
+    )
+    IndirectCostDetailFactory(projectid=project, amount=Decimal("200"))
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name="Base",
+        ischosen=True, salepricenet=Decimal("2000"),
+    )
+
+    v1 = EstimationVersionService.create_version(project, user=None, note="primera")
+    v2 = EstimationVersionService.create_version(project, user=None)
+
+    assert (v1.versionnumber, v2.versionnumber) == (1, 2)
+    assert v1.note == "primera"
+    assert v1.isauto is False
+    assert v1.saleamount == Decimal("2000")
+    assert v1.directtotal == Decimal("1000")   # 100 × 10
+    assert v1.indirecttotal == Decimal("200")
+    assert v1.margintotal == Decimal("800")    # 2000 − 1000 − 200
+    assert v1.conceptcount == 1
+    assert v1.snapshot["project"]["estimationprojectid"] == str(project.estimationprojectid)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_create_version_writes_audit_log():
+    from apps.proyeccion.versioning import EstimationVersionService
+    from apps.audit.models import AuditLog
+    project = EstimationProjectFactory()
+    v = EstimationVersionService.create_version(project, user=None, note="x")
+    assert AuditLog.objects.filter(entity='estimationversion').exists()

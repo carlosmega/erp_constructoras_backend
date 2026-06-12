@@ -74,3 +74,46 @@ def dump_graph(project: EstimationProject) -> dict:
     for key, _model, qs_fn in GRAPH_SPEC:
         snap[key] = [_dump_instance(o) for o in qs_fn(project)]
     return snap
+
+
+class EstimationVersionService:
+    """Crear, listar y restaurar versiones de un estudio."""
+
+    @staticmethod
+    def _summary(project) -> dict:
+        chosen = OfferAlternative.objects.filter(projectid=project, ischosen=True).first()
+        sale = (chosen.salepricenet if chosen and chosen.salepricenet else Decimal('0'))
+        direct = Decimal('0')
+        count = 0
+        for c in BudgetConcept.objects.filter(projectid=project, statecode=0):
+            direct += (c.directunitcost or Decimal('0')) * (c.quantity or Decimal('0'))
+            count += 1
+        indirect = sum(
+            (i.amount or Decimal('0')
+             for i in IndirectCostDetail.objects.filter(projectid=project, statecode=0)),
+            Decimal('0'),
+        )
+        return {
+            'saleamount': sale, 'directtotal': direct, 'indirecttotal': indirect,
+            'margintotal': sale - direct - indirect, 'conceptcount': count,
+        }
+
+    @staticmethod
+    @transaction.atomic
+    def create_version(project, *, user, note: str = '', isauto: bool = False) -> EstimationVersion:
+        # Lock del proyecto para serializar la asignación del número.
+        project = EstimationProject.objects.select_for_update().get(pk=project.pk)
+        nxt = (EstimationVersion.objects.filter(projectid=project)
+               .aggregate(m=Max('versionnumber'))['m'] or 0) + 1
+        version = EstimationVersion.objects.create(
+            projectid=project, versionnumber=nxt, note=note[:500], isauto=isauto,
+            schema_version=SCHEMA_VERSION, snapshot=dump_graph(project),
+            createdby=user, modifiedby=user,
+            **EstimationVersionService._summary(project),
+        )
+        log_action(
+            action='create', entity='estimationversion', record_id=version.versionid,
+            user=user, record_name=f'v{nxt}',
+            message=f'Versión {nxt} de {project.estimationnumber}: {note}'.strip(),
+        )
+        return version
