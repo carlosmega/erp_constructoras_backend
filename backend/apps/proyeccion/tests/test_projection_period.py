@@ -56,14 +56,15 @@ def test_regenerate_creates_weekly_periods():
         periodtype=0,  # weekly
     )
     result = PeriodService.regenerate_projection_periods(project)
-    assert result['created'] == 4  # 4 weeks
+    # Semanas de calendario, meses completos: ene S1–S4 + feb S1–S4 = 8.
+    assert result['created'] == 8
     project.refresh_from_db()
-    assert project.periodcount == 4
+    assert project.periodcount == 8
     periods = list(ProjectionPeriod.objects.filter(projectid=project).order_by('periodnumber'))
-    assert len(periods) == 4
+    assert len(periods) == 8
     assert periods[0].periodlabel.startswith('S01')
-    assert periods[0].startdate == date(2026, 1, 5)
-    assert periods[0].enddate == date(2026, 1, 11)
+    assert periods[0].startdate == date(2026, 1, 1)
+    assert periods[0].enddate == date(2026, 1, 7)
 
 
 @pytest.mark.django_db
@@ -78,6 +79,54 @@ def test_regenerate_creates_fortnightly_periods():
     assert result['created'] == 6  # ~6 fortnights in 3 months
     periods = list(ProjectionPeriod.objects.filter(projectid=project).order_by('periodnumber'))
     assert periods[0].periodlabel == 'Q01 ENE-26'
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_regenerate_fortnightly_is_calendar_anchored():
+    """Quincenas de calendario (Q1=1–15, Q2=16–fin de mes), misma convención que
+    ImputationPeriod de Operaciones. El generador viejo avanzaba 15 días corridos
+    y en meses de 31 días producía una tercera 'quincena' del mes (EST-2026-004
+    en prod: Q03/Q04/Q05 todas de JUL)."""
+    project = EstimationProjectFactory(
+        estimatedstartdate=date(2026, 6, 2),
+        estimatedenddate=date(2026, 8, 31),
+        periodtype=1,  # fortnightly
+    )
+    result = PeriodService.regenerate_projection_periods(project)
+    assert result['created'] == 6  # jun, jul, ago × 2 quincenas
+    periods = list(ProjectionPeriod.objects.filter(projectid=project).order_by('periodnumber'))
+
+    # Exactamente 2 períodos por mes — julio (31 días) NO produce un tercero.
+    july = [p for p in periods if p.startdate.month == 7]
+    assert len(july) == 2
+    assert (july[0].startdate, july[0].enddate) == (date(2026, 7, 1), date(2026, 7, 15))
+    assert (july[1].startdate, july[1].enddate) == (date(2026, 7, 16), date(2026, 7, 31))
+    assert july[0].periodlabel == 'Q03 JUL-26'
+    assert july[1].periodlabel == 'Q04 JUL-26'
+
+    # Mes completo: arranca el día 1 del mes de inicio aunque el proyecto empiece el 2.
+    assert periods[0].startdate == date(2026, 6, 1)
+    # Q2 de agosto cierra en el último día del mes.
+    assert periods[-1].enddate == date(2026, 8, 31)
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_regenerate_weekly_is_calendar_anchored():
+    """Semanas de calendario S1=1–7, S2=8–14, S3=15–21, S4=22–fin de mes (S4
+    absorbe los días extra), misma convención que Operaciones: 4 por mes."""
+    project = EstimationProjectFactory(
+        estimatedstartdate=date(2026, 1, 5),
+        estimatedenddate=date(2026, 1, 31),
+        periodtype=0,  # weekly
+    )
+    result = PeriodService.regenerate_projection_periods(project)
+    assert result['created'] == 4
+    periods = list(ProjectionPeriod.objects.filter(projectid=project).order_by('periodnumber'))
+    assert (periods[0].startdate, periods[0].enddate) == (date(2026, 1, 1), date(2026, 1, 7))
+    assert (periods[3].startdate, periods[3].enddate) == (date(2026, 1, 22), date(2026, 1, 31))
+    assert periods[0].periodlabel == 'S01 ENE-26'
 
 
 @pytest.mark.django_db
