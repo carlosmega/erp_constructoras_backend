@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Max
+from django.shortcuts import get_object_or_404
 
 from apps.audit.services import log_action
 from apps.proyeccion.models import (
@@ -154,7 +155,9 @@ class EstimationVersionService:
             raise ValueError(
                 "El estudio ya fue convertido a proyecto de obra; no se puede restaurar."
             )
-        version = EstimationVersion.objects.get(projectid=project, versionnumber=versionnumber)
+        version = get_object_or_404(
+            EstimationVersion, projectid=project, versionnumber=versionnumber,
+        )
 
         snap = json.loads(json.dumps(version.snapshot))  # deep copy: los ADAPTERS pueden mutar sin tocar el original
         snap_ver = version.schema_version  # use model field, not snapshot JSON

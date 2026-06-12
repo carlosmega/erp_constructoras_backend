@@ -2,7 +2,6 @@
 
 import pytest
 
-from apps.proyeccion.models import EstimationVersion
 from apps.proyeccion.tests.factories import EstimationProjectFactory
 
 
@@ -46,3 +45,14 @@ def test_restore_converted_returns_400(auth_client):
     project.save()
     r = auth_client.post(base + "1/restore/")
     assert r.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.contract
+def test_version_not_found_returns_404(auth_client):
+    project = EstimationProjectFactory()
+    base = f"/api/proyeccion/projects/{project.estimationprojectid}/versions/"
+    r = auth_client.get(base + "999/")
+    assert r.status_code == 404
+    r = auth_client.post(base + "999/restore/")
+    assert r.status_code == 404

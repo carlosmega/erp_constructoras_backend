@@ -9,6 +9,7 @@ from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
 from django.http import HttpRequest
+from django.shortcuts import get_object_or_404
 
 from apps.proyeccion.schemas import (
     EstimationProjectSchema,
@@ -124,6 +125,7 @@ from apps.proyeccion.services import (
     VersionConflict,
     PresenceService,
 )
+from apps.proyeccion.versioning import EstimationVersionService
 from apps.proyeccion.models import (
     IndirectCostTemplate,
     ProjectionPeriod,
@@ -1716,9 +1718,6 @@ def get_pnt(
 # 16. Versionamiento de estudios
 # =============================================================================
 
-from django.shortcuts import get_object_or_404
-from apps.proyeccion.versioning import EstimationVersionService
-
 versioning_router = Router(tags=["Estimation Versions"])
 
 
@@ -1737,6 +1736,7 @@ def create_estimation_version(request: HttpRequest, project_id: UUID, payload: C
 def list_estimation_versions(request: HttpRequest, project_id: UUID):
     """Lista todas las versiones del estudio (sin snapshot para mantener la respuesta ligera)."""
     EstimationProjectService.get_project(project_id, request.user)
+    # Sin paginación a propósito: las versiones por estudio son acotadas (~decenas); ver docs/deuda/007.
     return list(
         EstimationVersion.objects.filter(projectid=project_id)
         .select_related('createdby')
@@ -1764,7 +1764,9 @@ def get_estimation_version(request: HttpRequest, project_id: UUID, versionnumber
 def restore_estimation_version(request: HttpRequest, project_id: UUID, versionnumber: int):
     """Restaura el estudio al snapshot de la versión indicada.
     Crea un respaldo automático antes de restaurar.
-    400 si el estudio ya fue convertido a proyecto de obra.
+    400 si el estudio ya fue convertido a proyecto de obra o si el snapshot
+    tiene un schema_version no soportado/sin adaptador.
+    404 si la versión no existe para este estudio.
     """
     project = EstimationProjectService.get_project(project_id, request.user)
     try:

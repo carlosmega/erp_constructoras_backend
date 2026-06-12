@@ -1,6 +1,6 @@
 """Budget estimation (proyeccion) API schemas (DTOs)."""
 
-from ninja import ModelSchema, Schema
+from ninja import Field, ModelSchema, Schema
 from typing import List, Literal, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -1410,7 +1410,7 @@ class VersionDetailDto(VersionSummaryDto):
 
 
 class CreateVersionDto(Schema):
-    note: str = ''
+    note: str = Field('', max_length=500)
 
 
 class RestoreResultDto(Schema):
