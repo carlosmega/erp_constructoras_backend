@@ -30,6 +30,7 @@ from apps.proyeccion.models import (
     ProjectionPeriod,
     CostDistribution,
     CostLineType,
+    EstimationVersion,
 )
 from apps.users.tests.factories import SalespersonFactory, SystemUserFactory
 
@@ -461,3 +462,13 @@ def make_concept_for_project(project, code='C-001', description='Test', unit='m2
         quantity=Decimal('1'),
         unitprice=unitprice,
     )
+
+
+class EstimationVersionFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = EstimationVersion
+
+    projectid = factory.SubFactory(EstimationProjectFactory)
+    versionnumber = factory.Sequence(lambda n: n + 1)
+    schema_version = 1
+    snapshot = factory.LazyFunction(dict)
