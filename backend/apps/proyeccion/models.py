@@ -1763,3 +1763,41 @@ class EstimationBillingRule(AuditMixin):
 
     def __str__(self):
         return f"{self.projectid} #{self.sequence}: {self.percent} @ +{self.lagperiods}"
+
+
+class EstimationVersion(AuditMixin):
+    """Snapshot inmutable del grafo completo de un estudio (hito manual o
+    respaldo automático pre-restauración). Sin update/delete por diseño."""
+
+    versionid = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, db_column='versionid'
+    )
+    projectid = models.ForeignKey(
+        EstimationProject, on_delete=models.CASCADE,
+        db_column='projectid', related_name='versions'
+    )
+    versionnumber = models.IntegerField(db_column='versionnumber')
+    note = models.CharField(max_length=500, blank=True, default='', db_column='note')
+    isauto = models.BooleanField(default=False, db_column='isauto')
+    schema_version = models.IntegerField(db_column='schemaversion')
+    # Resumen congelado para listas (no recalcular desde el snapshot).
+    saleamount = models.DecimalField(max_digits=19, decimal_places=2, default=0, db_column='saleamount')
+    directtotal = models.DecimalField(max_digits=19, decimal_places=2, default=0, db_column='directtotal')
+    indirecttotal = models.DecimalField(max_digits=19, decimal_places=2, default=0, db_column='indirecttotal')
+    margintotal = models.DecimalField(max_digits=19, decimal_places=2, default=0, db_column='margintotal')
+    conceptcount = models.IntegerField(default=0, db_column='conceptcount')
+    snapshot = models.JSONField(db_column='snapshot')
+
+    class Meta:
+        db_table = 'estimationversion'
+        ordering = ['-versionnumber']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['projectid', 'versionnumber'],
+                name='uniq_estimationversion_project_number',
+            )
+        ]
+        indexes = [models.Index(fields=['projectid', '-versionnumber'])]
+
+    def __str__(self):
+        return f"v{self.versionnumber} de {self.projectid_id}"

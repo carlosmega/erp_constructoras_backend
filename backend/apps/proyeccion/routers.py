@@ -9,6 +9,7 @@ from typing import List, Optional
 from uuid import UUID
 from decimal import Decimal
 from django.http import HttpRequest
+from django.shortcuts import get_object_or_404
 
 from apps.proyeccion.schemas import (
     EstimationProjectSchema,
@@ -96,6 +97,10 @@ from apps.proyeccion.schemas import (
     ResetLineRequest,
     PresenceResponse,
     HeartbeatRequest,
+    VersionSummaryDto,
+    VersionDetailDto,
+    CreateVersionDto,
+    RestoreResultDto,
 )
 from apps.proyeccion.services import (
     EstimationConversionService,
@@ -120,9 +125,11 @@ from apps.proyeccion.services import (
     VersionConflict,
     PresenceService,
 )
+from apps.proyeccion.versioning import EstimationVersionService
 from apps.proyeccion.models import (
     IndirectCostTemplate,
     ProjectionPeriod,
+    EstimationVersion,
 )
 from core.permissions import Permission, require_permission, require_authenticated
 
@@ -1705,3 +1712,66 @@ def get_pnt(
     except ValueError as e:
         raise HttpError(400, str(e))
     return _serialize_pnt_report(report)
+
+
+# =============================================================================
+# 16. Versionamiento de estudios
+# =============================================================================
+
+versioning_router = Router(tags=["Estimation Versions"])
+
+
+@versioning_router.post("/projects/{project_id}/versions/", response=VersionSummaryDto)
+@require_authenticated
+def create_estimation_version(request: HttpRequest, project_id: UUID, payload: CreateVersionDto):
+    """Crea un snapshot manual del estudio."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    return EstimationVersionService.create_version(
+        project, user=request.user, note=payload.note,
+    )
+
+
+@versioning_router.get("/projects/{project_id}/versions/", response=List[VersionSummaryDto])
+@require_authenticated
+def list_estimation_versions(request: HttpRequest, project_id: UUID):
+    """Lista todas las versiones del estudio (sin snapshot para mantener la respuesta ligera)."""
+    EstimationProjectService.get_project(project_id, request.user)
+    # Sin paginación a propósito: las versiones por estudio son acotadas (~decenas); ver docs/deuda/007.
+    return list(
+        EstimationVersion.objects.filter(projectid=project_id)
+        .select_related('createdby')
+        .order_by('-versionnumber')
+    )
+
+
+@versioning_router.get("/projects/{project_id}/versions/{versionnumber}/", response=VersionDetailDto)
+@require_authenticated
+def get_estimation_version(request: HttpRequest, project_id: UUID, versionnumber: int):
+    """Devuelve el detalle de una versión, incluyendo el snapshot completo."""
+    EstimationProjectService.get_project(project_id, request.user)
+    return get_object_or_404(
+        EstimationVersion.objects.select_related('createdby'),
+        projectid=project_id,
+        versionnumber=versionnumber,
+    )
+
+
+@versioning_router.post(
+    "/projects/{project_id}/versions/{versionnumber}/restore/",
+    response=RestoreResultDto,
+)
+@require_authenticated
+def restore_estimation_version(request: HttpRequest, project_id: UUID, versionnumber: int):
+    """Restaura el estudio al snapshot de la versión indicada.
+    Crea un respaldo automático antes de restaurar.
+    400 si el estudio ya fue convertido a proyecto de obra o si el snapshot
+    tiene un schema_version no soportado/sin adaptador.
+    404 si la versión no existe para este estudio.
+    """
+    project = EstimationProjectService.get_project(project_id, request.user)
+    try:
+        return EstimationVersionService.restore_version(
+            project, versionnumber, user=request.user,
+        )
+    except ValueError as e:
+        raise HttpError(400, str(e))

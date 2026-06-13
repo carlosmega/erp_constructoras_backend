@@ -1,6 +1,6 @@
 """Budget estimation (proyeccion) API schemas (DTOs)."""
 
-from ninja import ModelSchema, Schema
+from ninja import Field, ModelSchema, Schema
 from typing import List, Literal, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -1380,3 +1380,39 @@ class ImportIndirectsResponseSchema(Schema):
     details_deleted: int
     details_created: int
     prorate_triggered: bool
+
+
+# =============================================================================
+# Versionamiento de estudios
+# =============================================================================
+
+class VersionSummaryDto(Schema):
+    versionid: UUID
+    versionnumber: int
+    note: str
+    isauto: bool
+    saleamount: Decimal
+    directtotal: Decimal
+    indirecttotal: Decimal
+    margintotal: Decimal
+    conceptcount: int
+    createdon: datetime
+    createdby_name: Optional[str] = None
+
+    @staticmethod
+    def resolve_createdby_name(obj):
+        return obj.createdby.fullname if getattr(obj, 'createdby', None) else None
+
+
+class VersionDetailDto(VersionSummaryDto):
+    schema_version: int
+    snapshot: dict
+
+
+class CreateVersionDto(Schema):
+    note: str = Field('', max_length=500)
+
+
+class RestoreResultDto(Schema):
+    restored: int
+    backup_versionnumber: int
