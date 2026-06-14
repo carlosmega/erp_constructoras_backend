@@ -528,3 +528,91 @@ def test_compute_rollups_no_longer_emits_by_category():
     rollups = CostDistributionService.compute_rollups(project)
     assert 'direct_by_period_by_category' not in rollups
     assert 'indirect_by_period_by_category' not in rollups
+
+
+from core.exceptions import NotFound
+from apps.proyeccion.models import WorkPlanEntry, WorkPlanEntryType
+from apps.proyeccion.tests.factories import ProjectionPeriodFactory
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+class TestPreviewLineFractions:
+    @pytest.fixture
+    def project_with_workplan_breakdown(self):
+        """Project with N=3 periods, one breakdown whose concept has PLANNED
+        WorkPlanEntry rows concentrated 20%/50%/30% across the periods."""
+        project = EstimationProjectFactory(periodcount=3)
+        for i in range(1, 4):
+            ProjectionPeriodFactory(projectid=project, periodnumber=i)
+        concept = BudgetConceptFactory(projectid=project, totalamount=Decimal("10000"))
+        bd = UnitCostBreakdownFactory(conceptid=concept)
+        for p, amt in zip([1, 2, 3], [Decimal("2000"), Decimal("5000"), Decimal("3000")]):
+            WorkPlanEntry.objects.create(
+                conceptid=concept, projectid=project,
+                periodnumber=p, periodlabel=f"P{p}",
+                entrytype=WorkPlanEntryType.PLANNED,
+                distributedamount=amt,
+            )
+        return project, bd
+
+    @pytest.fixture
+    def project_with_breakdown_no_workplan(self):
+        """Project with N=4 periods, one breakdown with NO WorkPlanEntry rows."""
+        project = EstimationProjectFactory(periodcount=4)
+        for i in range(1, 5):
+            ProjectionPeriodFactory(projectid=project, periodnumber=i)
+        concept = BudgetConceptFactory(projectid=project)
+        bd = UnitCostBreakdownFactory(conceptid=concept)
+        return project, bd
+
+    @pytest.fixture
+    def project_with_ranged_indirect(self):
+        """Project with N=4 periods, one indirect with startmonth=2, endmonth=3."""
+        project = EstimationProjectFactory(periodcount=4)
+        for i in range(1, 5):
+            ProjectionPeriodFactory(projectid=project, periodnumber=i)
+        ind = IndirectCostDetailFactory(projectid=project, startmonth=2, endmonth=3)
+        return project, ind
+
+    @pytest.fixture
+    def project_no_periods(self):
+        return EstimationProjectFactory(periodcount=0)
+
+    def test_breakdown_proportional_to_workplan_sums_to_one(self, project_with_workplan_breakdown):
+        project, bd = project_with_workplan_breakdown
+        result = CostDistributionService.preview_line_fractions(
+            project, lineid=str(bd.breakdownid), linetype='BREAKDOWN',
+        )
+        assert len(result['fractions']) == project.periodcount
+        assert sum(result['fractions']) == pytest.approx(Decimal('1'), abs=Decimal('0.0001'))
+        assert result['warnings'] == []  # has a workplan → no fallback
+
+    def test_breakdown_without_workplan_falls_back_uniform_with_warning(self, project_with_breakdown_no_workplan):
+        project, bd = project_with_breakdown_no_workplan
+        N = project.periodcount
+        result = CostDistributionService.preview_line_fractions(
+            project, lineid=str(bd.breakdownid), linetype='BREAKDOWN',
+        )
+        assert result['fractions'] == [Decimal(1) / Decimal(N)] * N
+        assert any('no workplan' in w for w in result['warnings'])
+
+    def test_indirect_uniform_within_range(self, project_with_ranged_indirect):
+        project, ind = project_with_ranged_indirect
+        result = CostDistributionService.preview_line_fractions(
+            project, lineid=str(ind.indirectcostid), linetype='INDIRECT',
+        )
+        assert result['fractions'] == [Decimal(0), Decimal('0.5'), Decimal('0.5'), Decimal(0)]
+
+    def test_unknown_line_raises_not_found(self, project_with_workplan_breakdown):
+        project, _bd = project_with_workplan_breakdown
+        with pytest.raises(NotFound):
+            CostDistributionService.preview_line_fractions(
+                project, lineid='00000000-0000-0000-0000-000000000000', linetype='BREAKDOWN',
+            )
+
+    def test_no_periods_raises_value_error(self, project_no_periods):
+        with pytest.raises(ValueError):
+            CostDistributionService.preview_line_fractions(
+                project_no_periods, lineid='00000000-0000-0000-0000-000000000000', linetype='INDIRECT',
+            )
