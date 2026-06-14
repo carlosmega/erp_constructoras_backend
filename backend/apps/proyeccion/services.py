@@ -4251,6 +4251,41 @@ class CostDistributionService:
         return {'reset': True, 'warnings': warnings}
 
     @staticmethod
+    def preview_line_fractions(project, *, lineid: str, linetype: str) -> dict:
+        """Compute the autofill fractions for ONE line WITHOUT writing to the DB.
+
+        Read-only sibling of `autofill`/`reset_line`: returns the same per-line
+        vector (proportional to the Plan de Obra for breakdowns, uniform fallback;
+        uniform within startmonth-endmonth for indirects) so the frontend can stage
+        the result into the edit buffer for review.
+        """
+        N = project.periodcount
+        if N == 0:
+            raise ValueError("El proyecto no tiene periodos — genéralos primero.")
+
+        warnings: list[str] = []
+        if linetype == 'BREAKDOWN':
+            bd = UnitCostBreakdown.objects.filter(
+                breakdownid=lineid, conceptid__projectid=project, statecode=0,
+            ).select_related('conceptid').first()
+            if bd is None:
+                raise NotFound(f"UnitCostBreakdown {lineid} not found in project")
+            fractions = CostDistributionService._compute_line_fractions_breakdown(
+                bd, project, 'proportional_workplan', N, warnings,
+            )
+        elif linetype == 'INDIRECT':
+            ind = IndirectCostDetail.objects.filter(
+                indirectcostid=lineid, projectid=project, statecode=0,
+            ).first()
+            if ind is None:
+                raise NotFound(f"IndirectCostDetail {lineid} not found in project")
+            fractions = CostDistributionService._compute_line_fractions_indirect(ind, N)
+        else:
+            raise ValueError(f"Unknown linetype: {linetype}")
+
+        return {'fractions': fractions, 'warnings': warnings}
+
+    @staticmethod
     def build_payload(project) -> dict:
         """Assemble the full GET /cost-distribution response."""
         rollups = CostDistributionService.compute_rollups(project)

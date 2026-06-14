@@ -1129,6 +1129,16 @@ class ResetLineRequest(Schema):
     linetype: Literal['BREAKDOWN', 'INDIRECT']
 
 
+class AutofillLinePreviewRequest(Schema):
+    lineid: UUID
+    linetype: Literal['BREAKDOWN', 'INDIRECT']
+
+
+class AutofillLinePreviewResponse(Schema):
+    fractions: List[Decimal]
+    warnings: List[str]
+
+
 class PresenceItemDto(Schema):
     userid: UUID
     username: str

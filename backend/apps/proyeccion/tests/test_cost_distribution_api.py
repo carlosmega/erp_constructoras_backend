@@ -344,3 +344,40 @@ class TestPresence:
         users = r2.json()['active_users']
         assert len(users) == 1
         assert users[0]['mode'] == 'viewing'
+
+
+@pytest.mark.django_db
+@pytest.mark.contract
+class TestAutofillLinePreviewApi:
+    def _project_with_breakdown(self, system_admin):
+        """Project with periods + one breakdown owned by the admin client user."""
+        project = EstimationProjectFactory(
+            ownerid=system_admin, createdby=system_admin, modifiedby=system_admin,
+            periodcount=2,
+        )
+        for i in range(1, 3):
+            ProjectionPeriodFactory(projectid=project, periodnumber=i)
+        concept = BudgetConceptFactory(projectid=project)
+        bd = UnitCostBreakdownFactory(conceptid=concept)
+        return project, bd
+
+    def test_returns_fractions_and_warnings(self, admin_auth_client, system_admin):
+        project, bd = self._project_with_breakdown(system_admin)
+        resp = admin_auth_client.post(
+            f'/api/proyeccion/projects/{project.estimationprojectid}/cost-distribution/autofill-line-preview/',
+            data={'lineid': str(bd.breakdownid), 'linetype': 'BREAKDOWN'},
+            content_type='application/json',
+        )
+        assert resp.status_code == 200, resp.content
+        body = resp.json()
+        assert len(body['fractions']) == project.periodcount
+        assert 'warnings' in body
+
+    def test_unknown_line_returns_404(self, admin_auth_client, system_admin):
+        project, _bd = self._project_with_breakdown(system_admin)
+        resp = admin_auth_client.post(
+            f'/api/proyeccion/projects/{project.estimationprojectid}/cost-distribution/autofill-line-preview/',
+            data={'lineid': '00000000-0000-0000-0000-000000000000', 'linetype': 'BREAKDOWN'},
+            content_type='application/json',
+        )
+        assert resp.status_code == 404
