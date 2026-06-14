@@ -95,6 +95,8 @@ from apps.proyeccion.schemas import (
     AutofillRequest,
     AutofillResponse,
     ResetLineRequest,
+    AutofillLinePreviewRequest,
+    AutofillLinePreviewResponse,
     PresenceResponse,
     HeartbeatRequest,
     VersionSummaryDto,
@@ -1530,6 +1532,24 @@ def reset_cost_distribution_line(request: HttpRequest, project_id: UUID, payload
     result = CostDistributionService.reset_line(
         project, lineid=str(payload.lineid), linetype=payload.linetype,
     )
+    return 200, result
+
+
+@distribution_router.post(
+    "/projects/{project_id}/cost-distribution/autofill-line-preview/",
+    response={200: AutofillLinePreviewResponse, 400: dict},
+)
+@require_authenticated
+def autofill_line_preview(request: HttpRequest, project_id: UUID, payload: AutofillLinePreviewRequest):
+    """Compute (without writing) the autofill fractions for one line, for the
+    frontend to stage into the edit buffer. NotFound → 404 via the global handler."""
+    project = EstimationProjectService.get_project(project_id, request.user)
+    try:
+        result = CostDistributionService.preview_line_fractions(
+            project, lineid=str(payload.lineid), linetype=payload.linetype,
+        )
+    except ValueError as e:
+        return 400, {'error': 'invalid', 'detail': str(e)}
     return 200, result
 
 
