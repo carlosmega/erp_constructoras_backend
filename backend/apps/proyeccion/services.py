@@ -3748,11 +3748,40 @@ class PeriodService:
 
 from django.db.models import DecimalField
 from django.db.models.functions import Coalesce
-from apps.proyeccion.models import CostLineType
+from apps.proyeccion.models import CostLineType, RetiroKind, RetiroDistribution
 
 
 class CostDistributionService:
     """Business logic for CostDistribution — rollups, autofill, bulk edits."""
+
+    @staticmethod
+    def _retiro_derived_fractions(base_cost, base_total, N):
+        """Default retiro shape: each period's share of total cost (sums to 1, or
+        all-zero when there is no cost). Reproduces the legacy cost-proportional retiro."""
+        if base_total <= 0:
+            return [Decimal("0")] * N
+        return [base_cost[i] / base_total for i in range(N)]
+
+    @staticmethod
+    def _compute_retiro_vector(project, kind, base_cost, base_total, factor, N):
+        """Per-period retiro = pinned_total x shape[p].
+
+        ``pinned_total = factor x base_total`` (e.g. %utilidad x costo base) and is the
+        fixed TARGET. ``shape`` defaults to the cost-proportional share and is overridden
+        per period by manual RetiroDistribution rows (isderived=False); periods without a
+        row keep the derived share. When manual edits don't sum to 1 the distributed total
+        drifts from the target — surfaced by the checksum, matching cost-line behaviour.
+        With no manual rows the result equals the legacy ``factor x base_cost[p]`` exactly.
+        """
+        pinned_total = factor * base_total
+        derived = CostDistributionService._retiro_derived_fractions(base_cost, base_total, N)
+        manual = {
+            row['periodnumber']: Decimal(row['fraction'])
+            for row in RetiroDistribution.objects.filter(
+                projectid=project, kind=kind,
+            ).values('periodnumber', 'fraction')
+        }
+        return [_round2(pinned_total * manual.get(i + 1, derived[i])) for i in range(N)]
 
     @staticmethod
     def compute_rollups(project) -> dict:
@@ -3839,8 +3868,18 @@ class CostDistributionService:
         prof_factor = prof_pct / Decimal("100")
 
         base_cost = [d + i for d, i in zip(direct_by_period, indirect_by_period)]
-        retiro_by_period = [_round2(c * trans_factor) for c in base_cost]
-        utility_by_period = [_round2(c * prof_factor) for c in base_cost]
+        base_total = sum(base_cost, Decimal("0"))
+
+        # Retiros: total PINNED to (% x base); only the per-period SHAPE is editable.
+        # Default shape = proportional to per-period cost (legacy parity). Manual
+        # RetiroDistribution rows re-time individual periods; the checksum warns if a
+        # re-timed row no longer sums to the pinned total.
+        retiro_by_period = CostDistributionService._compute_retiro_vector(
+            project, RetiroKind.TRANSVERSAL, base_cost, base_total, trans_factor, N,
+        )
+        utility_by_period = CostDistributionService._compute_retiro_vector(
+            project, RetiroKind.UTILIDAD, base_cost, base_total, prof_factor, N,
+        )
         total_cost_by_period = [b + r + u for b, r, u in zip(base_cost, retiro_by_period, utility_by_period)]
 
         # Sale ("Venta Plan"): timed by the work plan but computed LIVE from

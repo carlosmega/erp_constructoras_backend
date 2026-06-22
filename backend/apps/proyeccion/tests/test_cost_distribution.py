@@ -174,6 +174,66 @@ def test_compute_rollups_with_chosen_alternative_retiros():
 
 @pytest.mark.django_db
 @pytest.mark.unit
+def test_retiro_distribution_manual_override_redistributes_keeping_total():
+    """Manual utility rows re-time the retiro; the pinned total (=%xbase) is preserved
+    when the fractions sum to 1. Transversal (untouched) stays cost-proportional."""
+    from apps.proyeccion.models import OfferAlternative, RetiroDistribution, RetiroKind
+    project = EstimationProjectFactory(periodcount=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
+    bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
+    for p, f in zip([1, 2], [Decimal("0.6"), Decimal("0.4")]):
+        CostDistribution.objects.create(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+            breakdownid=bd, periodnumber=p, fraction=f,
+        )
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name="Base",
+        transversalpercent=Decimal("5"), profitpercent=Decimal("15"), ischosen=True,
+    )
+    # Move ALL utility to P1 (fractions sum to 1 -> total preserved).
+    for p, f in zip([1, 2], [Decimal("1"), Decimal("0")]):
+        RetiroDistribution.objects.create(
+            projectid=project, kind=RetiroKind.UTILIDAD,
+            periodnumber=p, fraction=f, isderived=False,
+        )
+    rollups = CostDistributionService.compute_rollups(project)
+    # utility pinned_total = 15% x 1000 = 150 -> all in P1
+    assert rollups['utility_by_period'] == [Decimal("150.00"), Decimal("0.00")]
+    assert sum(rollups['utility_by_period']) == Decimal("150.00")  # total preserved
+    # transversal untouched -> legacy cost-proportional
+    assert rollups['retiro_by_period'] == [Decimal("30.00"), Decimal("20.00")]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_retiro_distribution_partial_override_falls_back_to_derived():
+    """A period without a manual row keeps its derived (cost-proportional) share; the
+    distributed total may then drift from the pinned total (surfaced by the checksum)."""
+    from apps.proyeccion.models import OfferAlternative, RetiroDistribution, RetiroKind
+    project = EstimationProjectFactory(periodcount=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
+    bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
+    for p, f in zip([1, 2], [Decimal("0.6"), Decimal("0.4")]):
+        CostDistribution.objects.create(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+            breakdownid=bd, periodnumber=p, fraction=f,
+        )
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name="Base",
+        transversalpercent=Decimal("5"), profitpercent=Decimal("15"), ischosen=True,
+    )
+    # Only P1 overridden (0.5); P2 has no row -> derived share 0.4.
+    RetiroDistribution.objects.create(
+        projectid=project, kind=RetiroKind.UTILIDAD,
+        periodnumber=1, fraction=Decimal("0.5"), isderived=False,
+    )
+    rollups = CostDistributionService.compute_rollups(project)
+    # pinned_total = 150 -> P1 = 150*0.5 = 75 ; P2 = 150*0.4 (derived) = 60
+    assert rollups['utility_by_period'] == [Decimal("75.00"), Decimal("60.00")]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
 def test_compute_rollups_sale_is_live_and_scaled_to_chosen_salepricenet():
     """'Venta Plan' must reflect the chosen alternative's salepricenet (incl.
     transversal), distributed by the work-plan timing computed LIVE from
