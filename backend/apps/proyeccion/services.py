@@ -3750,6 +3750,12 @@ from django.db.models import DecimalField
 from django.db.models.functions import Coalesce
 from apps.proyeccion.models import CostLineType, RetiroKind, RetiroDistribution
 
+# API linetype string -> RetiroKind, for the two synthetic editable retiro rows.
+_RETIRO_LINETYPES = {
+    'RETIRO_TRANSVERSAL': RetiroKind.TRANSVERSAL,
+    'RETIRO_UTILIDAD': RetiroKind.UTILIDAD,
+}
+
 
 class CostDistributionService:
     """Business logic for CostDistribution — rollups, autofill, bulk edits."""
@@ -4152,6 +4158,29 @@ class CostDistributionService:
 
         # SELECT FOR UPDATE on the affected rows to serialize with other writers
         for edit in edits:
+            if edit['linetype'] in _RETIRO_LINETYPES:
+                kind = _RETIRO_LINETYPES[edit['linetype']]
+                existing = RetiroDistribution.objects.select_for_update().filter(
+                    projectid=project, kind=kind, periodnumber=edit['periodnumber'],
+                ).first()
+                ev = edit.get('expected_version', 0)
+                if existing is None:
+                    if ev != 0:
+                        conflicts.append({
+                            'lineid': edit['linetype'], 'periodnumber': edit['periodnumber'],
+                            'your_version': ev, 'server_version': 0,
+                            'your_value': float(edit['fraction']), 'server_value': None,
+                            'server_modifiedby': None, 'server_modifiedon': None,
+                        })
+                elif existing.version != ev:
+                    conflicts.append({
+                        'lineid': edit['linetype'], 'periodnumber': edit['periodnumber'],
+                        'your_version': ev, 'server_version': existing.version,
+                        'your_value': float(edit['fraction']), 'server_value': float(existing.fraction),
+                        'server_modifiedby': str(existing.modifiedby) if existing.modifiedby else None,
+                        'server_modifiedon': existing.modifiedon.isoformat(),
+                    })
+                continue
             lt = CostLineType.BREAKDOWN if edit['linetype'] == 'BREAKDOWN' else CostLineType.INDIRECT
             lookup = {'projectid': project, 'linetype': lt, 'periodnumber': edit['periodnumber']}
             if lt == CostLineType.BREAKDOWN:
@@ -4209,6 +4238,27 @@ class CostDistributionService:
         # Apply cell edits
         new_versions = {}
         for edit in edits:
+            if edit['linetype'] in _RETIRO_LINETYPES:
+                kind = _RETIRO_LINETYPES[edit['linetype']]
+                frac = Decimal(str(edit['fraction'])).quantize(Decimal("0.00000001"))
+                key = f"{edit['linetype']}:{edit['periodnumber']}"
+                existing = RetiroDistribution.objects.filter(
+                    projectid=project, kind=kind, periodnumber=edit['periodnumber'],
+                ).first()
+                if existing is None:
+                    RetiroDistribution.objects.create(
+                        projectid=project, kind=kind, periodnumber=edit['periodnumber'],
+                        fraction=frac, isderived=False, version=1, modifiedby=user,
+                    )
+                    new_versions[key] = 1
+                else:
+                    existing.fraction = frac
+                    existing.isderived = False
+                    existing.version += 1
+                    existing.modifiedby = user
+                    existing.save(update_fields=['fraction', 'isderived', 'version', 'modifiedby', 'modifiedon'])
+                    new_versions[key] = existing.version
+                continue
             lt = CostLineType.BREAKDOWN if edit['linetype'] == 'BREAKDOWN' else CostLineType.INDIRECT
             lookup = {'projectid': project, 'linetype': lt, 'periodnumber': edit['periodnumber']}
             if lt == CostLineType.BREAKDOWN:
@@ -4258,6 +4308,12 @@ class CostDistributionService:
     @staticmethod
     @transaction.atomic
     def reset_line(project, *, lineid: str, linetype: str) -> dict:
+        if linetype in _RETIRO_LINETYPES:
+            # Retiro rows: drop all manual cells -> back to derived (cost-proportional).
+            RetiroDistribution.objects.filter(
+                projectid=project, kind=_RETIRO_LINETYPES[linetype],
+            ).delete()
+            return {'reset': True, 'warnings': []}
         lt = CostLineType.BREAKDOWN if linetype == 'BREAKDOWN' else CostLineType.INDIRECT
         filt = {'projectid': project, 'linetype': lt}
         if lt == CostLineType.BREAKDOWN:
@@ -4376,7 +4432,50 @@ class CostDistributionService:
             'rollups': rollups_payload,
             'totals': totals,
             'chosen_alternative': chosen,
+            'retiros': CostDistributionService._build_retiro_rows(project, rollups),
         }
+
+    @staticmethod
+    def _build_retiro_rows(project, rollups) -> list:
+        """Build the 2 editable retiro rows (transversal, utilidad) for the payload.
+
+        Each row carries its pinned_total (= % x base) plus per-period cells with the
+        fraction, $ amount, isderived flag and version. Periods without a manual
+        RetiroDistribution row report the derived (cost-proportional) fraction with
+        isderived=True / version=0.
+        """
+        N = project.periodcount or 0
+        base_cost = [d + i for d, i in zip(rollups['direct_by_period'], rollups['indirect_by_period'])]
+        base_total = sum(base_cost, Decimal("0"))
+        derived = CostDistributionService._retiro_derived_fractions(base_cost, base_total, N)
+        specs = [
+            ('RETIRO_TRANSVERSAL', RetiroKind.TRANSVERSAL, 'Retiro Transversal', rollups['transversalpercent']),
+            ('RETIRO_UTILIDAD', RetiroKind.UTILIDAD, 'Retiro Utilidad', rollups['profitpercent']),
+        ]
+        rows = []
+        for key, kind, label, pct in specs:
+            pinned_total = (pct / Decimal("100")) * base_total
+            manual = {
+                r['periodnumber']: r
+                for r in RetiroDistribution.objects.filter(projectid=project, kind=kind)
+                .values('periodnumber', 'fraction', 'isderived', 'version')
+            }
+            cells = []
+            for i in range(N):
+                m = manual.get(i + 1)
+                frac = Decimal(m['fraction']) if m else derived[i]
+                cells.append({
+                    'periodnumber': i + 1,
+                    'fraction': float(frac),
+                    'amount': float(_round2(pinned_total * frac)),
+                    'isderived': m['isderived'] if m else True,
+                    'version': m['version'] if m else 0,
+                })
+            rows.append({
+                'kind': key, 'label': label, 'percent': float(pct),
+                'pinned_total': float(_round2(pinned_total)), 'cells': cells,
+            })
+        return rows
 
     # Canonical direct-cost categories, in the order the Excel reference uses them.
     # Maps BreakdownCategoryCode values → display name.

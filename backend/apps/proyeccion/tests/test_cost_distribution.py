@@ -232,6 +232,82 @@ def test_retiro_distribution_partial_override_falls_back_to_derived():
     assert rollups['utility_by_period'] == [Decimal("75.00"), Decimal("60.00")]
 
 
+def _setup_retiro_project():
+    """project(periodcount=2) with 1 breakdown of 1000 distributed [0.6,0.4] and a chosen
+    alternative transv=5% / profit=15% -> base=[600,400], pinned util=150, transv=50."""
+    from apps.proyeccion.models import OfferAlternative
+    project = EstimationProjectFactory(periodcount=2)
+    concept = BudgetConceptFactory(projectid=project, quantity=Decimal("1"))
+    bd = UnitCostBreakdownFactory(conceptid=concept, amount=Decimal("1000"))
+    for p, f in zip([1, 2], [Decimal("0.6"), Decimal("0.4")]):
+        CostDistribution.objects.create(
+            projectid=project, linetype=CostLineType.BREAKDOWN,
+            breakdownid=bd, periodnumber=p, fraction=f,
+        )
+    OfferAlternative.objects.create(
+        projectid=project, alternativenumber=1, name="Base",
+        transversalpercent=Decimal("5"), profitpercent=Decimal("15"), ischosen=True,
+    )
+    return project
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_apply_bulk_edits_retiro_cell_creates_rows_and_redistributes():
+    from apps.proyeccion.models import RetiroDistribution, RetiroKind
+    from apps.users.tests.factories import SystemUserFactory
+    user = SystemUserFactory()
+    project = _setup_retiro_project()
+
+    result = CostDistributionService.apply_bulk_edits(project, user=user, edits=[
+        {'lineid': None, 'linetype': 'RETIRO_UTILIDAD', 'periodnumber': 1,
+         'fraction': Decimal("1"), 'expected_version': 0},
+        {'lineid': None, 'linetype': 'RETIRO_UTILIDAD', 'periodnumber': 2,
+         'fraction': Decimal("0"), 'expected_version': 0},
+    ])
+    assert result['updated'] == 2
+    assert result['new_versions']['RETIRO_UTILIDAD:1'] == 1
+    assert RetiroDistribution.objects.filter(
+        projectid=project, kind=RetiroKind.UTILIDAD, isderived=False).count() == 2
+    rollups = CostDistributionService.compute_rollups(project)
+    assert rollups['utility_by_period'] == [Decimal("150.00"), Decimal("0.00")]
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_reset_line_retiro_returns_to_derived():
+    from apps.proyeccion.models import RetiroDistribution, RetiroKind
+    project = _setup_retiro_project()
+    for p, f in zip([1, 2], [Decimal("1"), Decimal("0")]):
+        RetiroDistribution.objects.create(
+            projectid=project, kind=RetiroKind.UTILIDAD,
+            periodnumber=p, fraction=f, isderived=False,
+        )
+    result = CostDistributionService.reset_line(project, lineid=None, linetype='RETIRO_UTILIDAD')
+    assert result['reset'] is True
+    assert RetiroDistribution.objects.filter(projectid=project, kind=RetiroKind.UTILIDAD).count() == 0
+    rollups = CostDistributionService.compute_rollups(project)
+    assert rollups['utility_by_period'] == [Decimal("90.00"), Decimal("60.00")]  # derived
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_build_payload_includes_retiro_rows():
+    project = _setup_retiro_project()
+    payload = CostDistributionService.build_payload(project)
+    retiros = {r['kind']: r for r in payload['retiros']}
+    assert set(retiros) == {'RETIRO_TRANSVERSAL', 'RETIRO_UTILIDAD'}
+    util = retiros['RETIRO_UTILIDAD']
+    assert util['pinned_total'] == 150.0   # 15% x 1000
+    assert util['percent'] == 15.0
+    assert len(util['cells']) == 2
+    assert util['cells'][0]['isderived'] is True
+    assert util['cells'][0]['amount'] == 90.0   # 150 x 0.6
+    assert util['cells'][1]['amount'] == 60.0   # 150 x 0.4
+    transv = retiros['RETIRO_TRANSVERSAL']
+    assert transv['pinned_total'] == 50.0       # 5% x 1000
+
+
 @pytest.mark.django_db
 @pytest.mark.unit
 def test_compute_rollups_sale_is_live_and_scaled_to_chosen_salepricenet():

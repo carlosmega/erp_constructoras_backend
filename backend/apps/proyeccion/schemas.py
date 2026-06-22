@@ -1057,17 +1057,34 @@ class ChosenAlternativeDto(Schema):
     profitpercent: float = 0.0
 
 
+class RetiroCellDto(Schema):
+    periodnumber: int
+    fraction: float
+    amount: float
+    isderived: bool
+    version: int
+
+
+class RetiroRowDto(Schema):
+    kind: Literal['RETIRO_TRANSVERSAL', 'RETIRO_UTILIDAD']
+    label: str
+    percent: float
+    pinned_total: float
+    cells: List[RetiroCellDto]
+
+
 class DistributionPayloadDto(Schema):
     periods: List[ProjectionPeriodDto]
     families: List[DistributionFamilyDto]
     rollups: DistributionRollupsDto
     totals: DistributionTotalsDto
     chosen_alternative: ChosenAlternativeDto
+    retiros: List[RetiroRowDto] = []
 
 
 class BulkEditItem(Schema):
-    lineid: UUID
-    linetype: Literal['BREAKDOWN', 'INDIRECT']
+    lineid: Optional[UUID] = None  # None for retiro rows (keyed by linetype, not a line)
+    linetype: Literal['BREAKDOWN', 'INDIRECT', 'RETIRO_TRANSVERSAL', 'RETIRO_UTILIDAD']
     periodnumber: int
     fraction: Decimal
     expected_version: int
@@ -1125,8 +1142,8 @@ class AutofillResponse(Schema):
 
 
 class ResetLineRequest(Schema):
-    lineid: UUID
-    linetype: Literal['BREAKDOWN', 'INDIRECT']
+    lineid: Optional[UUID] = None  # None for retiro rows
+    linetype: Literal['BREAKDOWN', 'INDIRECT', 'RETIRO_TRANSVERSAL', 'RETIRO_UTILIDAD']
 
 
 class AutofillLinePreviewRequest(Schema):
