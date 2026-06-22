@@ -323,8 +323,7 @@ class BudgetConcept(AuditMixin):
         db_column='sequencenumber'
     )
 
-    description = models.CharField(
-        max_length=500,
+    description = models.TextField(
         db_column='description'
     )
 
@@ -438,8 +437,7 @@ class UnitCostBreakdown(AuditMixin):
         db_column='linenumber'
     )
 
-    description = models.CharField(
-        max_length=500,
+    description = models.TextField(
         db_column='description'
     )
 
@@ -556,8 +554,7 @@ class IndirectCostDetail(AuditMixin):
         db_column='area'
     )
 
-    description = models.CharField(
-        max_length=500,
+    description = models.TextField(
         db_column='description'
     )
 
