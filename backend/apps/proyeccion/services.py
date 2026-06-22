@@ -6318,11 +6318,44 @@ class ConceptExcelService:
 
         return {'summary': summary, 'rows': rows}
 
+    @staticmethod
+    def _next_concept_code(cod_sub, sf_lookup_key, existing_codes, counter) -> str:
+        """Return the next free ``{cod_sub}-NN`` concept code (project-wide unique).
+
+        Seeds the per-subfamily counter from the highest ``NN`` already present for
+        the ``cod_sub`` prefix, then advances until a code absent from
+        ``existing_codes`` is found. Reserves that code (adds it to ``existing_codes``)
+        so later rows in the same import keep counting up without colliding.
+        """
+        prefix = cod_sub.strip()
+        upper_prefix = prefix.upper() + '-'
+        n = counter.get(sf_lookup_key)
+        if n is None:
+            n = 0
+            for existing in existing_codes:
+                if existing.startswith(upper_prefix):
+                    suffix = existing[len(upper_prefix):]
+                    if suffix.isdigit():
+                        n = max(n, int(suffix))
+        while True:
+            n += 1
+            candidate = f'{prefix}-{n:02d}'
+            if candidate.upper() not in existing_codes:
+                counter[sf_lookup_key] = n
+                existing_codes.add(candidate.upper())
+                return candidate
+
     @classmethod
     @transaction.atomic
     def import_(cls, project_id, payload, user) -> dict:
         """Create or update BudgetConcept rows. Families/subfamilies are auto-created
-        (or reactivated) as needed. Never deletes existing concepts."""
+        (or reactivated) as needed. Never deletes existing concepts.
+
+        AUTOMATIC CODE MODE: concept codes for NEW rows are always generated
+        server-side as ``{cod_sub}-NN`` (project-wide unique). The Excel CODIGO
+        column is ignored when creating; it is used only to recognise EXISTING
+        concepts for updates (see ``analyze``).
+        """
         from django.db.models import Max
 
         project = EstimationProject.objects.get(estimationprojectid=project_id)
@@ -6339,11 +6372,19 @@ class ConceptExcelService:
             for fam in ConceptFamily.objects.filter(projectid=project)
         }
 
+        # Project-wide set of existing concept codes (all statecodes) so that
+        # server-generated codes never collide with one another or with prior
+        # imports. Grows as new concepts are reserved/created below.
+        existing_codes: set[str] = {
+            (c or '').strip().upper()
+            for c in BudgetConcept.objects.filter(projectid=project).values_list('code', flat=True)
+        }
+
         created = 0
         updated = 0
         skipped = 0
-        auto_code_counter: dict[str, int] = {}  # (cod_fam, cod_sub) key → last suffix
-        seq_num_cache: dict[str, int] = {}       # sf PK str → last sequencenumber
+        auto_code_counter: dict[tuple, int] = {}  # sf_lookup_key → last suffix used
+        seq_num_cache: dict[str, int] = {}        # sf PK str → last sequencenumber
 
         for item in payload.items:
             cod_sub_upper = item.cod_sub.strip().upper()
@@ -6422,16 +6463,13 @@ class ConceptExcelService:
                     fam.statecode = 0
                     fam.save(update_fields=['statecode'])
 
-            code = item.codigo.strip()
-            if not code:
-                n = auto_code_counter.get(sf_lookup_key, 0) + 1
-                auto_code_counter[sf_lookup_key] = n
-                code = f'{item.cod_sub}-{n:02d}'
-
-            # Skip if concept already exists (unique_together covers all statecodes)
-            if BudgetConcept.objects.filter(projectid=project, code=code).exists():
-                skipped += 1
-                continue
+            # AUTOMATIC CODE MODE: always server-generate the code for new concepts.
+            # item.codigo (Excel column E) is intentionally ignored here so user-typed
+            # or mistaken codes never reach the catalog; the generated code is
+            # guaranteed project-wide unique, so new rows are never skipped.
+            code = cls._next_concept_code(
+                item.cod_sub, sf_lookup_key, existing_codes, auto_code_counter,
+            )
 
             sf_key = str(sf.subfamilyid)
             if sf_key not in seq_num_cache:
