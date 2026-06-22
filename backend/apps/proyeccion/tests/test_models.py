@@ -248,6 +248,31 @@ def test_indirectcostdetail_has_payment_lag_fields():
 
 @pytest.mark.unit
 @pytest.mark.django_db
+def test_concept_descriptions_are_unbounded_textfields():
+    """Description fields written by the Excel importers must be TextField (no
+    varchar(500) cap), so long SICT descriptions don't 500 on Postgres import.
+    Regression guard for the import-excel 'value too long for varchar(500)' bug.
+    """
+    from apps.proyeccion.models import (
+        BudgetConcept, UnitCostBreakdown, IndirectCostDetail,
+    )
+    from apps.proyeccion.tests.factories import BudgetConceptFactory
+
+    for model in (BudgetConcept, UnitCostBreakdown, IndirectCostDetail):
+        field = model._meta.get_field('description')
+        assert field.get_internal_type() == 'TextField', \
+            f"{model.__name__}.description must be TextField"
+        assert field.max_length is None, \
+            f"{model.__name__}.description must not cap length"
+
+    # A 600-char description round-trips (would raise on a varchar(500) column).
+    concept = BudgetConceptFactory(description='X' * 600)
+    concept.refresh_from_db()
+    assert len(concept.description) == 600
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
 class TestProyeccionAuditTrail:
     """UnitCostBreakdown / FamilyTemplateItem migraron a
     AuditMixin: deben exponer el audit trail CDS de 4 campos
