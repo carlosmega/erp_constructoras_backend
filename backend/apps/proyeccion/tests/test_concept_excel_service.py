@@ -292,7 +292,9 @@ def test_import_autocreates_family_and_subfamily():
     assert result['created'] == 1
     assert ConceptFamily.objects.filter(projectid=project, code='GAB').exists()
     assert ConceptSubfamily.objects.filter(projectid=project, code='GAB-01').exists()
-    assert BudgetConcept.objects.filter(projectid=project, code='A1').exists()
+    # Code is auto-generated from the subfamily prefix; the Excel 'A1' is ignored.
+    concept = BudgetConcept.objects.get(projectid=project)
+    assert concept.code == 'GAB-01-01'
 
 
 @pytest.mark.django_db
@@ -345,3 +347,57 @@ def test_import_autogenerates_code_when_blank():
     concept = BudgetConcept.objects.get(projectid=project)
     assert concept.code  # not empty
     assert 'GAB-01' in concept.code  # uses the subfamily code as prefix
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_import_ignores_provided_code_and_autogenerates():
+    """Automatic mode: a user-typed CODIGO is dropped; the server assigns {cod_sub}-NN."""
+    from apps.proyeccion.services import ConceptExcelService
+    from apps.proyeccion.models import BudgetConcept
+    from apps.proyeccion.schemas import ImportConceptExcelRequestDto
+
+    user = SystemUserFactory()
+    family = ConceptFamilyFactory(code='GAB')
+    sf = ConceptSubfamilyFactory(familyid=family, code='GAB-01')
+    project = sf.projectid
+
+    payload = ImportConceptExcelRequestDto(items=[
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'A1', 'description': 'Desc 1', 'unit': 'M2', 'quantity': 1.0, 'status': 'new'},
+        {'row': 5, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': 'XYZ', 'description': 'Desc 2', 'unit': 'KG', 'quantity': 2.0, 'status': 'new'},
+    ])
+
+    result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
+
+    assert result['created'] == 2
+    codes = set(BudgetConcept.objects.filter(projectid=project).values_list('code', flat=True))
+    # Typed codes ('A1', 'XYZ') are ignored; server assigns sequential {cod_sub}-NN.
+    assert codes == {'GAB-01-01', 'GAB-01-02'}
+
+
+@pytest.mark.django_db
+@pytest.mark.unit
+def test_import_autocode_skips_over_existing_suffix():
+    """Automatic mode never collides: a new row gets the next free suffix, not a skip."""
+    from apps.proyeccion.services import ConceptExcelService
+    from apps.proyeccion.models import BudgetConcept
+    from apps.proyeccion.schemas import ImportConceptExcelRequestDto
+
+    user = SystemUserFactory()
+    family = ConceptFamilyFactory(code='GAB')
+    sf = ConceptSubfamilyFactory(familyid=family, code='GAB-01')
+    project = sf.projectid
+    # A concept with the first auto-code already exists (e.g. from a prior import).
+    BudgetConceptFactory(subfamilyid=sf, code='GAB-01-01', description='Prev', unit='M2', quantity=1)
+
+    payload = ImportConceptExcelRequestDto(items=[
+        {'row': 4, 'familia': 'GABINETE', 'cod_fam': 'GAB', 'subfamilia': 'Proy. Ej.', 'cod_sub': 'GAB-01', 'codigo': '', 'description': 'Nuevo', 'unit': 'M2', 'quantity': 5.0, 'status': 'new'},
+    ])
+
+    result = ConceptExcelService.import_(project.estimationprojectid, payload, user)
+
+    assert result['created'] == 1
+    assert result['skipped'] == 0
+    # Gets the next free suffix instead of colliding with GAB-01-01 and being skipped.
+    assert BudgetConcept.objects.filter(projectid=project, code='GAB-01-02').exists()
+    assert BudgetConcept.objects.filter(projectid=project).count() == 2
