@@ -1605,6 +1605,66 @@ class CostDistribution(models.Model):
         return f"Dist P{self.periodnumber} line={self.linetype} frac={self.fraction}"
 
 
+class RetiroKind(models.IntegerChoices):
+    TRANSVERSAL = 0, 'Retiro Transversal'
+    UTILIDAD    = 1, 'Retiro Utilidad'
+
+
+class RetiroDistribution(models.Model):
+    """Per-period fraction (0..1) for a synthetic 'retiro' line (transversal / utility).
+
+    Mirrors CostDistribution but discriminated by ``kind`` instead of a cost-line FK.
+    Absence of rows for a (project, kind) means the retiro follows its DERIVED shape
+    (proportional to per-period cost), reproducing the legacy behaviour. Rows appear
+    only when a user manually re-times a period (isderived=False). The total stays
+    pinned to ``% x cost``; only the per-period shape is editable.
+    """
+
+    retirodistributionid = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, db_column='retirodistributionid'
+    )
+    projectid = models.ForeignKey(
+        EstimationProject, on_delete=models.CASCADE,
+        db_column='projectid', related_name='retiro_distributions',
+    )
+    kind = models.IntegerField(choices=RetiroKind.choices, db_column='kind')
+    periodnumber = models.IntegerField(db_column='periodnumber')
+    fraction = models.DecimalField(
+        max_digits=10, decimal_places=8, default=Decimal('0'), db_column='fraction'
+    )
+    isderived = models.BooleanField(default=True, db_column='isderived')
+
+    # Concurrency + audit
+    version = models.IntegerField(default=0, db_column='version')
+    modifiedby = models.ForeignKey(
+        'users.SystemUser', on_delete=models.PROTECT,
+        null=True, blank=True,
+        db_column='modifiedby', related_name='+',
+    )
+    modifiedon = models.DateTimeField(auto_now=True, db_column='modifiedon')
+    createdon = models.DateTimeField(auto_now_add=True, db_column='createdon')
+
+    class Meta:
+        db_table = 'retirodistribution'
+        indexes = [
+            models.Index(fields=['projectid', 'kind']),
+            models.Index(fields=['projectid', 'periodnumber']),
+        ]
+        constraints = [
+            UniqueConstraint(
+                fields=['projectid', 'kind', 'periodnumber'],
+                name='uq_retiro_project_kind_period',
+            ),
+            CheckConstraint(
+                condition=Q(fraction__gte=0) & Q(fraction__lte=1),
+                name='retiro_distribution_fraction_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Retiro {self.get_kind_display()} P{self.periodnumber} frac={self.fraction}"
+
+
 class DistributionPresence(models.Model):
     """Tracks users viewing/editing the distribution tab for a project.
 

@@ -1468,7 +1468,8 @@ def patch_cost_distribution_bulk(request: HttpRequest, project_id: UUID, payload
     """Apply multiple cell edits and/or per-line lag edits atomically."""
     project = EstimationProjectService.get_project(project_id, request.user)
     edits = [{
-        'lineid': str(e.lineid), 'linetype': e.linetype, 'periodnumber': e.periodnumber,
+        'lineid': str(e.lineid) if e.lineid else None, 'linetype': e.linetype,
+        'periodnumber': e.periodnumber,
         'fraction': e.fraction, 'expected_version': e.expected_version,
     } for e in payload.edits]
     lag_edits = [{
@@ -1530,7 +1531,8 @@ def reset_cost_distribution_line(request: HttpRequest, project_id: UUID, payload
     """Revert a line to derived values (discards manual edits for that line)."""
     project = EstimationProjectService.get_project(project_id, request.user)
     result = CostDistributionService.reset_line(
-        project, lineid=str(payload.lineid), linetype=payload.linetype,
+        project, lineid=str(payload.lineid) if payload.lineid else None,
+        linetype=payload.linetype,
     )
     return 200, result
 
